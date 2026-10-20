@@ -1,5 +1,5 @@
 //! Run/build/test tasks: detected from project files, plus user tasks from
-//! `.codium/tasks.toml`.
+//! `.lumen/tasks.toml`.
 
 use serde::Deserialize;
 
@@ -47,7 +47,8 @@ struct TasksFile {
     tasks: Vec<Task>,
 }
 
-pub const TASKS_FILE: &str = ".codium/tasks.toml";
+pub const TASKS_FILE: &str = ".lumen/tasks.toml";
+const LEGACY_TASKS_FILE: &str = ".codium/tasks.toml";
 
 pub const TASKS_TEMPLATE: &str = r#"# Задачи проекта. Запуск: F5 (задача с default = true), Ctrl+Shift+B — сборка.
 # group: run | build | test | other
@@ -74,7 +75,8 @@ pub fn detect(host: &Host, root: &str) -> (Vec<Task>, Option<String>) {
     let names: Vec<String> = host.read_dir(root).map(|e| e.into_iter().map(|e| e.name).collect()).unwrap_or_default();
     let has = |name: &str| names.iter().any(|n| n == name);
 
-    if let Ok(data) = host.read_file(&join(root, TASKS_FILE)) {
+    // `.codium/tasks.toml` is the location used before the rename.
+    if let Ok(data) = host.read_file(&join(root, TASKS_FILE)).or_else(|_| host.read_file(&join(root, LEGACY_TASKS_FILE))) {
         match toml::from_str::<TasksFile>(&String::from_utf8_lossy(&data)) {
             Ok(file) => tasks.extend(file.tasks.into_iter().map(|mut t| {
                 t.source = "tasks.toml".into();
@@ -100,7 +102,12 @@ pub fn detect(host: &Host, root: &str) -> (Vec<Task>, Option<String>) {
         tasks.push(task("go vet ./...", "go vet ./...", Group::Build, "go"));
     }
     if has("CMakeLists.txt") {
-        tasks.push(task("cmake build", "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build -j", Group::Build, "cmake"));
+        tasks.push(task(
+            "cmake build",
+            "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build -j",
+            Group::Build,
+            "cmake",
+        ));
         tasks.push(task("ctest", "ctest --test-dir build --output-on-failure", Group::Test, "cmake"));
     }
     if has("meson.build") {
@@ -194,8 +201,5 @@ fn make_targets(text: &str) -> Vec<String> {
 }
 
 pub fn default_task(tasks: &[Task], group: Group) -> Option<&Task> {
-    tasks
-        .iter()
-        .find(|t| t.default && t.group == group)
-        .or_else(|| tasks.iter().find(|t| t.group == group))
+    tasks.iter().find(|t| t.default && t.group == group).or_else(|| tasks.iter().find(|t| t.group == group))
 }

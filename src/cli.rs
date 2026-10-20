@@ -7,35 +7,35 @@ use serde_json::{Value, json};
 use crate::control::{self, methods};
 
 const HELP: &str = "\
-Codium RS — нативный редактор кода
+Lumen Edit — нативный редактор кода
 
 Запуск:
-  codium-rs [ПАПКА [ФАЙЛ]]           открыть окно (если редактор уже запущен,
-  codium-rs ФАЙЛ[:СТРОКА[:СТОЛБЕЦ]]   путь откроется в нём)
-  codium-rs ssh://ХОСТ/ПУТЬ           открыть проект на SSH-хосте
-  codium-rs --new-window ...          всегда новое окно
+  lumen-edit [ПАПКА [ФАЙЛ]]           открыть окно (если редактор уже запущен,
+  lumen-edit ФАЙЛ[:СТРОКА[:СТОЛБЕЦ]]   путь откроется в нём)
+  lumen-edit ssh://ХОСТ/ПУТЬ           открыть проект на SSH-хосте
+  lumen-edit --new-window ...          всегда новое окно
 
 Управление запущенным редактором:
-  codium-rs open ФАЙЛ[:СТРОКА[:СТОЛБЕЦ]]
-  codium-rs cmd КОМАНДА               любая команда меню (список: codium-rs commands)
-  codium-rs МЕТОД [АРГУМЕНТЫ]         любой метод, например:
-      codium-rs state
-      codium-rs read_file src/main.rs start_line=1 end_line=40
-      codium-rs search 'fn main' --include .rs
-      codium-rs exec 'cargo build'
-      codium-rs git_commit 'fix: …' --all
-      codium-rs terminal_read --wait_ms 500
-  codium-rs call МЕТОД '{\"json\": \"параметры\"}'
-  codium-rs methods                   список методов
-  codium-rs help МЕТОД                параметры метода
-  codium-rs instances                 запущенные редакторы
+  lumen-edit open ФАЙЛ[:СТРОКА[:СТОЛБЕЦ]]
+  lumen-edit cmd КОМАНДА               любая команда меню (список: lumen-edit commands)
+  lumen-edit МЕТОД [АРГУМЕНТЫ]         любой метод, например:
+      lumen-edit state
+      lumen-edit read_file src/main.rs start_line=1 end_line=40
+      lumen-edit search 'fn main' --include .rs
+      lumen-edit exec 'cargo build'
+      lumen-edit git_commit 'fix: …' --all
+      lumen-edit terminal_read --wait_ms 500
+  lumen-edit call МЕТОД '{\"json\": \"параметры\"}'
+  lumen-edit methods                   список методов
+  lumen-edit help МЕТОД                параметры метода
+  lumen-edit instances                 запущенные редакторы
 
 MCP:
-  codium-rs mcp                       MCP-сервер на stdio (запускает редактор при необходимости)
-  codium-rs mcp --granular            по инструменту на метод (для поиска инструментов по запросу)
+  lumen-edit mcp                       MCP-сервер на stdio (запускает редактор при необходимости)
+  lumen-edit mcp --granular            по инструменту на метод (для поиска инструментов по запросу)
 
 Аргументы: key=value, --key value, --flag, JSON-объект или значения обязательных
-параметров по порядку. --json — вывод в JSON. Переменная CODIUM_SOCKET выбирает
+параметров по порядку. --json — вывод в JSON. Переменная LUMEN_SOCKET выбирает
 конкретный редактор.
 ";
 
@@ -49,7 +49,7 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
             Some(ExitCode::SUCCESS)
         }
         "-V" | "--version" => {
-            println!("codium-rs {}", env!("CARGO_PKG_VERSION"));
+            println!("{}", crate::app::about_line());
             Some(ExitCode::SUCCESS)
         }
         "--new-window" | "gui" => None,
@@ -89,7 +89,7 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
         "commands" => Some(call_and_print("commands", json!({}), rest)),
         "cmd" | "command" => {
             let Some(id) = rest.first() else {
-                eprintln!("укажите команду: codium-rs commands");
+                eprintln!("укажите команду: lumen-edit commands");
                 return Some(ExitCode::FAILURE);
             };
             Some(call_and_print("run_command", json!({ "command": id }), &rest[1..]))
@@ -103,7 +103,7 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
         }
         "call" => {
             let Some(name) = rest.first() else {
-                eprintln!("укажите метод: codium-rs methods");
+                eprintln!("укажите метод: lumen-edit methods");
                 return Some(ExitCode::FAILURE);
             };
             let Some(method) = methods::find(name) else {
@@ -126,6 +126,12 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
         path => {
             if path.starts_with('-') {
                 eprintln!("неизвестный параметр {path}\n\n{HELP}");
+                return Some(ExitCode::FAILURE);
+            }
+            // A bare word that is not a file is a mistyped command, not a
+            // reason to open a window.
+            if !path.contains(['/', '.']) && !std::path::Path::new(path).exists() {
+                eprintln!("неизвестная команда {path}; список: lumen-edit methods");
                 return Some(ExitCode::FAILURE);
             }
             if path.starts_with("ssh://") {
@@ -205,7 +211,9 @@ fn parse_args(method: &methods::Method, args: &[String]) -> Result<Value, String
             let is_bool = matches!(param.kind, methods::Kind::Bool);
             match iter.peek() {
                 Some(next) if !is_bool && !next.starts_with("--") => normalized.push(format!("{name}={}", iter.next().unwrap())),
-                Some(next) if is_bool && matches!(next.as_str(), "true" | "false") => normalized.push(format!("{name}={}", iter.next().unwrap())),
+                Some(next) if is_bool && matches!(next.as_str(), "true" | "false") => {
+                    normalized.push(format!("{name}={}", iter.next().unwrap()))
+                }
                 _ if is_bool => normalized.push(format!("{name}=true")),
                 _ => return Err(format!("--{name}: нужно значение")),
             }
@@ -247,7 +255,11 @@ fn print_result(method: &str, result: Result<Value, String>, args: &[String]) ->
         }
         Ok(value) => {
             let text = control::mcp::render(&value);
-            if text.ends_with('\n') { print!("{text}") } else { println!("{text}") }
+            if text.ends_with('\n') {
+                print!("{text}")
+            } else {
+                println!("{text}")
+            }
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),

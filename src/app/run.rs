@@ -84,7 +84,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                ui.label(RichText::new("Задачи не найдены. Создайте .codium/tasks.toml.").small().color(theme::MUTED_TEXT));
+                ui.label(RichText::new("Задачи не найдены. Создайте .lumen/tasks.toml.").small().color(theme::MUTED_TEXT));
             });
         }
         ui.add_space(12.0);
@@ -125,7 +125,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     }
 }
 
-/// Opens `.codium/tasks.toml`, creating it from a template if needed.
+/// Opens `.lumen/tasks.toml`, creating it from a template if needed.
 pub fn edit_tasks_file(app: &mut App) {
     let Some(workspace) = &app.workspace else { return };
     let host = workspace.host.clone();
@@ -133,9 +133,10 @@ pub fn edit_tasks_file(app: &mut App) {
     let dir = host::parent(&path);
     app.bus.spawn(move || {
         if host.stat(&path).is_err()
-            && let Err(error) = host.create_dir(&dir).and_then(|_| host.write_file(&path, tasks::TASKS_TEMPLATE.as_bytes())) {
-                return Msg::Notice(format!("Не удалось создать {path}: {error}"), true);
-            }
+            && let Err(error) = host.create_dir(&dir).and_then(|_| host.write_file(&path, tasks::TASKS_TEMPLATE.as_bytes()))
+        {
+            return Msg::Notice(format!("Не удалось создать {path}: {error}"), true);
+        }
         Msg::FsOpDone { reload: vec![dir], open: Some(path), renamed: None, error: None }
     });
 }

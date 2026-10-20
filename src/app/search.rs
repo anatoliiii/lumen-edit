@@ -1,9 +1,9 @@
 //! Project-wide search and replace (runs on the host: agent, ripgrep or grep).
 
-use codium_shared::fsops::{SearchMatch, SearchQuery};
 use eframe::egui::{self, Align2, FontId, RichText, Sense, TextFormat, pos2, text::LayoutJob, vec2};
+use lumen_shared::fsops::{SearchMatch, SearchQuery};
 
-use super::{App, Msg, Tab, util};
+use super::{App, Msg, Tab};
 use crate::{host, theme};
 
 #[derive(Default)]
@@ -41,7 +41,8 @@ impl SearchState {
                 self.results = if include.is_empty() {
                     matches
                 } else {
-                    let parts: Vec<String> = include.split(',').map(|p| p.trim().trim_start_matches('*').to_string()).filter(|p| !p.is_empty()).collect();
+                    let parts: Vec<String> =
+                        include.split(',').map(|p| p.trim().trim_start_matches('*').to_string()).filter(|p| !p.is_empty()).collect();
                     matches.into_iter().filter(|m| parts.iter().any(|p| m.path.to_lowercase().contains(p))).collect()
                 };
                 self.truncated = truncated;
@@ -118,7 +119,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         }
         ui.horizontal(|ui| {
             ui.add_space(22.0);
-            let input = ui.add(egui::TextEdit::singleline(&mut search.include).hint_text("Файлы (напр. .rs, src/)").desired_width(ui.available_width()));
+            let input = ui.add(
+                egui::TextEdit::singleline(&mut search.include).hint_text("Файлы (напр. .rs, src/)").desired_width(ui.available_width()),
+            );
             if input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 run = true;
             }
@@ -137,7 +140,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     paths.len()
                 };
                 let more = if search.truncated { "+" } else { "" };
-                ui.label(RichText::new(format!("{}{more} совпадений в {files} файлах", search.results.len())).small().color(theme::MUTED_TEXT));
+                ui.label(
+                    RichText::new(format!("{}{more} совпадений в {files} файлах", search.results.len())).small().color(theme::MUTED_TEXT),
+                );
             }
         });
     });
@@ -188,15 +193,26 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             match index {
                 None => {
                     let collapsed = search.collapsed.contains(path);
-                    let (icon, color) = util::file_icon(path);
-                    ui.painter().text(rect.left_center() + vec2(10.0, 0.0), Align2::LEFT_CENTER, if collapsed { "⏵" } else { "⏷" }, FontId::proportional(10.0), theme::MUTED_TEXT);
-                    ui.painter().text(rect.left_center() + vec2(26.0, 0.0), Align2::CENTER_CENTER, icon, FontId::monospace(11.0), color);
+                    ui.painter().text(
+                        rect.left_center() + vec2(10.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        if collapsed { "⏵" } else { "⏷" },
+                        FontId::proportional(10.0),
+                        theme::MUTED_TEXT,
+                    );
+                    super::icons::file(ui.painter(), rect.left_center() + vec2(26.0, 0.0), &format!("/{path}"));
                     let name = host::file_name(path);
                     let dir = path.strip_suffix(name).unwrap_or("").trim_end_matches('/');
                     let galley = ui.painter().layout_no_wrap(name.to_string(), FontId::proportional(13.0), theme::TEXT);
                     let w = galley.size().x;
                     ui.painter().galley(rect.left_center() + vec2(36.0, -galley.size().y / 2.0), galley, theme::TEXT);
-                    ui.painter().text(rect.left_center() + vec2(42.0 + w, 0.0), Align2::LEFT_CENTER, dir, FontId::proportional(11.5), theme::FAINT_TEXT);
+                    ui.painter().text(
+                        rect.left_center() + vec2(42.0 + w, 0.0),
+                        Align2::LEFT_CENTER,
+                        dir,
+                        FontId::proportional(11.5),
+                        theme::FAINT_TEXT,
+                    );
                     if response.clicked() {
                         toggle = Some(path.clone());
                     }
@@ -209,13 +225,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     let start = (m.start as usize).saturating_sub(trimmed).min(text.len());
                     let end = (m.end as usize).saturating_sub(trimmed).clamp(start, text.len());
                     let (start, end) = if text.is_char_boundary(start) && text.is_char_boundary(end) { (start, end) } else { (0, 0) };
-                    let format = |color, background| TextFormat { font_id: FontId::proportional(12.5), color, background, ..Default::default() };
+                    let format =
+                        |color, background| TextFormat { font_id: FontId::proportional(12.5), color, background, ..Default::default() };
                     job.append(&text[..start], 0.0, format(theme::MUTED_TEXT, eframe::egui::Color32::TRANSPARENT));
                     job.append(&text[start..end], 0.0, format(theme::TEXT, theme::MATCH_HIGHLIGHT));
                     job.append(&text[end..], 0.0, format(theme::MUTED_TEXT, eframe::egui::Color32::TRANSPARENT));
                     let galley = ui.painter().layout_job(job);
                     let painter = ui.painter_at(rect);
-                    painter.text(pos2(rect.left() + 46.0, rect.center().y), Align2::RIGHT_CENTER, (m.line + 1).to_string(), FontId::monospace(11.0), theme::FAINT_TEXT);
+                    painter.text(
+                        pos2(rect.left() + 46.0, rect.center().y),
+                        Align2::RIGHT_CENTER,
+                        (m.line + 1).to_string(),
+                        FontId::monospace(11.0),
+                        theme::FAINT_TEXT,
+                    );
                     painter.galley(pos2(rect.left() + 54.0, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT);
                     if response.clicked() {
                         let col = m.text[..(m.start as usize).min(m.text.len())].chars().count();
@@ -268,7 +291,7 @@ fn replace_everywhere(app: &mut App) {
         whole_word: search.whole_word,
         max_results: 0,
     };
-    let regex = match codium_shared::fsops::build_regex(&query) {
+    let regex = match lumen_shared::fsops::build_regex(&query) {
         Ok(regex) => regex,
         Err(error) => {
             app.notify(error, true);
@@ -308,7 +331,11 @@ fn replace_everywhere(app: &mut App) {
         for path in on_disk {
             let Ok(data) = host.read_file(&path) else { continue };
             let text = String::from_utf8_lossy(&data);
-            let new = if is_regex { regex.replace_all(&text, replacement.as_str()) } else { regex.replace_all(&text, regex::NoExpand(&replacement)) };
+            let new = if is_regex {
+                regex.replace_all(&text, replacement.as_str())
+            } else {
+                regex.replace_all(&text, regex::NoExpand(&replacement))
+            };
             if new != text {
                 if let Err(error) = host.write_file(&path, new.as_bytes()) {
                     return Msg::WorkspaceEditDone(Err(format!("{path}: {error}")));

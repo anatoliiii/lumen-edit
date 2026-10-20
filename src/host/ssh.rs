@@ -12,11 +12,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use codium_shared::{
+use crossbeam_channel::Sender;
+use lumen_shared::{
     fsops::{DirEntry, SearchMatch, SearchQuery, Stat},
     proto::{Op, Reply},
 };
-use crossbeam_channel::Sender;
 
 use super::{agent::AgentClient, shell};
 
@@ -28,10 +28,15 @@ pub struct Remote {
     agent: Mutex<Option<Arc<AgentClient>>>,
     pub agent_status: Mutex<String>,
     pub events: Arc<Mutex<Option<Sender<Vec<String>>>>>,
+    /// Whether the master connection answered the last health check.
+    pub connected: AtomicBool,
+    /// Set once the agent ran, so a dead agent is brought back.
+    agent_wanted: AtomicBool,
+    watch_root: Mutex<Option<String>>,
 }
 
 pub fn control_path(target: &str) -> PathBuf {
-    let base = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("codium-rs");
+    let base = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("lumen-edit");
     let _ = std::fs::create_dir_all(&base);
     let hash = target.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
     base.join(format!("cm-{hash:016x}"))
@@ -93,6 +98,9 @@ pub fn wait_and_establish(target: String, master_alive: Arc<AtomicBool>, use_age
         agent: Mutex::new(None),
         agent_status: Mutex::new("агент не используется".into()),
         events: Arc::new(Mutex::new(None)),
+        connected: AtomicBool::new(true),
+        agent_wanted: AtomicBool::new(false),
+        watch_root: Mutex::new(None),
     };
 
     let probe = super::run_with_input(&mut remote.ssh_command("uname -m; printf '%s\\n' \"$HOME\"", false), None)?;
@@ -103,16 +111,32 @@ pub fn wait_and_establish(target: String, master_alive: Arc<AtomicBool>, use_age
 
     let remote = Arc::new(remote);
     if use_agent {
-        let status = match super::agent::install_and_start(&remote) {
-            Ok(client) => {
-                *remote.agent.lock().unwrap() = Some(Arc::new(client));
-                "агент запущен".to_string()
-            }
-            Err(error) => format!("без агента: {error}"),
-        };
-        *remote.agent_status.lock().unwrap() = status;
+        let _ = remote.restart_agent();
     }
+    spawn_health_check(Arc::downgrade(&remote));
     Ok(remote)
+}
+
+/// Every few seconds: notes whether the connection is up and brings back an
+/// agent that died (dropped link, killed process) once the host answers.
+fn spawn_health_check(remote: std::sync::Weak<Remote>) {
+    std::thread::spawn(move || {
+        let mut last_restart: Option<Instant> = None;
+        loop {
+            std::thread::sleep(Duration::from_secs(5));
+            let Some(remote) = remote.upgrade() else { break };
+            let up = master_ready(&remote.target);
+            remote.connected.store(up, Ordering::Relaxed);
+            if up
+                && remote.agent_wanted.load(Ordering::Relaxed)
+                && remote.agent().is_none()
+                && last_restart.is_none_or(|t| t.elapsed() > Duration::from_secs(30))
+            {
+                last_restart = Some(Instant::now());
+                let _ = remote.restart_agent();
+            }
+        }
+    });
 }
 
 impl Remote {
@@ -138,6 +162,29 @@ impl Remote {
         command
     }
 
+    /// (Re)starts the agent on the host and resumes watching.
+    pub fn restart_agent(self: &Arc<Self>) -> Result<(), String> {
+        if let Some(old) = self.agent.lock().unwrap().take() {
+            old.shutdown();
+        }
+        match super::agent::install_and_start(self) {
+            Ok(client) => {
+                *self.agent.lock().unwrap() = Some(Arc::new(client));
+                *self.agent_status.lock().unwrap() = "агент запущен".into();
+                self.agent_wanted.store(true, Ordering::Relaxed);
+                let root = self.watch_root.lock().unwrap().clone();
+                if let Some(root) = root {
+                    let _ = self.call(Op::Watch { root }, &[]);
+                }
+                Ok(())
+            }
+            Err(error) => {
+                *self.agent_status.lock().unwrap() = format!("без агента: {error}");
+                Err(error)
+            }
+        }
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn has_agent(&self) -> bool {
         self.agent().is_some()
@@ -147,7 +194,7 @@ impl Remote {
         let mut guard = self.agent.lock().unwrap();
         if guard.as_ref().is_some_and(|agent| !agent.is_alive()) {
             *guard = None;
-            *self.agent_status.lock().unwrap() = "агент остановился, работаю через shell".into();
+            *self.agent_status.lock().unwrap() = "агент остановился, работаю через shell; перезапущу, когда хост ответит".into();
         }
         guard.clone()
     }
@@ -213,10 +260,7 @@ impl Remote {
     pub fn rename(&self, from: &str, to: &str) -> Result<(), String> {
         match self.call(Op::Rename { from: from.into(), to: to.into() }, &[]) {
             Some(result) => result.map(|_| ()),
-            None => shell::simple(
-                self,
-                &format!("mv -- {} {}", super::shell_quote(from), super::shell_quote(to)),
-            ),
+            None => shell::simple(self, &format!("mv -- {} {}", super::shell_quote(from), super::shell_quote(to))),
         }
     }
 
@@ -241,6 +285,7 @@ impl Remote {
     /// Starts watching `root` for changes; only possible with the agent.
     pub fn watch(&self, root: &str, sink: Sender<Vec<String>>) -> bool {
         *self.events.lock().unwrap() = Some(sink);
+        *self.watch_root.lock().unwrap() = Some(root.to_string());
         matches!(self.call(Op::Watch { root: root.into() }, &[]), Some(Ok(_)))
     }
 
@@ -258,7 +303,7 @@ impl Remote {
 }
 
 fn log_error(error: &str) {
-    eprintln!("codium-rs: agent error: {error}");
+    eprintln!("lumen-edit: agent error: {error}");
 }
 
 /// Shared flag helper for callers that track a master terminal.

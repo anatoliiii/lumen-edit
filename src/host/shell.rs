@@ -1,7 +1,7 @@
 //! Filesystem operations over plain SSH commands, used when the agent is not
 //! available on the remote host.
 
-use codium_shared::fsops::{self, DirEntry, SearchMatch, SearchQuery, Stat};
+use lumen_shared::fsops::{self, DirEntry, SearchMatch, SearchQuery, Stat};
 
 use super::{Remote, run_with_input, shell_quote};
 

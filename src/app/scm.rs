@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Align2, FontId, RichText, Sense, pos2, vec2};
 
-use super::{App, Dialog, diffview::DiffMode, palette::Palette, util};
+use super::{App, Dialog, diffview::DiffMode, palette::Palette};
 use crate::{
     git::{self, FileStatus, RepoState},
     host, theme,
@@ -148,14 +148,26 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         ui.horizontal(|ui| {
             let branch = if status.detached { "(detached HEAD)".to_string() } else { status.branch.clone() };
             if ui.button(format!("⎇ {branch}")).on_hover_text("Переключить ветку").clicked() {
-                actions.push(Action::Checkout(git::Branch { name: String::new(), remote: false, current: false, upstream: String::new(), commit: String::new(), date: String::new(), subject: String::new() }));
+                actions.push(Action::Checkout(git::Branch {
+                    name: String::new(),
+                    remote: false,
+                    current: false,
+                    upstream: String::new(),
+                    commit: String::new(),
+                    date: String::new(),
+                    subject: String::new(),
+                }));
             }
             let sync_label = match (&status.upstream, status.ahead, status.behind) {
                 (None, _, _) => "↑ Опубликовать".to_string(),
                 (Some(_), 0, 0) => "⟳".to_string(),
                 (Some(_), ahead, behind) => format!("⟳ {behind}↓ {ahead}↑"),
             };
-            let hint = if status.upstream.is_none() { "Отправить ветку на origin" } else { "Синхронизировать: pull, затем push" };
+            let hint = if status.upstream.is_none() {
+                "Отправить ветку на origin"
+            } else {
+                "Синхронизировать: pull, затем push"
+            };
             if ui.button(sync_label).on_hover_text(hint).clicked() {
                 actions.push(if status.upstream.is_none() { Action::Push } else { Action::Sync });
             }
@@ -164,34 +176,44 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
 
     // Merge / rebase in progress.
     if status.state != RepoState::Clean {
-        egui::Frame::new().fill(theme::SURFACE).inner_margin(egui::Margin::same(8)).outer_margin(egui::Margin::symmetric(8, 6)).corner_radius(4.0).show(ui, |ui| {
-            let label = match status.state {
-                RepoState::Merging => "Идёт слияние",
-                RepoState::Rebasing => "Идёт rebase",
-                RepoState::CherryPicking => "Идёт cherry-pick",
-                RepoState::Reverting => "Идёт revert",
-                RepoState::Clean => "",
-            };
-            ui.label(RichText::new(label).color(theme::WARNING).strong());
-            let conflicts = status.files.iter().filter(|f| f.conflict).count();
-            if conflicts > 0 {
-                ui.label(RichText::new(format!("Конфликтов: {conflicts}. Разрешите их в редакторе и добавьте в индекс.")).small());
-            }
-            ui.horizontal(|ui| {
-                if ui.add_enabled(conflicts == 0, egui::Button::new("Продолжить")).clicked() {
-                    actions.push(Action::Continue);
+        egui::Frame::new()
+            .fill(theme::SURFACE)
+            .inner_margin(egui::Margin::same(8))
+            .outer_margin(egui::Margin::symmetric(8, 6))
+            .corner_radius(4.0)
+            .show(ui, |ui| {
+                let label = match status.state {
+                    RepoState::Merging => "Идёт слияние",
+                    RepoState::Rebasing => "Идёт rebase",
+                    RepoState::CherryPicking => "Идёт cherry-pick",
+                    RepoState::Reverting => "Идёт revert",
+                    RepoState::Clean => "",
+                };
+                ui.label(RichText::new(label).color(theme::WARNING).strong());
+                let conflicts = status.files.iter().filter(|f| f.conflict).count();
+                if conflicts > 0 {
+                    ui.label(RichText::new(format!("Конфликтов: {conflicts}. Разрешите их в редакторе и добавьте в индекс.")).small());
                 }
-                if ui.button(RichText::new("Прервать").color(theme::ERROR)).clicked() {
-                    actions.push(Action::Abort);
-                }
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(conflicts == 0, egui::Button::new("Продолжить")).clicked() {
+                        actions.push(Action::Continue);
+                    }
+                    if ui.button(RichText::new("Прервать").color(theme::ERROR)).clicked() {
+                        actions.push(Action::Abort);
+                    }
+                });
             });
-        });
     }
 
     // Commit box.
     egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
-        let hint = if git.amend { "Новое сообщение для последнего коммита" } else { "Сообщение коммита (Ctrl+Enter)" };
-        let editor = ui.add(egui::TextEdit::multiline(&mut git.commit_message).hint_text(hint).desired_rows(3).desired_width(f32::INFINITY));
+        let hint = if git.amend {
+            "Новое сообщение для последнего коммита"
+        } else {
+            "Сообщение коммита (Ctrl+Enter)"
+        };
+        let editor =
+            ui.add(egui::TextEdit::multiline(&mut git.commit_message).hint_text(hint).desired_rows(3).desired_width(f32::INFINITY));
         if editor.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)) {
             actions.push(Action::Commit);
         }
@@ -208,7 +230,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             if ui.add_enabled(enabled, egui::Button::new(RichText::new(label).strong()).fill(theme::ACCENT_DIM)).clicked() {
                 actions.push(Action::Commit);
             }
-            if ui.checkbox(&mut git.amend, "amend").on_hover_text("Изменить последний коммит").changed() && git.amend && git.commit_message.is_empty() {
+            if ui.checkbox(&mut git.amend, "amend").on_hover_text("Изменить последний коммит").changed()
+                && git.amend
+                && git.commit_message.is_empty()
+            {
                 actions.push(Action::AmendLoad);
             }
         });
@@ -371,11 +396,18 @@ fn section_header(ui: &mut egui::Ui, title: &str, count: usize, collapsed: &mut 
     if response.hovered() {
         ui.painter().rect_filled(rect, 0.0, theme::SURFACE);
     }
-    ui.painter().text(rect.left_center() + vec2(10.0, 0.0), Align2::LEFT_CENTER, if *collapsed { "⏵" } else { "⏷" }, FontId::proportional(10.0), theme::MUTED_TEXT);
+    ui.painter().text(
+        rect.left_center() + vec2(10.0, 0.0),
+        Align2::LEFT_CENTER,
+        if *collapsed { "⏵" } else { "⏷" },
+        FontId::proportional(10.0),
+        theme::MUTED_TEXT,
+    );
     ui.painter().text(rect.left_center() + vec2(24.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(11.5), theme::MUTED_TEXT);
     let badge = count.to_string();
     ui.painter().text(rect.right_center() - vec2(10.0, 0.0), Align2::RIGHT_CENTER, badge, FontId::proportional(11.5), theme::FAINT_TEXT);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(30.0, 2.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+    let mut child = ui
+        .new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(30.0, 2.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
     buttons(&mut child);
     if response.clicked() {
         *collapsed = !*collapsed;
@@ -390,7 +422,6 @@ fn file_row(ui: &mut egui::Ui, file: &FileStatus, staged: bool, actions: &mut Ve
     }
     let name = host::file_name(&file.path);
     let dir = file.path.strip_suffix(name).unwrap_or("").trim_end_matches('/');
-    let (icon, icon_color) = util::file_icon(name);
     let letter = file.letter(staged);
     let color = match letter {
         'A' | 'U' => theme::GIT_ADDED,
@@ -399,7 +430,7 @@ fn file_row(ui: &mut egui::Ui, file: &FileStatus, staged: bool, actions: &mut Ve
         _ => theme::GIT_MODIFIED,
     };
     let painter = ui.painter_at(rect);
-    painter.text(rect.left_center() + vec2(24.0, 0.0), Align2::CENTER_CENTER, icon, FontId::monospace(11.0), icon_color);
+    super::icons::file(&painter, rect.left_center() + vec2(24.0, 0.0), &format!("/{}", file.path));
     let name_color = if letter == 'D' { theme::MUTED_TEXT } else { theme::TEXT };
     let galley = painter.layout_no_wrap(name.to_string(), FontId::proportional(13.0), name_color);
     let w = galley.size().x;
@@ -408,7 +439,9 @@ fn file_row(ui: &mut egui::Ui, file: &FileStatus, staged: bool, actions: &mut Ve
     painter.text(rect.right_center() - vec2(10.0, 0.0), Align2::RIGHT_CENTER, letter.to_string(), FontId::monospace(12.0), color);
 
     if hovered {
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(26.0, 1.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new().max_rect(rect.shrink2(vec2(26.0, 1.0))).layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
         let paths = vec![file.path.clone()];
         if conflict {
             if child.small_button("+").on_hover_text("Отметить как разрешённый").clicked() {
@@ -468,7 +501,13 @@ fn branch_row(ui: &mut egui::Ui, branch: &git::Branch, actions: &mut Vec<Action>
     } else {
         theme::TEXT
     };
-    let marker = if branch.current { "●" } else if branch.remote { "⇅" } else { "⎇" };
+    let marker = if branch.current {
+        "●"
+    } else if branch.remote {
+        "⇅"
+    } else {
+        "⎇"
+    };
     painter.text(rect.left_center() + vec2(20.0, 0.0), Align2::CENTER_CENTER, marker, FontId::proportional(11.0), color);
     painter.text(rect.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, &branch.name, FontId::proportional(13.0), color);
     painter.text(rect.right_center() - vec2(10.0, 0.0), Align2::RIGHT_CENTER, &branch.date, FontId::proportional(11.0), theme::FAINT_TEXT);
@@ -517,7 +556,9 @@ fn drop_actions(app: &mut App, actions: Vec<Action>) {
                 app.dialog = Some(Dialog::Confirm {
                     title: "Отмена изменений".into(),
                     message,
-                    action: Box::new(move |app: &mut App| app.git_op("restore", move |h, r| git::discard(h, r, &files).map(|_| String::new()))),
+                    action: Box::new(move |app: &mut App| {
+                        app.git_op("restore", move |h, r| git::discard(h, r, &files).map(|_| String::new()))
+                    }),
                 });
             }
             Action::Diff(path, mode) => app.open_diff(path, mode),
@@ -543,7 +584,10 @@ fn drop_actions(app: &mut App, actions: Vec<Action>) {
                     title: "Удаление ветки".into(),
                     message: format!("Удалить ветку «{name}»?"),
                     action: Box::new(move |app: &mut App| {
-                        app.git_op("branch -d", move |h, r| git::delete_branch(h, r, &name, false).or_else(|e| if e.contains("not fully merged") { git::delete_branch(h, r, &name, true) } else { Err(e) }))
+                        app.git_op("branch -d", move |h, r| {
+                            git::delete_branch(h, r, &name, false)
+                                .or_else(|e| if e.contains("not fully merged") { git::delete_branch(h, r, &name, true) } else { Err(e) })
+                        })
                     }),
                 });
             }
@@ -555,7 +599,9 @@ fn drop_actions(app: &mut App, actions: Vec<Action>) {
                     title: "Сообщение для stash (необязательно)".into(),
                     value: "wip".into(),
                     focus: true,
-                    action: Box::new(|app: &mut App, message: String| app.git_op("stash", move |h, r| git::stash_push(h, r, &message, true))),
+                    action: Box::new(|app: &mut App, message: String| {
+                        app.git_op("stash", move |h, r| git::stash_push(h, r, &message, true))
+                    }),
                 });
             }
             Action::StashAction(action, name) => app.git_op(&format!("stash {action}"), move |h, r| git::stash_action(h, r, action, &name)),
@@ -634,7 +680,11 @@ pub fn push(app: &mut App) {
 pub fn prompt_add_remote(app: &mut App, publish: Option<()>) {
     let first = app.workspace.as_ref().is_none_or(|w| w.git.remotes.is_empty());
     app.dialog = Some(Dialog::Input {
-        title: if publish.is_some() { "Куда опубликовать: URL репозитория (git@host:user/repo.git)".into() } else { "Новый remote: имя и URL через пробел (или только URL для origin)".into() },
+        title: if publish.is_some() {
+            "Куда опубликовать: URL репозитория (git@host:user/repo.git)".into()
+        } else {
+            "Новый remote: имя и URL через пробел (или только URL для origin)".into()
+        },
         value: if first || publish.is_some() { String::new() } else { "upstream ".into() },
         focus: true,
         action: Box::new(move |app: &mut App, input: String| {

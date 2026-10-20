@@ -122,10 +122,9 @@ pub fn show_diff(ui: &mut egui::Ui, app: &mut App, index: usize) {
                                 action = Some(HunkAction::Revert(file_index, hunk_index));
                             }
                         }
-                        DiffMode::Staged
-                            if ui.small_button("− Из индекса").clicked() => {
-                                action = Some(HunkAction::Unstage(file_index, hunk_index));
-                            }
+                        DiffMode::Staged if ui.small_button("− Из индекса").clicked() => {
+                            action = Some(HunkAction::Unstage(file_index, hunk_index));
+                        }
                         _ => {}
                     }
                     if ui.small_button("→").on_hover_text("Перейти к месту в файле").clicked() {
@@ -243,10 +242,17 @@ pub fn show_log(ui: &mut egui::Ui, app: &mut App, index: usize) {
     let rows: Vec<&git::LogEntry> = log
         .entries
         .iter()
-        .filter(|e| filter.is_empty() || e.subject.to_lowercase().contains(&filter) || e.author.to_lowercase().contains(&filter) || e.hash.starts_with(&filter) || e.refs.to_lowercase().contains(&filter))
+        .filter(|e| {
+            filter.is_empty()
+                || e.subject.to_lowercase().contains(&filter)
+                || e.author.to_lowercase().contains(&filter)
+                || e.hash.starts_with(&filter)
+                || e.refs.to_lowercase().contains(&filter)
+        })
         .collect();
     let row_h = 22.0;
-    let graph_w = rows.iter().map(|r| r.graph.chars().count()).max().unwrap_or(2) as f32 * ui.fonts_mut(|f| f.glyph_width(&mono, 'M')) + 12.0;
+    let graph_w =
+        rows.iter().map(|r| r.graph.chars().count()).max().unwrap_or(2) as f32 * ui.fonts_mut(|f| f.glyph_width(&mono, 'M')) + 12.0;
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, row_h, rows.len(), |ui, range| {
         for entry in &rows[range] {

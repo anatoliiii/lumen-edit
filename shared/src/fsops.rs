@@ -43,12 +43,8 @@ pub struct SearchMatch {
 
 pub fn stat(path: &str) -> io::Result<Stat> {
     let meta = fs::metadata(path)?;
-    let mtime = meta
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
+    let mtime =
+        meta.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok()).map(|duration| duration.as_millis() as u64).unwrap_or(0);
     Ok(Stat { is_dir: meta.is_dir(), size: meta.len(), mtime })
 }
 
@@ -65,11 +61,7 @@ pub fn read_dir(path: &str) -> io::Result<Vec<DirEntry>> {
 }
 
 pub fn sort_entries(entries: &mut [DirEntry]) {
-    entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
 }
 
 /// Writes through a temporary file and renames it over the target, keeping
@@ -77,7 +69,7 @@ pub fn sort_entries(entries: &mut [DirEntry]) {
 pub fn write_atomic(path: &str, data: &[u8]) -> io::Result<()> {
     let target = Path::new(path);
     let file_name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let temp = target.with_file_name(format!(".{file_name}.codium-tmp"));
+    let temp = target.with_file_name(format!(".{file_name}.lumen-tmp"));
     let permissions = fs::metadata(target).ok().map(|meta| meta.permissions());
     // Symlinks: write in place so the link itself is preserved.
     if fs::symlink_metadata(target).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
@@ -97,11 +89,7 @@ pub fn write_atomic(path: &str, data: &[u8]) -> io::Result<()> {
 }
 
 pub fn remove(path: &str) -> io::Result<()> {
-    if fs::symlink_metadata(path)?.is_dir() {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
-    }
+    if fs::symlink_metadata(path)?.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) }
 }
 
 fn walker(root: &str) -> ignore::Walk {
@@ -141,10 +129,7 @@ pub fn build_regex(query: &SearchQuery) -> Result<regex::Regex, String> {
     if query.whole_word {
         pattern = format!(r"\b(?:{pattern})\b");
     }
-    regex::RegexBuilder::new(&pattern)
-        .case_insensitive(!query.case_sensitive)
-        .build()
-        .map_err(|e| e.to_string())
+    regex::RegexBuilder::new(&pattern).case_insensitive(!query.case_sensitive).build().map_err(|e| e.to_string())
 }
 
 pub fn search(root: &str, query: &SearchQuery) -> Result<(Vec<SearchMatch>, bool), String> {
@@ -160,12 +145,7 @@ pub fn search(root: &str, query: &SearchQuery) -> Result<(Vec<SearchMatch>, bool
         if file.metadata().map(|m| m.len() > 8 * 1024 * 1024).unwrap_or(true) {
             continue;
         }
-        let relative = entry
-            .path()
-            .strip_prefix(root_path)
-            .unwrap_or(entry.path())
-            .to_string_lossy()
-            .into_owned();
+        let relative = entry.path().strip_prefix(root_path).unwrap_or(entry.path()).to_string_lossy().into_owned();
         let reader = io::BufReader::new(file);
         for (line_index, line) in reader.split(b'\n').enumerate() {
             let Ok(line) = line else { break };

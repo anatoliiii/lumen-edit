@@ -198,6 +198,11 @@ impl App {
                     Ok(p) => self.resolve(&p),
                     Err(e) => return fail(e),
                 };
+                // Images open in a viewer tab, not as text.
+                if super::media::kind(&path) == Some(super::media::Media::Raster) {
+                    self.open_file(path.clone(), None);
+                    return done(json!({ "path": path, "viewer": "image" }));
+                }
                 let goto = params.get("line").map(|_| position(params, "line", "column"));
                 self.with_doc(
                     path,
@@ -462,7 +467,7 @@ impl App {
             }
             "search" => {
                 let Ok((host, root)) = self.require_workspace() else { return fail("проект не открыт".into()) };
-                let query = codium_shared::fsops::SearchQuery {
+                let query = lumen_shared::fsops::SearchQuery {
                     pattern: str_param(params, "query").unwrap_or("").to_string(),
                     regex: bool_param(params, "regex", false),
                     case_sensitive: bool_param(params, "case_sensitive", false),
@@ -696,10 +701,9 @@ impl App {
                 if action == "open" || action == "prompt" {
                     super::agent::open(self);
                 }
-                let Some(index) = self.tabs.iter().position(|t| matches!(t, Tab::Agent(_))) else {
+                let Some(agent) = super::agent::agent_mut(self) else {
                     return fail("агент не открыт (action=open)".into());
                 };
-                let Some(Tab::Agent(agent)) = self.tabs.get_mut(index) else { return fail("агент не открыт".into()) };
                 match action {
                     "open" => done(json!({ "running": agent.is_running(), "sandboxed": agent.sandboxed, "cwd": agent.cwd })),
                     "prompt" => {
@@ -725,6 +729,50 @@ impl App {
                     }
                 }
             }
+            "pulse" => done(self.pulse.json()),
+            "transfer" => {
+                let hosts = super::teleport::known_hosts(self);
+                let pick = |key: Option<&str>, app: &App| -> Result<Host, String> {
+                    match key {
+                        None => app.host().ok_or_else(|| "проект не открыт".to_string()),
+                        Some("local") => Ok(Host::Local),
+                        Some(key) => {
+                            let key = if key.starts_with("ssh:") { key.to_string() } else { format!("ssh:{key}") };
+                            hosts.iter().find(|h| h.key() == key).cloned().ok_or_else(|| format!("{key} не подключён (connect_ssh)"))
+                        }
+                    }
+                };
+                let (src_host, dst_host) = match (pick(str_param(params, "src_host"), self), pick(str_param(params, "dst_host"), self)) {
+                    (Ok(a), Ok(b)) => (a, b),
+                    (Err(e), _) | (_, Err(e)) => return fail(e),
+                };
+                let project = self.host();
+                // Relative paths resolve against the project root on the project host.
+                let resolve = |path: &str, host: &Host, app: &App| -> String {
+                    if path.starts_with('/') || project.as_ref().is_none_or(|p| !p.same(host)) { path.to_string() } else { app.resolve(path) }
+                };
+                let src = resolve(str_param(params, "src").unwrap_or("").trim_end_matches('/'), &src_host, self);
+                let dst_dir = resolve(str_param(params, "dst_dir").unwrap_or(""), &dst_host, self);
+                if src.is_empty() || dst_dir.is_empty() {
+                    return fail("нужны `src` и `dst_dir`".into());
+                }
+                if !self.tabs.iter().any(|t| matches!(t, Tab::Teleport(_))) {
+                    let active = self.active_tab;
+                    super::teleport::open(self);
+                    self.active_tab = active.or(self.active_tab);
+                }
+                let tab_id = self.tabs.iter().find_map(|t| if let Tab::Teleport(t) = t { Some(t.id) } else { None }).unwrap_or(0);
+                let job = super::teleport::Job {
+                    src: src_host,
+                    src_dir: host::parent(&src),
+                    names: vec![host::file_name(&src).to_string()],
+                    dst: dst_host,
+                    dst_dir: dst_dir.clone(),
+                    move_after: bool_param(params, "move", false),
+                };
+                super::teleport::start_transfer(self, tab_id, job);
+                done(json!(format!("передача запущена: {src} → {dst_dir}; ход — во вкладке «Телепорт»")))
+            }
             "notify" => {
                 self.notify(str_param(params, "text").unwrap_or(""), bool_param(params, "error", false));
                 done(json!("ok"))
@@ -733,7 +781,7 @@ impl App {
                 self.run_command(Command::Quit);
                 done(json!("ok"))
             }
-            _ => fail(format!("неизвестный метод `{method}`, список — codium-rs methods")),
+            _ => fail(format!("неизвестный метод `{method}`, список — lumen-edit methods")),
         }
     }
 
@@ -857,7 +905,9 @@ fn lsp_request(app: &mut App, index: usize, method: String, params: Value, reply
     };
     let lsp_method = lsp_method.to_string();
     let client = if capability.is_empty() {
-        app.lsp.client_with(doc, "textDocumentSync").or_else(|starting| app.lsp.client_with(doc, "positionEncoding").map_err(|s| s || starting))
+        app.lsp
+            .client_with(doc, "textDocumentSync")
+            .or_else(|starting| app.lsp.client_with(doc, "positionEncoding").map_err(|s| s || starting))
     } else {
         app.lsp.client_with(doc, capability)
     };
@@ -981,7 +1031,7 @@ fn apply_edits(doc: &mut super::document::Document, params: &Value) -> Result<us
 }
 
 fn apply_replace(doc: &mut super::document::Document, params: &Value) -> Result<usize, String> {
-    let query = codium_shared::fsops::SearchQuery {
+    let query = lumen_shared::fsops::SearchQuery {
         pattern: req_str(params, "find")?,
         regex: bool_param(params, "regex", false),
         case_sensitive: true,
@@ -989,7 +1039,7 @@ fn apply_replace(doc: &mut super::document::Document, params: &Value) -> Result<
         max_results: 0,
     };
     let replacement = str_param(params, "replace").unwrap_or("").to_string();
-    let regex = codium_shared::fsops::build_regex(&query)?;
+    let regex = lumen_shared::fsops::build_regex(&query)?;
     let text = doc.buffer.rope.to_string();
     let all = bool_param(params, "all", true);
     let mut edits = Vec::new();
@@ -1011,13 +1061,8 @@ fn apply_replace(doc: &mut super::document::Document, params: &Value) -> Result<
 }
 
 fn exec(host: &Host, cwd: &str, command: &str, timeout: Duration) -> Result<Value, String> {
-    let mut child = host
-        .shell(cwd, command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let mut child =
+        host.shell(cwd, command).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let out_thread = std::thread::spawn(move || {

@@ -19,7 +19,12 @@ fn menu_item(ui: &mut egui::Ui, app: &mut App, command: Command) {
 pub fn menu_bar(ui: &mut egui::Ui, app: &mut App) {
     egui::Panel::top("menu_bar")
         .exact_size(28.0)
-        .frame(egui::Frame::new().fill(theme::ACTIVITY_BACKGROUND).inner_margin(egui::Margin::symmetric(6, 0)).stroke(Stroke::new(1.0, theme::BORDER)))
+        .frame(
+            egui::Frame::new()
+                .fill(theme::ACTIVITY_BACKGROUND)
+                .inner_margin(egui::Margin::symmetric(6, 0))
+                .stroke(Stroke::new(1.0, theme::BORDER)),
+        )
         .show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.label(RichText::new("◆").color(theme::ACCENT));
@@ -29,7 +34,9 @@ pub fn menu_bar(ui: &mut egui::Ui, app: &mut App) {
                         menu_item(ui, app, command);
                     }
                     ui.separator();
-                    for command in [Command::NewFile, Command::NewFolder, Command::Save, Command::SaveAll, Command::CloseTab] {
+                    for command in
+                        [Command::NewFile, Command::NewFolder, Command::Teleport, Command::Save, Command::SaveAll, Command::CloseTab]
+                    {
                         menu_item(ui, app, command);
                     }
                     ui.separator();
@@ -80,13 +87,28 @@ pub fn menu_bar(ui: &mut egui::Ui, app: &mut App) {
                 });
                 ui.menu_button("Перейти", |ui| {
                     ui.set_min_width(300.0);
-                    for command in [Command::QuickOpen, Command::GotoLine, Command::GotoDefinition, Command::References, Command::NextTab, Command::PrevTab] {
+                    for command in [
+                        Command::QuickOpen,
+                        Command::GotoLine,
+                        Command::GotoDefinition,
+                        Command::References,
+                        Command::NextTab,
+                        Command::PrevTab,
+                    ] {
                         menu_item(ui, app, command);
                     }
                 });
                 ui.menu_button("Запуск", |ui| {
                     ui.set_min_width(300.0);
-                    for command in [Command::RunDefault, Command::RunTask, Command::Build, Command::Test, Command::RerunLast, Command::KillTerminal, Command::EditTasks] {
+                    for command in [
+                        Command::RunDefault,
+                        Command::RunTask,
+                        Command::Build,
+                        Command::Test,
+                        Command::RerunLast,
+                        Command::KillTerminal,
+                        Command::EditTasks,
+                    ] {
                         menu_item(ui, app, command);
                     }
                 });
@@ -106,7 +128,8 @@ pub fn menu_bar(ui: &mut egui::Ui, app: &mut App) {
                         menu_item(ui, app, command);
                     }
                     ui.separator();
-                    for command in [Command::GitCheckout, Command::GitNewBranch, Command::GitMerge, Command::GitStash, Command::GitStashPop] {
+                    for command in [Command::GitCheckout, Command::GitNewBranch, Command::GitMerge, Command::GitStash, Command::GitStashPop]
+                    {
                         menu_item(ui, app, command);
                     }
                     ui.separator();
@@ -118,7 +141,8 @@ pub fn menu_bar(ui: &mut egui::Ui, app: &mut App) {
                     ui.set_min_width(300.0);
                     menu_item(ui, app, Command::CommandPalette);
                     menu_item(ui, app, Command::RestartLsp);
-                    ui.label(RichText::new(format!("Codium RS {}", env!("CARGO_PKG_VERSION"))).small().color(theme::FAINT_TEXT));
+                    ui.separator();
+                    menu_item(ui, app, Command::About);
                 });
             });
         });
@@ -208,7 +232,10 @@ pub fn activity_bar(ui: &mut egui::Ui, app: &mut App) {
                 };
                 let color = if active || response.hovered() { theme::TEXT } else { theme::FAINT_TEXT };
                 if active && view.is_some() {
-                    ui.painter().line_segment([rect.left_top() + vec2(1.0, 6.0), rect.left_bottom() + vec2(1.0, -6.0)], Stroke::new(2.0, theme::ACCENT));
+                    ui.painter().line_segment(
+                        [rect.left_top() + vec2(1.0, 6.0), rect.left_bottom() + vec2(1.0, -6.0)],
+                        Stroke::new(2.0, theme::ACCENT),
+                    );
                 }
                 draw_icon(ui.painter(), icon, rect.center(), color);
                 if badge > 0 {
@@ -237,18 +264,27 @@ pub fn activity_bar(ui: &mut egui::Ui, app: &mut App) {
             }
             // The pi agent.
             let (rect, response) = ui.allocate_exact_size(vec2(46.0, 44.0), Sense::click());
-            let agent_active = matches!(app.active_tab.and_then(|i| app.tabs.get(i)), Some(Tab::Agent(_)));
-            let busy = app.tabs.iter().any(|t| matches!(t, Tab::Agent(a) if a.streaming));
+            let agent_active = (app.agent_dock.is_some() && app.agent_dock_open)
+                || matches!(app.active_tab.and_then(|i| app.tabs.get(i)), Some(Tab::Agent(_)));
+            let busy =
+                app.tabs.iter().any(|t| matches!(t, Tab::Agent(a) if a.streaming)) || app.agent_dock.as_ref().is_some_and(|a| a.streaming);
             let color = if agent_active || response.hovered() { theme::TEXT } else { theme::FAINT_TEXT };
             if agent_active {
-                ui.painter().line_segment([rect.left_top() + vec2(1.0, 6.0), rect.left_bottom() + vec2(1.0, -6.0)], Stroke::new(2.0, theme::ACCENT));
+                ui.painter().line_segment(
+                    [rect.left_top() + vec2(1.0, 6.0), rect.left_bottom() + vec2(1.0, -6.0)],
+                    Stroke::new(2.0, theme::ACCENT),
+                );
             }
             ui.painter().text(rect.center(), Align2::CENTER_CENTER, "π", FontId::proportional(21.0), color);
             if busy {
                 ui.painter().circle_filled(rect.center() + vec2(10.0, 9.0), 4.0, theme::SUCCESS);
             }
             if response.on_hover_text("Агент pi (Ctrl+Shift+A)").clicked() {
-                app.run_command(Command::Agent);
+                if app.agent_dock.is_some() && app.agent_dock_open {
+                    app.agent_dock_open = false;
+                } else {
+                    app.run_command(Command::Agent);
+                }
             }
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                 ui.add_space(6.0);
@@ -270,17 +306,51 @@ pub fn status_bar(ui: &mut egui::Ui, app: &mut App) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 // Host badge.
+                let remote = match app.workspace.as_ref().map(|w| &w.host) {
+                    Some(Host::Remote(remote)) => Some(remote.clone()),
+                    _ => None,
+                };
                 let (label, fill) = match app.workspace.as_ref().map(|w| &w.host) {
+                    Some(Host::Remote(remote)) if !remote.connected.load(std::sync::atomic::Ordering::Relaxed) => {
+                        (format!("  ⇄ SSH: {} — нет связи  ", remote.target), theme::ERROR.gamma_multiply(0.75))
+                    }
                     Some(Host::Remote(remote)) => (format!("  ⇄ SSH: {}  ", remote.target), theme::REMOTE_BADGE),
                     _ => ("  ⌂ Локально  ".to_string(), theme::ACCENT_DIM),
                 };
-                let badge = ui.add(egui::Button::new(RichText::new(label).size(12.0).color(Color32::WHITE)).fill(fill).corner_radius(0.0).min_size(vec2(0.0, 24.0)));
+                let badge = ui.add(
+                    egui::Button::new(RichText::new(label).size(12.0).color(Color32::WHITE))
+                        .fill(fill)
+                        .corner_radius(0.0)
+                        .min_size(vec2(0.0, 24.0)),
+                );
                 let popup_id = ui.make_persistent_id("host_menu");
-                if badge.clicked() {
-                    egui::Popup::toggle_id(ui.ctx(), popup_id);
-                }
                 egui::Popup::menu(&badge).id(popup_id).show(|ui| {
                     ui.set_min_width(240.0);
+                    if let Some(remote) = &remote {
+                        let up = remote.connected.load(std::sync::atomic::Ordering::Relaxed);
+                        ui.label(
+                            RichText::new(if up { "Соединение активно" } else { "Нет связи с хостом" }).small().color(if up {
+                                theme::MUTED_TEXT
+                            } else {
+                                theme::ERROR
+                            }),
+                        );
+                        ui.label(RichText::new(format!("Агент: {}", remote.agent_status.lock().unwrap())).small().color(theme::MUTED_TEXT));
+                        if ui.button("Переподключить").clicked() {
+                            let root = app.workspace.as_ref().map(|w| w.root.clone());
+                            app.start_connect(remote.target.clone(), root);
+                            ui.close();
+                        }
+                        if ui.button("Перезапустить агент на сервере").clicked() {
+                            let remote = remote.clone();
+                            app.bus.spawn(move || match remote.restart_agent() {
+                                Ok(()) => super::Msg::Notice("Агент на сервере перезапущен".into(), false),
+                                Err(error) => super::Msg::Notice(format!("Агент не запустился: {error}"), true),
+                            });
+                            ui.close();
+                        }
+                        ui.separator();
+                    }
                     if ui.button("Подключиться по SSH…").clicked() {
                         app.run_command(Command::ConnectSsh);
                         ui.close();
@@ -329,9 +399,20 @@ pub fn status_bar(ui: &mut egui::Ui, app: &mut App) {
                 if status_button(ui, &format!("⊗ {errors}  ▲ {warnings}")).on_hover_text("Проблемы (Ctrl+Shift+M)").clicked() {
                     app.run_command(Command::ShowProblems);
                 }
+                if let Some((text, color)) = super::pulse::status_text(app) {
+                    ui.add_space(4.0);
+                    let button =
+                        ui.add(egui::Button::new(RichText::new(text).size(12.0).color(color)).frame(false).min_size(vec2(0.0, 22.0)));
+                    if button.on_hover_text("Пульс сервера: открыть подробности").clicked() {
+                        app.panel_open = true;
+                        app.panel_tab = super::PanelTab::Pulse;
+                    }
+                }
                 if let Some((server, progress)) = app.lsp.progress.iter().next() {
                     ui.add_space(8.0);
-                    ui.label(RichText::new(format!("{server}: {}", util::truncate_middle(progress, 50))).size(11.5).color(theme::MUTED_TEXT));
+                    ui.label(
+                        RichText::new(format!("{server}: {}", util::truncate_middle(progress, 50))).size(11.5).color(theme::MUTED_TEXT),
+                    );
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -346,17 +427,24 @@ pub fn status_bar(ui: &mut egui::Ui, app: &mut App) {
                                 _ => format!("✗ {name}"),
                             })
                             .collect();
-                        let tooltip: Vec<String> = servers.iter().map(|(n, s, e)| format!("{n}: {s}{}", e.as_ref().map(|e| format!(" — {e}")).unwrap_or_default())).collect();
+                        let tooltip: Vec<String> = servers
+                            .iter()
+                            .map(|(n, s, e)| format!("{n}: {s}{}", e.as_ref().map(|e| format!(" — {e}")).unwrap_or_default()))
+                            .collect();
                         if status_button(ui, &text.join("  ")).on_hover_text(tooltip.join("\n")).clicked() {
                             app.run_command(Command::ShowOutput);
                         }
                     }
                     let Some(index) = app.active_tab else { return };
                     let Some(Tab::Doc(doc)) = app.tabs.get(index) else { return };
-                    status_label(ui, doc.lang.display_name());
+                    status_label(ui, crate::ci::Ci::detect(&doc.path).map(|ci| ci.label()).unwrap_or(doc.lang.display_name()));
                     status_label(ui, if doc.buffer.crlf { "CRLF" } else { "LF" });
                     status_label(ui, "UTF-8");
-                    let indent = if doc.buffer.insert_spaces { format!("Пробелы: {}", doc.buffer.tab_size) } else { format!("Табуляция: {}", doc.buffer.tab_size) };
+                    let indent = if doc.buffer.insert_spaces {
+                        format!("Пробелы: {}", doc.buffer.tab_size)
+                    } else {
+                        format!("Табуляция: {}", doc.buffer.tab_size)
+                    };
                     let indent_button = status_button(ui, &indent);
                     let mut toggle_indent = false;
                     if indent_button.clicked() {
@@ -396,7 +484,8 @@ pub fn status_bar(ui: &mut egui::Ui, app: &mut App) {
 
 fn status_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.add_space(4.0);
-    let response = ui.add(egui::Button::new(RichText::new(text).size(12.0).color(theme::MUTED_TEXT)).frame(false).min_size(vec2(0.0, 22.0)));
+    let response =
+        ui.add(egui::Button::new(RichText::new(text).size(12.0).color(theme::MUTED_TEXT)).frame(false).min_size(vec2(0.0, 22.0)));
     ui.add_space(4.0);
     response
 }
@@ -445,13 +534,18 @@ pub fn settings_window(ctx: &egui::Context, app: &mut App) {
             changed |= ui.checkbox(&mut config.inline_blame, "").changed();
             ui.end_row();
             ui.label("Агент на SSH-хостах");
-            changed |= ui.checkbox(&mut config.use_agent, "").on_hover_text("Быстрый поиск и слежение за файлами на удалённой машине").changed();
+            changed |=
+                ui.checkbox(&mut config.use_agent, "").on_hover_text("Быстрый поиск и слежение за файлами на удалённой машине").changed();
             ui.end_row();
             ui.label("Агент pi: команда");
             changed |= ui.add(egui::TextEdit::singleline(&mut config.pi_command).desired_width(200.0)).lost_focus();
             ui.end_row();
+            ui.label("Пульс сервера");
+            changed |= ui.checkbox(&mut config.pulse, "").on_hover_text("CPU, память и диск хоста проекта в строке состояния").changed();
+            ui.end_row();
             ui.label("Агент pi: модель");
-            changed |= ui.add(egui::TextEdit::singleline(&mut config.agent_model).hint_text("provider/id").desired_width(260.0)).lost_focus();
+            changed |=
+                ui.add(egui::TextEdit::singleline(&mut config.agent_model).hint_text("provider/id").desired_width(260.0)).lost_focus();
             ui.end_row();
             ui.label("Агент pi: режим при старте");
             changed |= ui.add(egui::TextEdit::singleline(&mut config.agent_mode).hint_text("build").desired_width(120.0)).lost_focus();
@@ -465,7 +559,9 @@ pub fn settings_window(ctx: &egui::Context, app: &mut App) {
         });
         ui.separator();
         ui.label(RichText::new("Языковые серверы").strong());
-        ui.label(RichText::new("Отключённые не запускаются. Свои серверы добавляются в config.toml ([[lsp]]).").small().color(theme::MUTED_TEXT));
+        ui.label(
+            RichText::new("Отключённые не запускаются. Свои серверы добавляются в config.toml ([[lsp]]).").small().color(theme::MUTED_TEXT),
+        );
         egui::Grid::new("servers_grid").num_columns(3).spacing([12.0, 4.0]).show(ui, |ui| {
             for spec in crate::lsp::default_servers().into_iter().chain(config.lsp.clone()) {
                 let mut enabled = !config.disabled_servers.contains(&spec.name);

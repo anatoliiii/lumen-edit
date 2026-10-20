@@ -40,7 +40,11 @@ const SAVE: Param = p("save", Bool, false, "Save the file after the change.");
 const TERMINAL: Param = p("terminal", Int, false, "Terminal index from terminal_list. Defaults to the active terminal.");
 
 pub const METHODS: &[Method] = &[
-    Method { name: "state", description: "Editor state: project and host, open files, active file and cursor, git branch and changes, terminals, language servers, problem counts.", params: &[] },
+    Method {
+        name: "state",
+        description: "Editor state: project and host, open files, active file and cursor, git branch and changes, terminals, language servers, problem counts.",
+        params: &[],
+    },
     Method { name: "commands", description: "List every GUI command id usable with run_command.", params: &[] },
     Method {
         name: "run_command",
@@ -50,7 +54,15 @@ pub const METHODS: &[Method] = &[
     Method {
         name: "open_folder",
         description: "Open a project folder. On an SSH host when `host` is `ssh:<target>` (reuses the connection) or local.",
-        params: &[p("path", Str, true, "Folder path."), p("host", Str, false, "`local` (default when no remote project is open) or `ssh:<target>`. Defaults to the current project's host.")],
+        params: &[
+            p("path", Str, true, "Folder path."),
+            p(
+                "host",
+                Str,
+                false,
+                "`local` (default when no remote project is open) or `ssh:<target>`. Defaults to the current project's host.",
+            ),
+        ],
     },
     Method {
         name: "connect_ssh",
@@ -58,15 +70,36 @@ pub const METHODS: &[Method] = &[
         params: &[p("target", Str, true, "Host alias or user@host."), p("path", Str, false, "Remote folder to open after connecting.")],
     },
     Method { name: "close_workspace", description: "Close the current project.", params: &[] },
-    Method { name: "open_file", description: "Open a file in an editor tab and optionally move the cursor.", params: &[PATH_REQ, p("line", Int, false, "1-based line."), COLUMN] },
-    Method { name: "close_file", description: "Close a file tab (unsaved changes are kept unless force).", params: &[PATH_OPT, p("force", Bool, false, "Discard unsaved changes.")] },
-    Method { name: "save", description: "Save a file, or all files.", params: &[PATH_OPT, p("all", Bool, false, "Save every modified file.")] },
+    Method {
+        name: "open_file",
+        description: "Open a file in an editor tab and optionally move the cursor.",
+        params: &[PATH_REQ, p("line", Int, false, "1-based line."), COLUMN],
+    },
+    Method {
+        name: "close_file",
+        description: "Close a file tab (unsaved changes are kept unless force).",
+        params: &[PATH_OPT, p("force", Bool, false, "Discard unsaved changes.")],
+    },
+    Method {
+        name: "save",
+        description: "Save a file, or all files.",
+        params: &[PATH_OPT, p("all", Bool, false, "Save every modified file.")],
+    },
     Method {
         name: "read_file",
         description: "Read a file. Returns the editor buffer (including unsaved changes) when the file is open, otherwise the file from the project host.",
-        params: &[PATH_REQ, p("start_line", Int, false, "First line (1-based)."), p("end_line", Int, false, "Last line (inclusive)."), p("line_numbers", Bool, false, "Prefix lines with numbers.")],
+        params: &[
+            PATH_REQ,
+            p("start_line", Int, false, "First line (1-based)."),
+            p("end_line", Int, false, "Last line (inclusive)."),
+            p("line_numbers", Bool, false, "Prefix lines with numbers."),
+        ],
     },
-    Method { name: "write_file", description: "Replace the whole content of a file in the editor (opens it; undoable). Creates the file if missing.", params: &[PATH_REQ, p("text", Str, true, "New content."), SAVE] },
+    Method {
+        name: "write_file",
+        description: "Replace the whole content of a file in the editor (opens it; undoable). Creates the file if missing.",
+        params: &[PATH_REQ, p("text", Str, true, "New content."), SAVE],
+    },
     Method {
         name: "edit",
         description: "Apply text edits to a file in the editor (opens it; undoable as one step). Positions are 1-based; end is exclusive.",
@@ -75,20 +108,53 @@ pub const METHODS: &[Method] = &[
     Method {
         name: "replace_text",
         description: "Find and replace in a file in the editor.",
-        params: &[PATH_REQ, p("find", Str, true, "Text or regex to find."), p("replace", Str, true, "Replacement ($1 groups with regex)."), p("regex", Bool, false, "Treat `find` as a regex."), p("all", Bool, false, "Replace all occurrences (default true)."), SAVE],
+        params: &[
+            PATH_REQ,
+            p("find", Str, true, "Text or regex to find."),
+            p("replace", Str, true, "Replacement ($1 groups with regex)."),
+            p("regex", Bool, false, "Treat `find` as a regex."),
+            p("all", Bool, false, "Replace all occurrences (default true)."),
+            SAVE,
+        ],
     },
-    Method { name: "insert_text", description: "Type text at the cursor(s) of the active editor.", params: &[p("text", Str, true, "Text to insert.")] },
+    Method {
+        name: "insert_text",
+        description: "Type text at the cursor(s) of the active editor.",
+        params: &[p("text", Str, true, "Text to insert.")],
+    },
     Method {
         name: "set_cursor",
         description: "Move the cursor or select a range in a file (opens it).",
-        params: &[PATH_OPT, LINE, COLUMN, p("end_line", Int, false, "Selection end line."), p("end_column", Int, false, "Selection end column.")],
+        params: &[
+            PATH_OPT,
+            LINE,
+            COLUMN,
+            p("end_line", Int, false, "Selection end line."),
+            p("end_column", Int, false, "Selection end column."),
+        ],
     },
-    Method { name: "create_file", description: "Create a file (and parent folders) on the project host and open it.", params: &[PATH_REQ, p("text", Str, false, "Initial content.")] },
+    Method {
+        name: "create_file",
+        description: "Create a file (and parent folders) on the project host and open it.",
+        params: &[PATH_REQ, p("text", Str, false, "Initial content.")],
+    },
     Method { name: "create_folder", description: "Create a folder on the project host.", params: &[PATH_REQ] },
     Method { name: "delete_path", description: "Delete a file or folder on the project host.", params: &[PATH_REQ] },
-    Method { name: "rename_path", description: "Rename or move a file or folder on the project host.", params: &[p("from", Str, true, "Existing path."), p("to", Str, true, "New path.")] },
-    Method { name: "list_dir", description: "List a directory on the project host.", params: &[p("path", Str, false, "Directory (default: project root).")] },
-    Method { name: "list_files", description: "List project files (respects .gitignore), optionally fuzzy-filtered.", params: &[p("query", Str, false, "Fuzzy filter."), p("limit", Int, false, "Max results (default 200).")] },
+    Method {
+        name: "rename_path",
+        description: "Rename or move a file or folder on the project host.",
+        params: &[p("from", Str, true, "Existing path."), p("to", Str, true, "New path.")],
+    },
+    Method {
+        name: "list_dir",
+        description: "List a directory on the project host.",
+        params: &[p("path", Str, false, "Directory (default: project root).")],
+    },
+    Method {
+        name: "list_files",
+        description: "List project files (respects .gitignore), optionally fuzzy-filtered.",
+        params: &[p("query", Str, false, "Fuzzy filter."), p("limit", Int, false, "Max results (default 200).")],
+    },
     Method {
         name: "search",
         description: "Search text in the project (agent, ripgrep or grep on the project host).",
@@ -102,49 +168,135 @@ pub const METHODS: &[Method] = &[
             p("show", Bool, false, "Also show the results in the GUI search panel."),
         ],
     },
-    Method { name: "diagnostics", description: "Errors and warnings from language servers and linters.", params: &[p("path", Str, false, "Only this file.")] },
+    Method {
+        name: "diagnostics",
+        description: "Errors and warnings from language servers and linters.",
+        params: &[p("path", Str, false, "Only this file.")],
+    },
     Method { name: "hover", description: "Language server hover (type, docs) at a position.", params: &[PATH_REQ, LINE, COLUMN] },
-    Method { name: "definition", description: "Go-to-definition locations for the symbol at a position.", params: &[PATH_REQ, LINE, COLUMN] },
+    Method {
+        name: "definition",
+        description: "Go-to-definition locations for the symbol at a position.",
+        params: &[PATH_REQ, LINE, COLUMN],
+    },
     Method { name: "references", description: "All references to the symbol at a position.", params: &[PATH_REQ, LINE, COLUMN] },
-    Method { name: "completion", description: "Completion items at a position.", params: &[PATH_REQ, LINE, COLUMN, p("limit", Int, false, "Max items (default 50).")] },
+    Method {
+        name: "completion",
+        description: "Completion items at a position.",
+        params: &[PATH_REQ, LINE, COLUMN, p("limit", Int, false, "Max items (default 50).")],
+    },
     Method {
         name: "lsp",
         description: "Send any textDocument/* request to the file's language server. `params` is merged over {textDocument, position}.",
-        params: &[PATH_REQ, p("method", Str, true, "e.g. textDocument/documentSymbol."), p("line", Int, false, "1-based line."), COLUMN, p("params", Object, false, "Extra request params.")],
+        params: &[
+            PATH_REQ,
+            p("method", Str, true, "e.g. textDocument/documentSymbol."),
+            p("line", Int, false, "1-based line."),
+            COLUMN,
+            p("params", Object, false, "Extra request params."),
+        ],
     },
     Method { name: "format", description: "Format a file with its language server.", params: &[PATH_OPT, SAVE] },
     Method {
         name: "exec",
         description: "Run a shell command on the project host (local or SSH) and return stdout, stderr and the exit code. Not shown in the GUI; use terminal_new for that.",
-        params: &[p("command", Str, true, "Shell command (sh -c)."), p("cwd", Str, false, "Working directory (default: project root)."), p("timeout_ms", Int, false, "Kill after this many ms (default 120000).")],
+        params: &[
+            p("command", Str, true, "Shell command (sh -c)."),
+            p("cwd", Str, false, "Working directory (default: project root)."),
+            p("timeout_ms", Int, false, "Kill after this many ms (default 120000)."),
+        ],
     },
     Method { name: "terminal_list", description: "List integrated terminals.", params: &[] },
     Method {
         name: "terminal_new",
         description: "Open an integrated terminal on the project host, optionally running a command (the shell stays open afterwards).",
-        params: &[p("command", Str, false, "Command to run."), p("cwd", Str, false, "Working directory."), p("title", Str, false, "Tab title.")],
+        params: &[
+            p("command", Str, false, "Command to run."),
+            p("cwd", Str, false, "Working directory."),
+            p("title", Str, false, "Tab title."),
+        ],
     },
-    Method { name: "terminal_write", description: "Type into a terminal.", params: &[TERMINAL, p("text", Str, true, "Text to send."), p("enter", Bool, false, "Press Enter afterwards (default true).")] },
-    Method { name: "terminal_read", description: "Read the visible screen of a terminal.", params: &[TERMINAL, p("wait_ms", Int, false, "Wait this long before reading.")] },
-    Method { name: "terminal_kill", description: "Stop the process in a terminal.", params: &[TERMINAL, p("close", Bool, false, "Also close the tab.")] },
+    Method {
+        name: "terminal_write",
+        description: "Type into a terminal.",
+        params: &[TERMINAL, p("text", Str, true, "Text to send."), p("enter", Bool, false, "Press Enter afterwards (default true).")],
+    },
+    Method {
+        name: "terminal_read",
+        description: "Read the visible screen of a terminal.",
+        params: &[TERMINAL, p("wait_ms", Int, false, "Wait this long before reading.")],
+    },
+    Method {
+        name: "terminal_kill",
+        description: "Stop the process in a terminal.",
+        params: &[TERMINAL, p("close", Bool, false, "Also close the tab.")],
+    },
     Method { name: "tasks", description: "List detected and configured tasks (run/build/test).", params: &[] },
-    Method { name: "run_task", description: "Run a task in a terminal (unsaved files are saved first).", params: &[p("label", Str, true, "Task label from `tasks`.")] },
+    Method {
+        name: "run_task",
+        description: "Run a task in a terminal (unsaved files are saved first).",
+        params: &[p("label", Str, true, "Task label from `tasks`.")],
+    },
     Method { name: "git_status", description: "Branch, upstream, ahead/behind, merge state and changed files.", params: &[] },
-    Method { name: "git", description: "Run git with arguments in the repository on the project host; the GUI refreshes afterwards.", params: &[p("args", StrArray, true, "Arguments, e.g. [\"log\", \"--oneline\", \"-5\"].")] },
+    Method {
+        name: "git",
+        description: "Run git with arguments in the repository on the project host; the GUI refreshes afterwards.",
+        params: &[p("args", StrArray, true, "Arguments, e.g. [\"log\", \"--oneline\", \"-5\"].")],
+    },
     Method {
         name: "git_commit",
         description: "Commit staged changes (or everything when nothing is staged).",
-        params: &[p("message", Str, true, "Commit message."), p("amend", Bool, false, "Amend the last commit."), p("all", Bool, false, "Stage all changes first.")],
+        params: &[
+            p("message", Str, true, "Commit message."),
+            p("amend", Bool, false, "Amend the last commit."),
+            p("all", Bool, false, "Stage all changes first."),
+        ],
     },
-    Method { name: "git_diff", description: "Diff of the working tree or index.", params: &[p("path", Str, false, "Only this path."), p("staged", Bool, false, "Diff the index instead of the working tree.")] },
-    Method { name: "git_log", description: "Recent commits.", params: &[p("limit", Int, false, "Number of commits (default 30)."), p("path", Str, false, "Only commits touching this path.")] },
+    Method {
+        name: "git_diff",
+        description: "Diff of the working tree or index.",
+        params: &[p("path", Str, false, "Only this path."), p("staged", Bool, false, "Diff the index instead of the working tree.")],
+    },
+    Method {
+        name: "git_log",
+        description: "Recent commits.",
+        params: &[p("limit", Int, false, "Number of commits (default 30)."), p("path", Str, false, "Only commits touching this path.")],
+    },
     Method {
         name: "agent",
         description: "The pi agent tab: open it, send a task, read the transcript, stop it, list or switch sessions.",
-        params: &[p("action", Str, true, "open | prompt | transcript | abort | sessions | switch (text = session path) | new_session"), p("text", Str, false, "Task text for prompt."), p("last", Int, false, "Transcript: only the last N items (default 30).")],
+        params: &[
+            p("action", Str, true, "open | prompt | transcript | abort | sessions | switch (text = session path) | new_session"),
+            p("text", Str, false, "Task text for prompt."),
+            p("last", Int, false, "Transcript: only the last N items (default 30)."),
+        ],
     },
-    Method { name: "screenshot", description: "Capture the editor window as PNG.", params: &[p("path", Str, false, "Where to save (default: runtime dir).")] },
-    Method { name: "notify", description: "Show a notification in the editor.", params: &[p("text", Str, true, "Message."), p("error", Bool, false, "Show as error.")] },
+    Method {
+        name: "transfer",
+        description: "Copy (or move) files and folders between machines — this computer, the project host and other connected SSH hosts — streamed through the open connections. Progress shows in the Teleport tab.",
+        params: &[
+            p("src", Str, true, "Source path (file or folder)."),
+            p("dst_dir", Str, true, "Destination folder (created if missing)."),
+            p("src_host", Str, false, "`local` or `ssh:<target>`; default: project host."),
+            p("dst_host", Str, false, "`local` or `ssh:<target>`; default: project host."),
+            p("move", Bool, false, "Delete the source after a successful copy."),
+        ],
+    },
+    Method {
+        name: "pulse",
+        description: "Live load of the project host (local or SSH): CPU, memory, swap, disks, load average, top processes.",
+        params: &[],
+    },
+    Method {
+        name: "screenshot",
+        description: "Capture the editor window as PNG.",
+        params: &[p("path", Str, false, "Where to save (default: runtime dir).")],
+    },
+    Method {
+        name: "notify",
+        description: "Show a notification in the editor.",
+        params: &[p("text", Str, true, "Message."), p("error", Bool, false, "Show as error.")],
+    },
     Method { name: "quit", description: "Quit the editor (asks about unsaved files in the GUI).", params: &[] },
 ];
 

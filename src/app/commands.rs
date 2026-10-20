@@ -16,6 +16,7 @@ pub enum Command {
     CloseWorkspace,
     NewFile,
     NewFolder,
+    Teleport,
     Save,
     SaveAll,
     CloseTab,
@@ -32,6 +33,7 @@ pub enum Command {
     KillTerminal,
     ShowProblems,
     ShowOutput,
+    ShowPulse,
     RunDefault,
     RunTask,
     Build,
@@ -40,6 +42,7 @@ pub enum Command {
     EditTasks,
     Find,
     Replace,
+    MarkdownPreview,
     GotoDefinition,
     References,
     Rename,
@@ -69,6 +72,7 @@ pub enum Command {
     ZoomOut,
     ZoomReset,
     Settings,
+    About,
     Quit,
 }
 
@@ -82,6 +86,7 @@ pub const ALL: &[Command] = &[
     Command::CloseWorkspace,
     Command::NewFile,
     Command::NewFolder,
+    Command::Teleport,
     Command::Save,
     Command::SaveAll,
     Command::CloseTab,
@@ -98,6 +103,7 @@ pub const ALL: &[Command] = &[
     Command::KillTerminal,
     Command::ShowProblems,
     Command::ShowOutput,
+    Command::ShowPulse,
     Command::RunDefault,
     Command::RunTask,
     Command::Build,
@@ -106,6 +112,7 @@ pub const ALL: &[Command] = &[
     Command::EditTasks,
     Command::Find,
     Command::Replace,
+    Command::MarkdownPreview,
     Command::GotoDefinition,
     Command::References,
     Command::Rename,
@@ -135,6 +142,7 @@ pub const ALL: &[Command] = &[
     Command::ZoomOut,
     Command::ZoomReset,
     Command::Settings,
+    Command::About,
     Command::Quit,
 ];
 
@@ -168,6 +176,7 @@ impl Command {
             Command::CloseWorkspace => "Закрыть проект",
             Command::NewFile => "Новый файл…",
             Command::NewFolder => "Новая папка…",
+            Command::Teleport => "Телепорт файлов",
             Command::Save => "Сохранить",
             Command::SaveAll => "Сохранить все",
             Command::CloseTab => "Закрыть вкладку",
@@ -184,6 +193,7 @@ impl Command {
             Command::KillTerminal => "Терминал: закрыть текущий",
             Command::ShowProblems => "Проблемы",
             Command::ShowOutput => "Вывод",
+            Command::ShowPulse => "Пульс сервера",
             Command::RunDefault => "Запуск: задача по умолчанию",
             Command::RunTask => "Запуск: выбрать задачу…",
             Command::Build => "Запуск: сборка",
@@ -191,6 +201,7 @@ impl Command {
             Command::RerunLast => "Запуск: повторить последнюю задачу",
             Command::EditTasks => "Запуск: настроить задачи (tasks.toml)",
             Command::Find => "Найти",
+            Command::MarkdownPreview => "Markdown: просмотр / код",
             Command::Replace => "Заменить",
             Command::GotoDefinition => "Перейти к определению",
             Command::References => "Найти все ссылки",
@@ -221,6 +232,7 @@ impl Command {
             Command::ZoomOut => "Уменьшить шрифт",
             Command::ZoomReset => "Сбросить размер шрифта",
             Command::Settings => "Настройки",
+            Command::About => "О программе",
             Command::Quit => "Выход",
         }
     }
@@ -233,6 +245,7 @@ impl Command {
             Command::OpenFolder => "Ctrl+O",
             Command::ConnectSsh => "Ctrl+Alt+O",
             Command::NewFile => "Ctrl+N",
+            Command::Teleport => "Ctrl+Alt+T",
             Command::Save => "Ctrl+S",
             Command::SaveAll => "Ctrl+Alt+S",
             Command::CloseTab => "Ctrl+W",
@@ -253,6 +266,7 @@ impl Command {
             Command::RerunLast => "Ctrl+F5",
             Command::KillTerminal => "Shift+F5",
             Command::Find => "Ctrl+F",
+            Command::MarkdownPreview => "Ctrl+Alt+P",
             Command::Replace => "Ctrl+H",
             Command::GotoDefinition => "F12",
             Command::References => "Shift+F12",
@@ -288,6 +302,7 @@ pub fn shortcuts() -> Vec<(KeyboardShortcut, Command)> {
         (s(ctrl_alt, Key::O), Command::ConnectSsh),
         (s(ctrl, Key::O), Command::OpenFolder),
         (s(ctrl, Key::N), Command::NewFile),
+        (s(ctrl_alt, Key::T), Command::Teleport),
         (s(ctrl_alt, Key::S), Command::SaveAll),
         (s(ctrl, Key::S), Command::Save),
         (s(ctrl, Key::W), Command::CloseTab),
@@ -296,6 +311,7 @@ pub fn shortcuts() -> Vec<(KeyboardShortcut, Command)> {
         (s(ctrl, Key::PageDown), Command::NextTab),
         (s(ctrl, Key::PageUp), Command::PrevTab),
         (s(ctrl, Key::B), Command::ToggleSidebar),
+        (s(ctrl_alt, Key::P), Command::MarkdownPreview),
         (s(ctrl_shift, Key::E), Command::ShowExplorer),
         (s(ctrl_shift, Key::F), Command::ShowSearch),
         (s(ctrl_shift, Key::G), Command::ShowGit),
@@ -338,6 +354,7 @@ impl App {
                 let dir = self.workspace.as_ref().map(|w| w.explorer.target_dir(&w.root)).unwrap_or_default();
                 super::explorer::prompt_create(self, dir, command == Command::NewFolder);
             }
+            Command::Teleport => super::teleport::open(self),
             Command::Save => {
                 if let Some(index) = self.active_tab {
                     self.save_tab(index);
@@ -394,14 +411,19 @@ impl App {
             Command::NewTerminal => self.new_terminal(None),
             Command::KillTerminal => {
                 if let Some(terminal) = self.terminals.get_mut(self.active_terminal)
-                    && terminal.is_alive() {
-                        terminal.write(b"\x03");
-                        terminal.kill();
-                    }
+                    && terminal.is_alive()
+                {
+                    terminal.write(b"\x03");
+                    terminal.kill();
+                }
             }
             Command::ShowProblems => {
                 self.panel_open = true;
                 self.panel_tab = PanelTab::Problems;
+            }
+            Command::ShowPulse => {
+                self.panel_open = true;
+                self.panel_tab = PanelTab::Pulse;
             }
             Command::ShowOutput => {
                 self.panel_open = true;
@@ -429,6 +451,14 @@ impl App {
                 if let Some(doc) = self.active_doc() {
                     let selection = doc.buffer.selected_text();
                     doc.view.open_find(Some(selection), command == Command::Replace);
+                }
+            }
+            Command::MarkdownPreview => {
+                if let Some(doc) = self.active_doc()
+                    && (doc.lang == crate::syntax::Lang::Markdown || super::media::kind(&doc.path).is_some())
+                {
+                    doc.preview = !doc.preview;
+                    doc.view.focus_request = !doc.preview;
                 }
             }
             Command::GotoDefinition => self.editor_action(EditorAction::GotoDefinition),
@@ -540,12 +570,10 @@ impl App {
                 if let Some(Tab::Doc(doc)) = self.active_tab.and_then(|i| self.tabs.get(i)) {
                     self.last_doc_id = Some(doc.id);
                 }
-                super::agent::open(self);
-                if let Some(index) = self.tabs.iter().position(|t| matches!(t, Tab::Agent(_))) {
-                    super::agent::insert_selection(self, index);
-                }
+                super::agent::insert_selection(self);
             }
             Command::Settings => self.settings_open = !self.settings_open,
+            Command::About => self.about_open = true,
             Command::Quit => self.ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close),
             _ => {}
         }

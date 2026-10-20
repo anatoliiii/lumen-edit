@@ -28,6 +28,9 @@ pub enum Lang {
     Markdown,
     Yaml,
     Makefile,
+    Groovy,
+    Hcl,
+    Dockerfile,
     Plain,
 }
 
@@ -37,6 +40,9 @@ impl Lang {
         let lower = name.to_ascii_lowercase();
         match lower.as_str() {
             "makefile" | "gnumakefile" => return Lang::Makefile,
+            "jenkinsfile" => return Lang::Groovy,
+            "dockerfile" | "containerfile" => return Lang::Dockerfile,
+            _ if lower.starts_with("dockerfile.") || lower.ends_with(".dockerfile") => return Lang::Dockerfile,
             "cmakelists.txt" => return Lang::Plain,
             ".bashrc" | ".bash_profile" | ".profile" | ".zshrc" | ".zprofile" | "pkgbuild" => return Lang::Bash,
             "cargo.lock" => return Lang::Toml,
@@ -61,6 +67,8 @@ impl Lang {
             "md" | "markdown" => Lang::Markdown,
             "yml" | "yaml" => Lang::Yaml,
             "mk" => Lang::Makefile,
+            "groovy" | "gradle" | "jenkinsfile" => Lang::Groovy,
+            "tf" | "tfvars" | "hcl" | "nomad" => Lang::Hcl,
             _ => Lang::Plain,
         }
     }
@@ -102,6 +110,9 @@ impl Lang {
             Lang::Markdown => "Markdown",
             Lang::Yaml => "YAML",
             Lang::Makefile => "Makefile",
+            Lang::Groovy => "Groovy",
+            Lang::Hcl => "HCL",
+            Lang::Dockerfile => "Dockerfile",
             Lang::Plain => "Текст",
         }
     }
@@ -126,14 +137,20 @@ impl Lang {
             Lang::Markdown => "markdown",
             Lang::Yaml => "yaml",
             Lang::Makefile => "makefile",
+            Lang::Groovy => "groovy",
+            Lang::Hcl => "terraform",
+            Lang::Dockerfile => "dockerfile",
             Lang::Plain => "plaintext",
         }
     }
 
     pub fn line_comment(self) -> Option<&'static str> {
         match self {
-            Lang::Rust | Lang::C | Lang::Cpp | Lang::CSharp | Lang::Go | Lang::JavaScript | Lang::TypeScript | Lang::Tsx | Lang::Json => Some("//"),
-            Lang::Bash | Lang::Python | Lang::Toml | Lang::Yaml | Lang::Makefile => Some("#"),
+            Lang::Rust | Lang::C | Lang::Cpp | Lang::CSharp | Lang::Go | Lang::JavaScript | Lang::TypeScript | Lang::Tsx | Lang::Json => {
+                Some("//")
+            }
+            Lang::Bash | Lang::Python | Lang::Toml | Lang::Yaml | Lang::Makefile | Lang::Hcl | Lang::Dockerfile => Some("#"),
+            Lang::Groovy => Some("//"),
             _ => None,
         }
     }
@@ -150,6 +167,7 @@ impl Lang {
             "json" => Lang::Json,
             "c" => Lang::C,
             "cpp" => Lang::Cpp,
+            "yaml" => Lang::Yaml,
             _ => return None,
         })
     }
@@ -220,19 +238,20 @@ pub struct Span {
 fn build(lang: Lang) -> Option<HighlightConfiguration> {
     let js_highlights = format!("{}\n{}", tree_sitter_javascript::JSX_HIGHLIGHT_QUERY, tree_sitter_javascript::HIGHLIGHT_QUERY);
     let (language, highlights, injections, locals): (tree_sitter::Language, String, &str, &str) = match lang {
-        Lang::Rust => (tree_sitter_rust::LANGUAGE.into(), tree_sitter_rust::HIGHLIGHTS_QUERY.into(), tree_sitter_rust::INJECTIONS_QUERY, ""),
+        Lang::Rust => {
+            (tree_sitter_rust::LANGUAGE.into(), tree_sitter_rust::HIGHLIGHTS_QUERY.into(), tree_sitter_rust::INJECTIONS_QUERY, "")
+        }
         Lang::Bash => (tree_sitter_bash::LANGUAGE.into(), tree_sitter_bash::HIGHLIGHT_QUERY.into(), "", ""),
         Lang::Python => (tree_sitter_python::LANGUAGE.into(), tree_sitter_python::HIGHLIGHTS_QUERY.into(), "", ""),
         Lang::C => (tree_sitter_c::LANGUAGE.into(), tree_sitter_c::HIGHLIGHT_QUERY.into(), "", ""),
-        Lang::Cpp => (
-            tree_sitter_cpp::LANGUAGE.into(),
-            format!("{}\n{}", tree_sitter_cpp::HIGHLIGHT_QUERY, tree_sitter_c::HIGHLIGHT_QUERY),
-            "",
-            "",
-        ),
+        Lang::Cpp => {
+            (tree_sitter_cpp::LANGUAGE.into(), format!("{}\n{}", tree_sitter_cpp::HIGHLIGHT_QUERY, tree_sitter_c::HIGHLIGHT_QUERY), "", "")
+        }
         Lang::CSharp => (tree_sitter_c_sharp::LANGUAGE.into(), tree_sitter_c_sharp::HIGHLIGHTS_QUERY.into(), "", ""),
         Lang::Go => (tree_sitter_go::LANGUAGE.into(), tree_sitter_go::HIGHLIGHTS_QUERY.into(), "", ""),
-        Lang::Html => (tree_sitter_html::LANGUAGE.into(), tree_sitter_html::HIGHLIGHTS_QUERY.into(), tree_sitter_html::INJECTIONS_QUERY, ""),
+        Lang::Html => {
+            (tree_sitter_html::LANGUAGE.into(), tree_sitter_html::HIGHLIGHTS_QUERY.into(), tree_sitter_html::INJECTIONS_QUERY, "")
+        }
         Lang::Css => (tree_sitter_css::LANGUAGE.into(), tree_sitter_css::HIGHLIGHTS_QUERY.into(), "", ""),
         Lang::JavaScript => (
             tree_sitter_javascript::LANGUAGE.into(),
@@ -254,12 +273,16 @@ fn build(lang: Lang) -> Option<HighlightConfiguration> {
         ),
         Lang::Json => (tree_sitter_json::LANGUAGE.into(), tree_sitter_json::HIGHLIGHTS_QUERY.into(), "", ""),
         Lang::Toml => (tree_sitter_toml_ng::LANGUAGE.into(), tree_sitter_toml_ng::HIGHLIGHTS_QUERY.into(), "", ""),
+        Lang::Yaml => (tree_sitter_yaml::LANGUAGE.into(), tree_sitter_yaml::HIGHLIGHTS_QUERY.into(), "", ""),
+        Lang::Makefile => (tree_sitter_make::LANGUAGE.into(), tree_sitter_make::HIGHLIGHTS_QUERY.into(), "", ""),
+        Lang::Groovy => (tree_sitter_groovy::LANGUAGE.into(), include_str!("queries/groovy.scm").into(), "", ""),
+        Lang::Hcl => (tree_sitter_hcl::LANGUAGE.into(), include_str!("queries/hcl.scm").into(), "", ""),
         _ => return None,
     };
     let name = lang.lsp_id();
     let mut config = HighlightConfiguration::new(language.clone(), name, &highlights, injections, locals)
         .or_else(|_| HighlightConfiguration::new(language.clone(), name, &highlights, "", ""))
-        .map_err(|error| eprintln!("codium-rs: highlight query for {name}: {error}"))
+        .map_err(|error| eprintln!("lumen-edit: highlight query for {name}: {error}"))
         .ok()?;
     config.configure(HIGHLIGHT_NAMES);
     Some(config)
@@ -283,6 +306,10 @@ fn configs() -> &'static HashMap<Lang, Arc<HighlightConfiguration>> {
             Lang::Tsx,
             Lang::Json,
             Lang::Toml,
+            Lang::Yaml,
+            Lang::Makefile,
+            Lang::Groovy,
+            Lang::Hcl,
         ]
         .into_iter()
         .filter_map(|lang| build(lang).map(|config| (lang, Arc::new(config))))
@@ -329,6 +356,20 @@ pub struct Job {
     pub version: u64,
     pub lang: Lang,
     pub text: String,
+    /// File path, used to recognise CI/CD files.
+    pub path: String,
+}
+
+/// Grammar highlighting plus the CI/CD overlay for pipeline files.
+pub fn highlight_file(highlighter: &mut Highlighter, lang: Lang, path: &str, text: &str) -> Vec<Span> {
+    if lang == Lang::Dockerfile {
+        return crate::ci::dockerfile(text);
+    }
+    let base = highlight(highlighter, lang, text);
+    match crate::ci::Ci::detect(path) {
+        Some(ci) if lang == Lang::Yaml => crate::ci::merge(base, crate::ci::overlay(ci, text)),
+        _ => base,
+    }
 }
 
 pub struct Done {
@@ -357,7 +398,7 @@ pub fn spawn_worker(done: impl Fn(Done) + Send + 'static) -> Sender<Job> {
                     let spans = if job.text.len() > 8 * 1024 * 1024 {
                         Vec::new()
                     } else {
-                        highlight(&mut highlighter, job.lang, &job.text)
+                        highlight_file(&mut highlighter, job.lang, &job.path, &job.text)
                     };
                     done(Done { doc_id: job.doc_id, version: job.version, spans });
                 }
@@ -388,6 +429,10 @@ mod tests {
             Lang::Tsx,
             Lang::Json,
             Lang::Toml,
+            Lang::Yaml,
+            Lang::Makefile,
+            Lang::Groovy,
+            Lang::Hcl,
         ] {
             assert!(configs().contains_key(&lang), "{lang:?} failed to load");
         }

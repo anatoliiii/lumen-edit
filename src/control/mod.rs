@@ -1,5 +1,5 @@
 //! Remote control of a running editor: a Unix socket speaking JSON lines,
-//! used by the CLI (`codium-rs call ...`) and the MCP server (`codium-rs mcp`).
+//! used by the CLI (`lumen-edit call ...`) and the MCP server (`lumen-edit mcp`).
 //!
 //! Request:  `{"id": 1, "method": "open_file", "params": {"path": "src/main.rs"}}`
 //! Response: `{"id": 1, "result": ...}` or `{"id": 1, "error": "..."}`
@@ -26,7 +26,7 @@ pub struct ControlRequest {
 }
 
 pub fn socket_dir() -> PathBuf {
-    dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("codium-rs")
+    dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("lumen-edit")
 }
 
 fn current_link() -> PathBuf {
@@ -95,9 +95,9 @@ pub fn cleanup() {
     }
 }
 
-/// Finds a running editor: `$CODIUM_SOCKET`, the current one, or any live one.
+/// Finds a running editor: `$LUMEN_SOCKET`, the current one, or any live one.
 pub fn find_socket() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("CODIUM_SOCKET").filter(|p| !p.is_empty()) {
+    if let Some(path) = std::env::var_os("LUMEN_SOCKET").filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(path));
     }
     let alive = |path: &PathBuf| UnixStream::connect(path).is_ok();
@@ -164,11 +164,11 @@ pub fn connect_or_launch(launch: bool) -> Result<Client, String> {
         return Client::connect(&path);
     }
     if !launch {
-        return Err("редактор не запущен (запустите codium-rs или используйте --launch)".into());
+        return Err("редактор не запущен (запустите lumen-edit или используйте --launch)".into());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::process::Command::new(exe)
-        .env_remove("CODIUM_SOCKET")
+        .env_remove("LUMEN_SOCKET")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

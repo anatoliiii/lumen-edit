@@ -54,8 +54,8 @@ pub fn syntax_color(index: u8) -> Color32 {
     let name = crate::syntax::HIGHLIGHT_NAMES.get(index as usize).copied().unwrap_or("");
     match name {
         "comment" => Color32::from_rgb(106, 115, 130),
-        "keyword" | "conditional" | "repeat" | "include" | "exception" | "storageclass" | "keyword.function"
-        | "keyword.return" | "keyword.operator" => Color32::from_rgb(198, 120, 221),
+        "keyword" | "conditional" | "repeat" | "include" | "exception" | "storageclass" | "keyword.function" | "keyword.return"
+        | "keyword.operator" => Color32::from_rgb(198, 120, 221),
         "string" | "string.special" | "character" | "text.literal" => Color32::from_rgb(152, 195, 121),
         "escape" | "string.escape" => Color32::from_rgb(86, 182, 194),
         "number" | "boolean" | "constant.builtin" => Color32::from_rgb(209, 154, 102),

@@ -143,27 +143,46 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
             let line = parts.next().and_then(|l| l.trim().parse::<usize>().ok());
             let col = parts.next().and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(1);
             if let Some(line) = line {
-                items.push((0, Item {
-                    label: format!("Перейти к строке {line}, столбец {col}"),
-                    detail: String::new(),
-                    hint: String::new(),
-                    matches: Vec::new(),
-                    action: Action::GotoLine(line.saturating_sub(1), col.saturating_sub(1)),
-                }));
+                items.push((
+                    0,
+                    Item {
+                        label: format!("Перейти к строке {line}, столбец {col}"),
+                        detail: String::new(),
+                        hint: String::new(),
+                        matches: Vec::new(),
+                        action: Action::GotoLine(line.saturating_sub(1), col.saturating_sub(1)),
+                    },
+                ));
             }
         }
         Mode::Recent => {
             for recent in &app.config.recent {
                 let name = host::file_name(&recent.path).to_string();
-                let where_ = if recent.host == "local" { recent.path.clone() } else { format!("{} — {}", recent.host.trim_start_matches("ssh:"), recent.path) };
+                let where_ = if recent.host == "local" {
+                    recent.path.clone()
+                } else {
+                    format!("{} — {}", recent.host.trim_start_matches("ssh:"), recent.path)
+                };
                 let hint = if recent.host == "local" { "локально".into() } else { "SSH".into() };
-                push(name, where_.clone(), hint, Action::OpenRecent(recent.clone()), Some(&format!("{} {where_}", host::file_name(&recent.path))));
+                push(
+                    name,
+                    where_.clone(),
+                    hint,
+                    Action::OpenRecent(recent.clone()),
+                    Some(&format!("{} {where_}", host::file_name(&recent.path))),
+                );
             }
         }
         Mode::Tasks => {
             if let Some(workspace) = &app.workspace {
                 for task in &workspace.tasks {
-                    push(task.label.clone(), task.command.clone(), format!("{} · {}", task.group.label(), task.source), Action::RunTask(task.clone()), None);
+                    push(
+                        task.label.clone(),
+                        task.command.clone(),
+                        format!("{} · {}", task.group.label(), task.source),
+                        Action::RunTask(task.clone()),
+                        None,
+                    );
                 }
             }
         }
@@ -175,11 +194,26 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
                     }
                     let hint = if branch.remote { "удалённая" } else { "" };
                     let action = if *merge { Action::Merge(branch.name.clone()) } else { Action::Checkout(branch.clone()) };
-                    push(branch.name.clone(), format!("{} {}", branch.commit, branch.subject), format!("{hint} {}", branch.date), action, None);
+                    push(
+                        branch.name.clone(),
+                        format!("{} {}", branch.commit, branch.subject),
+                        format!("{hint} {}", branch.date),
+                        action,
+                        None,
+                    );
                 }
                 if !*merge && !query.trim().is_empty() && !workspace.git.branches.iter().any(|b| b.name == query.trim()) {
                     let name = query.trim().replace(' ', "-");
-                    items.push((u32::MAX, Item { label: format!("+ Создать ветку «{name}»"), detail: String::new(), hint: String::new(), matches: Vec::new(), action: Action::CreateBranch(name) }));
+                    items.push((
+                        u32::MAX,
+                        Item {
+                            label: format!("+ Создать ветку «{name}»"),
+                            detail: String::new(),
+                            hint: String::new(),
+                            matches: Vec::new(),
+                            action: Action::CreateBranch(name),
+                        },
+                    ));
                 }
             }
         }
@@ -272,8 +306,8 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                         let painter = ui.painter_at(rect);
                         let mut x = rect.left() + 10.0;
                         if matches!(palette.mode, Mode::Files) {
-                            let (icon, color) = util::file_icon(&item.label);
-                            painter.text(pos2(x + 6.0, rect.center().y), Align2::CENTER_CENTER, icon, FontId::monospace(12.0), color);
+                            let path = if item.detail.is_empty() { item.label.clone() } else { format!("/{}", item.detail) };
+                            super::icons::file(&painter, pos2(x + 6.0, rect.center().y), &path);
                             x += 20.0;
                         }
                         let job = util::highlighted_label(&item.label, &item.matches, theme::TEXT, theme::ACCENT, 13.5);
@@ -282,10 +316,22 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                             painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT);
                         } else {
                             painter.galley(pos2(x, rect.top() + 4.0), galley, theme::TEXT);
-                            painter.text(pos2(x, rect.bottom() - 5.0), Align2::LEFT_BOTTOM, util::truncate_middle(&item.detail, 90), FontId::proportional(11.5), theme::MUTED_TEXT);
+                            painter.text(
+                                pos2(x, rect.bottom() - 5.0),
+                                Align2::LEFT_BOTTOM,
+                                util::truncate_middle(&item.detail, 90),
+                                FontId::proportional(11.5),
+                                theme::MUTED_TEXT,
+                            );
                         }
                         if !item.hint.is_empty() {
-                            painter.text(rect.right_center() - vec2(10.0, 0.0), Align2::RIGHT_CENTER, &item.hint, FontId::proportional(11.5), theme::FAINT_TEXT);
+                            painter.text(
+                                rect.right_center() - vec2(10.0, 0.0),
+                                Align2::RIGHT_CENTER,
+                                &item.hint,
+                                FontId::proportional(11.5),
+                                theme::FAINT_TEXT,
+                            );
                         }
                         if selected {
                             response.scroll_to_me(None);

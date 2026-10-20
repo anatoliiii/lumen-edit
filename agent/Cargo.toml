@@ -1,9 +1,8 @@
 [package]
-name = "codium-agent"
+name = "lumen-agent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-codium-shared = { path = "../shared" }
-notify = "8"
+lumen-shared = { path = "../shared" }

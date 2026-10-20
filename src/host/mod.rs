@@ -13,22 +13,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use codium_shared::fsops::{self, DirEntry, SearchMatch, SearchQuery, Stat};
+use lumen_shared::fsops::{self, DirEntry, SearchMatch, SearchQuery, Stat};
 
 pub use ssh::Remote;
 
 /// Extra directories where developer tools usually live; GUI sessions and
 /// non-login SSH commands often miss them.
-pub const EXTRA_PATH: &[&str] = &[
-    ".cargo/bin",
-    "go/bin",
-    ".local/bin",
-    ".dotnet/tools",
-    ".bun/bin",
-    ".pi/agent/bin",
-    ".npm-global/bin",
-    "bin",
-];
+pub const EXTRA_PATH: &[&str] =
+    &[".cargo/bin", "go/bin", ".local/bin", ".dotnet/tools", ".bun/bin", ".pi/agent/bin", ".npm-global/bin", "bin"];
 
 #[derive(Clone)]
 pub enum Host {
@@ -237,10 +229,7 @@ impl Host {
 
 pub fn run_with_input(command: &mut Command, stdin: Option<&[u8]>) -> Result<Vec<u8>, String> {
     use std::io::Write;
-    command
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    command.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     if let Some(data) = stdin {
         let mut pipe = child.stdin.take().unwrap();
@@ -294,11 +283,11 @@ pub fn init_shell_path() {
 fn read_shell_path() -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
     let mut child = Command::new(&shell)
-        .args(["-l", "-i", "-c", "printf '__CODIUM_PATH__%s__END__' \"$PATH\""])
+        .args(["-l", "-i", "-c", "printf '__LUMEN_PATH__%s__END__' \"$PATH\""])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .env("CODIUM_SHELL_PROBE", "1")
+        .env("LUMEN_SHELL_PROBE", "1")
         .spawn()
         .ok()?;
     let started = std::time::Instant::now();
@@ -315,7 +304,7 @@ fn read_shell_path() -> Option<String> {
     let mut output = String::new();
     use std::io::Read;
     child.stdout.take()?.read_to_string(&mut output).ok()?;
-    let start = output.find("__CODIUM_PATH__")? + "__CODIUM_PATH__".len();
+    let start = output.find("__LUMEN_PATH__")? + "__LUMEN_PATH__".len();
     let end = output[start..].find("__END__")? + start;
     Some(output[start..end].to_string()).filter(|p| !p.is_empty())
 }
@@ -390,7 +379,7 @@ mod tests {
         let entries = host.read_dir(dir).unwrap();
         assert_eq!(entries.iter().map(|e| (e.name.as_str(), e.is_dir)).collect::<Vec<_>>(), vec![("sub", true), ("hello.txt", false)]);
         assert!(!host.stat(&file).unwrap().is_dir);
-        let query = codium_shared::fsops::SearchQuery { pattern: "wor".into(), max_results: 10, ..Default::default() };
+        let query = lumen_shared::fsops::SearchQuery { pattern: "wor".into(), max_results: 10, ..Default::default() };
         let (matches, _) = host.search(dir, &query).unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!((matches[0].line, matches[0].start, matches[0].end), (1, 0, 3));
@@ -406,7 +395,7 @@ mod tests {
     #[test]
     fn remote_over_fake_ssh() {
         use_fake_ssh();
-        let base = std::env::temp_dir().join(format!("codium-remote-test-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("lumen-remote-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         for (use_agent, name) in [(true, "agent"), (false, "shell")] {
             let dir = base.join(name);
@@ -420,13 +409,14 @@ mod tests {
             exercise(&Host::Remote(remote.clone()), &dir.to_string_lossy());
             remote.disconnect();
             let _ = master.kill();
+            let _ = master.wait();
         }
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
     fn local_host() {
-        let dir = std::env::temp_dir().join(format!("codium-local-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("lumen-local-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         exercise(&Host::Local, &dir.to_string_lossy());
         let _ = std::fs::remove_dir_all(&dir);

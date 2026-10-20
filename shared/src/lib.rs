@@ -3,5 +3,6 @@
 
 pub mod fsops;
 pub mod proto;
+pub mod watch;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

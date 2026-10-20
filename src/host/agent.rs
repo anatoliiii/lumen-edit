@@ -1,4 +1,4 @@
-//! Uploads (when needed) and talks to `codium-agent` on the remote host.
+//! Uploads (when needed) and talks to `lumen-agent` on the remote host.
 
 use std::{
     collections::HashMap,
@@ -12,8 +12,8 @@ use std::{
     time::Duration,
 };
 
-use codium_shared::proto::{self, Message, Op, Reply, Request};
 use crossbeam_channel::{Sender, bounded};
+use lumen_shared::proto::{self, Message, Op, Reply, Request};
 
 use super::{Remote, run_with_input, shell_quote};
 
@@ -72,7 +72,7 @@ impl Drop for AgentClient {
 fn local_agent_binary(arch: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?.to_path_buf();
-    let name = format!("codium-agent-{arch}");
+    let name = format!("lumen-agent-{arch}");
     let mut candidates = vec![
         exe_dir.join("agents").join(&name),
         exe_dir.join(&name),
@@ -80,37 +80,33 @@ fn local_agent_binary(arch: &str) -> Option<PathBuf> {
         exe_dir.join("../../agents").join(&name),
     ];
     if let Some(data) = dirs::data_dir() {
-        candidates.push(data.join("codium-rs/agents").join(&name));
+        candidates.push(data.join("lumen-edit/agents").join(&name));
     }
-    candidates.push(PathBuf::from("/usr/lib/codium-rs/agents").join(&name));
+    candidates.push(PathBuf::from("/usr/lib/lumen-edit/agents").join(&name));
     // A native build may work if the remote has the same arch and libc.
     if arch == std::env::consts::ARCH {
-        candidates.push(exe_dir.join("codium-agent"));
+        candidates.push(exe_dir.join("lumen-agent"));
         // `cargo test` binaries live in target/<profile>/deps.
-        candidates.push(exe_dir.join("../codium-agent"));
+        candidates.push(exe_dir.join("../lumen-agent"));
     }
     candidates.into_iter().find(|path| path.is_file())
 }
 
 pub fn install_and_start(remote: &Arc<Remote>) -> Result<AgentClient, String> {
-    let binary = local_agent_binary(&remote.arch)
-        .ok_or_else(|| format!("нет сборки агента для {}", remote.arch))?;
+    let binary = local_agent_binary(&remote.arch).ok_or_else(|| format!("нет сборки агента для {}", remote.arch))?;
     let data = std::fs::read(&binary).map_err(|e| e.to_string())?;
     let hash = data.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
-    let remote_path = format!("{}/.cache/codium-rs/agent-{hash:016x}", remote.home);
+    let remote_path = format!("{}/.cache/lumen-edit/agent-{hash:016x}", remote.home);
     let quoted = shell_quote(&remote_path);
 
     let check = format!("[ -x {quoted} ] && {quoted} --version");
     if run_with_input(&mut remote.ssh_command(&check, false), None).is_err() {
         let upload = format!(
-            "mkdir -p \"$HOME/.cache/codium-rs\" && cat > {quoted}.tmp && chmod +x {quoted}.tmp && mv -f {quoted}.tmp {quoted} && {quoted} --version"
+            "mkdir -p \"$HOME/.cache/lumen-edit\" && cat > {quoted}.tmp && chmod +x {quoted}.tmp && mv -f {quoted}.tmp {quoted} && {quoted} --version"
         );
-        run_with_input(&mut remote.ssh_command(&upload, false), Some(&data))
-            .map_err(|e| format!("не удалось запустить агент: {e}"))?;
+        run_with_input(&mut remote.ssh_command(&upload, false), Some(&data)).map_err(|e| format!("не удалось запустить агент: {e}"))?;
         // Remove agents left over from older builds.
-        let cleanup = format!(
-            "for f in \"$HOME\"/.cache/codium-rs/agent-*; do [ \"$f\" = {quoted} ] || rm -f \"$f\"; done"
-        );
+        let cleanup = format!("for f in \"$HOME\"/.cache/lumen-edit/agent-*; do [ \"$f\" = {quoted} ] || rm -f \"$f\"; done");
         let _ = run_with_input(&mut remote.ssh_command(&cleanup, false), None);
     }
     spawn(remote, &remote_path)
@@ -156,13 +152,8 @@ fn spawn(remote: &Arc<Remote>, path: &str) -> Result<AgentClient, String> {
         });
     }
 
-    let client = AgentClient {
-        writer: Mutex::new(BufWriter::new(stdin)),
-        pending,
-        next_id: AtomicU64::new(1),
-        alive,
-        child: Mutex::new(child),
-    };
+    let client =
+        AgentClient { writer: Mutex::new(BufWriter::new(stdin)), pending, next_id: AtomicU64::new(1), alive, child: Mutex::new(child) };
     match client.call(Op::Hello, &[]) {
         Ok((Reply::Hello { .. }, _)) => Ok(client),
         Ok(_) => Err("агент ответил неожиданно".into()),

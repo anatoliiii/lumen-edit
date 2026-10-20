@@ -12,17 +12,40 @@ use crate::fsops::{DirEntry, SearchMatch, SearchQuery, Stat};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Op {
     Hello,
-    Stat { path: String },
-    ReadDir { path: String },
-    ReadFile { path: String },
+    Stat {
+        path: String,
+    },
+    ReadDir {
+        path: String,
+    },
+    ReadFile {
+        path: String,
+    },
     /// Contents are sent in the payload.
-    WriteFile { path: String },
-    CreateDir { path: String },
-    Remove { path: String },
-    Rename { from: String, to: String },
-    ListFiles { root: String, max: usize },
-    Search { root: String, query: SearchQuery },
-    Watch { root: String },
+    WriteFile {
+        path: String,
+    },
+    CreateDir {
+        path: String,
+    },
+    Remove {
+        path: String,
+    },
+    Rename {
+        from: String,
+        to: String,
+    },
+    ListFiles {
+        root: String,
+        max: usize,
+    },
+    Search {
+        root: String,
+        query: SearchQuery,
+    },
+    Watch {
+        root: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -34,13 +57,19 @@ pub struct Request {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Reply {
     Ok,
-    Hello { version: String, arch: String },
+    Hello {
+        version: String,
+        arch: String,
+    },
     Stat(Stat),
     Entries(Vec<DirEntry>),
     /// Contents are in the payload.
     Data,
     Files(Vec<String>),
-    Matches { matches: Vec<SearchMatch>, truncated: bool },
+    Matches {
+        matches: Vec<SearchMatch>,
+        truncated: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -85,13 +114,7 @@ pub fn execute(op: &Op, payload: &[u8]) -> Result<(Reply, Vec<u8>), String> {
     use crate::fsops::*;
     let err = |e: std::io::Error| e.to_string();
     Ok(match op {
-        Op::Hello => (
-            Reply::Hello {
-                version: crate::VERSION.to_string(),
-                arch: std::env::consts::ARCH.to_string(),
-            },
-            Vec::new(),
-        ),
+        Op::Hello => (Reply::Hello { version: crate::VERSION.to_string(), arch: std::env::consts::ARCH.to_string() }, Vec::new()),
         Op::Stat { path } => (Reply::Stat(stat(path).map_err(err)?), Vec::new()),
         Op::ReadDir { path } => (Reply::Entries(read_dir(path).map_err(err)?), Vec::new()),
         Op::ReadFile { path } => (Reply::Data, std::fs::read(path).map_err(err)?),

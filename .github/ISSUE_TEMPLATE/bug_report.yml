@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a project over SSH
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `lumen-edit --version` (or Help → About → Copy version)
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Project location
+      options: [Local, SSH with agent, SSH without agent]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Output panel contents or `LUMEN_LOG=1 lumen-edit` output
+      render: text

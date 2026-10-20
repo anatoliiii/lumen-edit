@@ -171,9 +171,10 @@ pub fn parse_completions(value: Value, _server: &str) -> Vec<CompletionItem> {
             };
             let mut detail = item.detail.clone().unwrap_or_default();
             if let Some(details) = &item.label_details
-                && let Some(d) = &details.detail {
-                    detail = format!("{d} {detail}");
-                }
+                && let Some(d) = &details.detail
+            {
+                detail = format!("{d} {detail}");
+            }
             Some(CompletionItem {
                 filter_text: item.filter_text.clone().unwrap_or_else(|| item.label.clone()),
                 sort_text: item.sort_text.clone().unwrap_or_else(|| item.label.clone()),

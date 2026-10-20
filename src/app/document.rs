@@ -39,6 +39,13 @@ pub struct Document {
     pub view: ViewState,
     /// Too large or binary-ish: highlighting and LSP are skipped.
     pub large: bool,
+    /// Markdown files open rendered; toggled with Ctrl+Shift+V.
+    pub preview: bool,
+    /// SVG preview: current image uri (to free the old texture) and zoom.
+    pub media_uri: Option<String>,
+    pub media_zoom: Option<f32>,
+    /// Parsed CSV rows for the table view, by buffer version.
+    pub csv: Option<(u64, std::sync::Arc<Vec<Vec<String>>>)>,
 }
 
 impl Document {
@@ -55,6 +62,7 @@ impl Document {
         }
         buffer.line_comment = lang.line_comment();
         let large = text.len() > 16 * 1024 * 1024;
+        let preview = lang == Lang::Markdown || super::media::kind(&path).is_some();
         Self {
             id,
             path,
@@ -79,6 +87,10 @@ impl Document {
             shellcheck_version: u64::MAX,
             view: ViewState::default(),
             large,
+            preview,
+            media_uri: None,
+            media_zoom: None,
+            csv: None,
         }
     }
 
