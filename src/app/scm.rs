@@ -21,6 +21,8 @@ pub struct GitState {
     pub amend: bool,
     pub branches: Vec<git::Branch>,
     pub stashes: Vec<git::StashEntry>,
+    pub remotes: Vec<git::Remote>,
+    show_remotes: bool,
     hide_staged: bool,
     hide_changes: bool,
     show_branches: bool,
@@ -52,6 +54,10 @@ enum Action {
     StashAction(&'static str, String),
     Log,
     Init,
+    AddRemote,
+    EditRemote(git::Remote),
+    RemoveRemote(String),
+    FetchRemote(String),
     Refresh,
     AmendLoad,
 }
@@ -278,6 +284,51 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         if show_branches {
             for branch in local.iter().chain(remote.iter()) {
                 branch_row(ui, branch, &mut actions);
+            }
+        }
+
+        // Remotes.
+        let mut collapsed = !git.show_remotes;
+        section_header(ui, "REMOTES", git.remotes.len(), &mut collapsed, |ui| {
+            if ui.small_button("+").on_hover_text("Добавить remote").clicked() {
+                actions.push(Action::AddRemote);
+            }
+        });
+        git.show_remotes = !collapsed;
+        if git.show_remotes {
+            if git.remotes.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    if ui.small_button("Добавить origin…").clicked() {
+                        actions.push(Action::AddRemote);
+                    }
+                });
+            }
+            for remote in &git.remotes {
+                let response = ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    ui.label(RichText::new(&remote.name).strong());
+                    ui.add(egui::Label::new(RichText::new(&remote.url).small().color(theme::MUTED_TEXT)).truncate());
+                });
+                response.response.interact(Sense::click()).context_menu(|ui| {
+                    if ui.button("Изменить URL…").clicked() {
+                        actions.push(Action::EditRemote(remote.clone()));
+                        ui.close();
+                    }
+                    if ui.button("Копировать URL").clicked() {
+                        ui.ctx().copy_text(remote.url.clone());
+                        ui.close();
+                    }
+                    if ui.button("Fetch").clicked() {
+                        actions.push(Action::FetchRemote(remote.name.clone()));
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(RichText::new("Удалить").color(theme::ERROR)).clicked() {
+                        actions.push(Action::RemoveRemote(remote.name.clone()));
+                        ui.close();
+                    }
+                });
             }
         }
 
@@ -510,6 +561,26 @@ fn drop_actions(app: &mut App, actions: Vec<Action>) {
             Action::StashAction(action, name) => app.git_op(&format!("stash {action}"), move |h, r| git::stash_action(h, r, action, &name)),
             Action::Log => app.open_log(true),
             Action::Init => app.run_command(super::Command::GitInit),
+            Action::AddRemote => prompt_add_remote(app, None),
+            Action::EditRemote(remote) => {
+                app.dialog = Some(Dialog::Input {
+                    title: format!("URL для «{}»", remote.name),
+                    value: remote.url.clone(),
+                    focus: true,
+                    action: Box::new(move |app: &mut App, url: String| {
+                        let name = remote.name.clone();
+                        app.git_op("remote set-url", move |h, r| git::set_remote_url(h, r, &name, &url));
+                    }),
+                });
+            }
+            Action::RemoveRemote(name) => {
+                app.dialog = Some(Dialog::Confirm {
+                    title: "Удаление remote".into(),
+                    message: format!("Удалить remote «{name}»? Сам удалённый репозиторий не пострадает."),
+                    action: Box::new(move |app: &mut App| app.git_op("remote remove", move |h, r| git::remove_remote(h, r, &name))),
+                });
+            }
+            Action::FetchRemote(name) => app.git_op("fetch", move |h, r| git::git_verbose(h, r, &["fetch", "--prune", &name])),
             Action::Refresh => app.git_refresh(),
             Action::AmendLoad => {
                 let Some(workspace) = &app.workspace else { continue };
@@ -547,8 +618,43 @@ pub fn commit(app: &mut App, amend_flag: bool) {
 }
 
 pub fn push(app: &mut App) {
-    let no_upstream = app.workspace.as_ref().and_then(|w| w.git.status.as_ref()).is_some_and(|s| s.upstream.is_none());
-    app.git_op("push", move |h, r| git::push(h, r, no_upstream, false));
+    let Some(git) = app.workspace.as_ref().map(|w| &w.git) else { return };
+    let no_upstream = git.status.as_ref().is_some_and(|s| s.upstream.is_none());
+    if git.remotes.is_empty() {
+        // Nowhere to push yet: ask for the URL, then publish.
+        prompt_add_remote(app, Some(()));
+        return;
+    }
+    let remote = git.remotes.iter().find(|r| r.name == "origin").or(git.remotes.first()).map(|r| r.name.clone());
+    let upstream = if no_upstream { remote } else { None };
+    app.git_op("push", move |h, r| git::push(h, r, upstream.as_deref(), false));
+}
+
+/// Asks for `[name] url`; with `publish`, pushes the current branch to it.
+pub fn prompt_add_remote(app: &mut App, publish: Option<()>) {
+    let first = app.workspace.as_ref().is_none_or(|w| w.git.remotes.is_empty());
+    app.dialog = Some(Dialog::Input {
+        title: if publish.is_some() { "Куда опубликовать: URL репозитория (git@host:user/repo.git)".into() } else { "Новый remote: имя и URL через пробел (или только URL для origin)".into() },
+        value: if first || publish.is_some() { String::new() } else { "upstream ".into() },
+        focus: true,
+        action: Box::new(move |app: &mut App, input: String| {
+            let mut parts = input.split_whitespace();
+            let (name, url) = match (parts.next(), parts.next()) {
+                (Some(name), Some(url)) => (name.to_string(), url.to_string()),
+                (Some(url), None) => ("origin".to_string(), url.to_string()),
+                _ => return,
+            };
+            app.git_op(if publish.is_some() { "publish" } else { "remote add" }, move |h, r| {
+                let added = git::add_remote(h, r, &name, &url)?;
+                if publish.is_some() {
+                    let pushed = git::push(h, r, Some(&name), false)?;
+                    Ok(format!("{added}\n{pushed}"))
+                } else {
+                    Ok(if added.is_empty() { format!("{name} → {url}") } else { added })
+                }
+            });
+        }),
+    });
 }
 
 pub fn prompt_new_branch(app: &mut App) {

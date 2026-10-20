@@ -244,15 +244,48 @@ pub fn last_commit_message(host: &Host, root: &str) -> Result<String, String> {
     git(host, root, &["log", "-1", "--format=%B"]).map(|s| s.trim_end().to_string())
 }
 
-pub fn push(host: &Host, root: &str, set_upstream: bool, force: bool) -> Result<String, String> {
+/// `set_upstream`: remote to publish the current branch to (`push -u`).
+pub fn push(host: &Host, root: &str, set_upstream: Option<&str>, force: bool) -> Result<String, String> {
     let mut args = vec!["push"];
     if force {
         args.push("--force-with-lease");
     }
-    if set_upstream {
-        args.extend(["-u", "origin", "HEAD"]);
+    if let Some(remote) = set_upstream {
+        args.extend(["-u", remote, "HEAD"]);
     }
     git_verbose(host, root, &args)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Remote {
+    pub name: String,
+    pub url: String,
+}
+
+pub fn remotes(host: &Host, root: &str) -> Result<Vec<Remote>, String> {
+    let out = git(host, root, &["remote", "-v"])?;
+    let mut remotes: Vec<Remote> = Vec::new();
+    for line in out.lines().filter(|l| l.ends_with("(fetch)")) {
+        let mut parts = line.split_whitespace();
+        if let (Some(name), Some(url)) = (parts.next(), parts.next())
+            && !remotes.iter().any(|r| r.name == name)
+        {
+            remotes.push(Remote { name: name.into(), url: url.into() });
+        }
+    }
+    Ok(remotes)
+}
+
+pub fn add_remote(host: &Host, root: &str, name: &str, url: &str) -> Result<String, String> {
+    git_verbose(host, root, &["remote", "add", name, url])
+}
+
+pub fn set_remote_url(host: &Host, root: &str, name: &str, url: &str) -> Result<String, String> {
+    git_verbose(host, root, &["remote", "set-url", name, url])
+}
+
+pub fn remove_remote(host: &Host, root: &str, name: &str) -> Result<String, String> {
+    git_verbose(host, root, &["remote", "remove", name])
 }
 
 pub fn pull(host: &Host, root: &str, rebase: bool) -> Result<String, String> {
@@ -622,6 +655,22 @@ mod tests {
         assert_eq!(files[0].hunks[1].new_start, 10);
         let patch = hunk_patch(&files[0], &files[0].hunks[1]);
         assert!(patch.starts_with("diff --git") && patch.contains("@@ -10 +10 @@\n-x\n+y\n"));
+    }
+
+    #[test]
+    fn manages_remotes() {
+        let host = Host::Local;
+        let dir = std::env::temp_dir().join(format!("codium-git-remote-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.to_string_lossy().into_owned();
+        init(&host, &root).unwrap();
+        assert!(remotes(&host, &root).unwrap().is_empty());
+        add_remote(&host, &root, "origin", "git@example.com:me/repo.git").unwrap();
+        set_remote_url(&host, &root, "origin", "https://example.com/me/repo.git").unwrap();
+        assert_eq!(remotes(&host, &root).unwrap(), vec![Remote { name: "origin".into(), url: "https://example.com/me/repo.git".into() }]);
+        remove_remote(&host, &root, "origin").unwrap();
+        assert!(remotes(&host, &root).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

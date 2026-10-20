@@ -57,7 +57,7 @@ pub enum Msg {
     Shellcheck { doc_id: u64, version: u64, result: Result<Vec<(usize, usize, usize, usize, crate::lsp::Severity, String)>, String> },
     GitRepo(Option<String>),
     GitStatus(Result<git::Status, String>),
-    GitRefs { branches: Vec<git::Branch>, stashes: Vec<git::StashEntry> },
+    GitRefs { branches: Vec<git::Branch>, stashes: Vec<git::StashEntry>, remotes: Vec<git::Remote> },
     GitOpDone { label: String, result: Result<String, String> },
     GitDiff { key: String, result: Result<String, String> },
     GitLog(Result<Vec<git::LogEntry>, String>),
@@ -772,6 +772,7 @@ impl App {
         self.bus.spawn(move || Msg::GitRefs {
             branches: git::branches(&refs_host, &refs_repo).unwrap_or_default(),
             stashes: git::stashes(&refs_host, &refs_repo).unwrap_or_default(),
+            remotes: git::remotes(&refs_host, &refs_repo).unwrap_or_default(),
         });
     }
 
@@ -1002,10 +1003,11 @@ impl App {
                     self.git_refresh();
                 }
             }
-            Msg::GitRefs { branches, stashes } => {
+            Msg::GitRefs { branches, stashes, remotes } => {
                 if let Some(workspace) = &mut self.workspace {
                     workspace.git.branches = branches;
                     workspace.git.stashes = stashes;
+                    workspace.git.remotes = remotes;
                 }
             }
             Msg::GitOpDone { label, result } => {

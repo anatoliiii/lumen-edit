@@ -61,6 +61,7 @@ pub enum Command {
     GitStageFile,
     GitFileHistory,
     GitInit,
+    GitAddRemote,
     GitToggleBlame,
     Agent,
     AgentSendSelection,
@@ -126,6 +127,7 @@ pub const ALL: &[Command] = &[
     Command::GitStageFile,
     Command::GitFileHistory,
     Command::GitInit,
+    Command::GitAddRemote,
     Command::GitToggleBlame,
     Command::Agent,
     Command::AgentSendSelection,
@@ -211,6 +213,7 @@ impl Command {
             Command::GitStageFile => "Git: добавить текущий файл в индекс",
             Command::GitFileHistory => "Git: история текущего файла",
             Command::GitInit => "Git: инициализировать репозиторий",
+            Command::GitAddRemote => "Git: добавить remote…",
             Command::GitToggleBlame => "Git: показать/скрыть авторство строк",
             Command::Agent => "Агент pi",
             Command::AgentSendSelection => "Агент: отправить выделение",
@@ -464,7 +467,7 @@ impl App {
                 let rebase = self.config.pull_rebase;
                 self.git_op("sync", move |h, r| {
                     let pulled = crate::git::pull(h, r, rebase)?;
-                    let pushed = crate::git::push(h, r, false, false)?;
+                    let pushed = crate::git::push(h, r, None, false)?;
                     Ok(format!("{pulled}\n{pushed}"))
                 });
             }
@@ -507,6 +510,7 @@ impl App {
                     });
                 }
             }
+            Command::GitAddRemote => super::scm::prompt_add_remote(self, None),
             Command::GitToggleBlame => {
                 self.config.inline_blame = !self.config.inline_blame;
                 self.config.save();
