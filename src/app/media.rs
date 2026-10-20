@@ -29,18 +29,34 @@ pub fn kind(path: &str) -> Option<Media> {
 pub struct ImageTab {
     pub path: String,
     pub bytes: Arc<[u8]>,
+    uri: String,
     /// `None` = fit to the window.
     zoom: Option<f32>,
 }
 
 impl ImageTab {
     pub fn new(path: String, bytes: Vec<u8>) -> Self {
-        Self { path, bytes: bytes.into(), zoom: None }
+        let uri = bytes_uri(&path, &bytes);
+        Self { path, bytes: bytes.into(), uri, zoom: None }
     }
 
     pub fn uri(&self) -> String {
-        format!("bytes://{}", self.path)
+        self.uri.clone()
     }
+
+    /// Takes new content after the file changed on disk.
+    pub fn replace(&mut self, ctx: &egui::Context, bytes: Vec<u8>) {
+        ctx.forget_image(&self.uri);
+        self.uri = bytes_uri(&self.path, &bytes);
+        self.bytes = bytes.into();
+    }
+}
+
+/// egui caches textures by uri, so the uri names the content: a file
+/// replaced on disk gets a new texture instead of the old one.
+pub fn bytes_uri(path: &str, bytes: &[u8]) -> String {
+    let hash = bytes.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
+    format!("bytes://{hash:016x}/{}", path.trim_start_matches('/'))
 }
 
 /// Light/dark squares behind transparent images.
@@ -294,7 +310,8 @@ pub fn open_image_tab(app: &mut App, path: String, bytes: Vec<u8>) {
 #[derive(Clone)]
 pub enum ImageEntry {
     Loading,
-    Ready(Arc<[u8]>),
+    /// Bytes and their content uri (see [`bytes_uri`]).
+    Ready(Arc<[u8]>, String),
     Failed(String),
 }
 

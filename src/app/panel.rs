@@ -64,7 +64,17 @@ fn tab_bar(ui: &mut egui::Ui, app: &mut App) {
             ui.spacing_mut().item_spacing.x = 0.0;
             for (index, tab) in app.tabs.iter().enumerate() {
                 let active = app.active_tab == Some(index);
-                let title = tab.title();
+                let mut title = tab.title();
+                // Same file name in different folders: add the folder, like `about.png · ru`.
+                if let Some(path) = tab.path()
+                    && app
+                        .tabs
+                        .iter()
+                        .filter_map(Tab::path)
+                        .any(|other| other != path && crate::host::file_name(other) == crate::host::file_name(path))
+                {
+                    title = format!("{title} · {}", crate::host::file_name(&crate::host::parent(path)));
+                }
                 let (icon, icon_color) = match tab {
                     Tab::Doc(doc) => util::path_icon(&doc.path),
                     Tab::Diff(_) => ("±", theme::GIT_MODIFIED),

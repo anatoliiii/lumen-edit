@@ -218,6 +218,14 @@ impl Tab {
             Tab::Image(image) => host::file_name(&image.path).to_string(),
         }
     }
+    /// The file behind the tab, if any.
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            Tab::Doc(doc) => Some(&doc.path),
+            Tab::Image(image) => Some(&image.path),
+            _ => None,
+        }
+    }
     fn dirty(&self) -> bool {
         matches!(self, Tab::Doc(doc) if doc.is_dirty())
     }
@@ -1285,11 +1293,46 @@ impl App {
             let host = host.clone();
             self.bus.spawn(move || {
                 let entry = match host.read_file(&path) {
-                    Ok(data) => media::ImageEntry::Ready(data.into()),
+                    Ok(data) => {
+                        let uri = media::bytes_uri(&path, &data);
+                        media::ImageEntry::Ready(data.into(), uri)
+                    }
                     Err(error) => media::ImageEntry::Failed(error),
                 };
                 Msg::Run(Box::new(move |app: &mut App| {
                     app.image_cache.insert(path, entry);
+                }))
+            });
+        }
+    }
+
+    /// Images changed on disk: open viewers reload, previews load again.
+    fn reload_changed_images(&mut self, paths: &BTreeSet<String>) {
+        for path in paths {
+            if let Some(media::ImageEntry::Ready(_, uri)) = self.image_cache.remove(path) {
+                self.ctx.forget_image(&uri);
+            }
+        }
+        let Some(host) = self.host() else { return };
+        let viewers: Vec<String> = self
+            .tabs
+            .iter()
+            .filter_map(|t| if let Tab::Image(i) = t { paths.contains(&i.path).then(|| i.path.clone()) } else { None })
+            .collect();
+        for path in viewers {
+            let host = host.clone();
+            self.bus.spawn(move || {
+                let data = host.read_file(&path);
+                Msg::Run(Box::new(move |app: &mut App| {
+                    let Ok(data) = data else { return };
+                    let ctx = app.ctx.clone();
+                    for tab in &mut app.tabs {
+                        if let Tab::Image(image) = tab
+                            && image.path == path
+                        {
+                            image.replace(&ctx, data.clone());
+                        }
+                    }
                 }))
             });
         }
@@ -1366,6 +1409,7 @@ impl App {
         if open.iter().any(|p| paths.contains(p)) {
             self.reload_unmodified_docs();
         }
+        self.reload_changed_images(&paths);
         if git_changed {
             let open_paths = open.clone();
             for path in open_paths {

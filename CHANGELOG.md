@@ -21,6 +21,9 @@ and the project follows [Semantic Versioning](https://semver.org/).
 - Panics are written to `~/.local/state/lumen-edit/crash.log`.
 
 ### Fixed
+- Images replaced on disk are shown anew in viewers and Markdown previews (textures were cached by path).
+- HTML in Markdown (`<img>`, `<br>`, `<div>` …) renders instead of showing the tags.
+- Tabs of files with the same name show their folder (`about.png · ru`).
 - Deleting a selection that spans lines no longer crashes the editor.
 - Opening a big remote folder (e.g. `/DATA`) no longer stalls: file watching is set up in the background, skips ignored/build folders and is capped, so the agent answers at once and exits when the editor disconnects.
 - The pi agent is restarted for the new project when switching projects (it kept working on the old local folder).

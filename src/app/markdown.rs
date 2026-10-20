@@ -306,9 +306,9 @@ impl Writer<'_> {
         self.flush();
         let path = super::media::resolve_path(&images.base_dir, url.split(['?', '#']).next().unwrap_or(url));
         match images.cache.get(&path) {
-            Some(super::media::ImageEntry::Ready(bytes)) => {
+            Some(super::media::ImageEntry::Ready(bytes, uri)) => {
                 let max = self.ui.available_width();
-                let image = egui::Image::from_bytes(format!("bytes://{path}"), egui::load::Bytes::Shared(bytes.clone()))
+                let image = egui::Image::from_bytes(uri.clone(), egui::load::Bytes::Shared(bytes.clone()))
                     .max_width(max)
                     .maintain_aspect_ratio(true)
                     .corner_radius(4);
@@ -324,6 +324,34 @@ impl Writer<'_> {
                 self.missing.push(path);
                 self.ui.label(RichText::new(format!("▣ {label}…")).small().color(theme::FAINT_TEXT));
             }
+        }
+    }
+
+    /// Raw HTML as READMEs use it: `<img>` becomes an image, `<br>` a line
+    /// break; other tags are dropped and their text kept.
+    fn html(&mut self, html: &str) {
+        let mut rest = html;
+        while let Some(open) = rest.find('<') {
+            let before = &rest[..open];
+            if !before.trim().is_empty() {
+                self.text(before);
+            }
+            let Some(close) = rest[open..].find('>') else { break };
+            let tag = &rest[open + 1..open + close];
+            let name: String = tag.trim_start_matches('/').chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+            match name.to_ascii_lowercase().as_str() {
+                "img" => {
+                    if let Some(src) = html_attr(tag, "src") {
+                        self.image(&src, &html_attr(tag, "alt").unwrap_or_default());
+                    }
+                }
+                "br" | "p" | "div" | "tr" | "table" | "h1" | "h2" | "h3" => self.flush(),
+                _ => {}
+            }
+            rest = &rest[open + close + 1..];
+        }
+        if !rest.trim().is_empty() {
+            self.text(rest);
         }
     }
 
@@ -474,7 +502,7 @@ impl Writer<'_> {
                 self.style = saved;
             }
             Event::InlineMath(math) | Event::DisplayMath(math) => self.text(&math),
-            Event::Html(html) | Event::InlineHtml(html) => self.text(&html),
+            Event::Html(html) | Event::InlineHtml(html) => self.html(&html),
             Event::SoftBreak => self.text(" "),
             Event::HardBreak => self.text("\n"),
             Event::Rule => {
@@ -529,8 +557,35 @@ pub fn render_with(ui: &mut egui::Ui, text: &str, size: f32, images: Option<&Ima
     .inner
 }
 
+/// Value of `name="…"` (or single quotes) inside an HTML tag.
+fn html_attr(tag: &str, name: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(found) = lower[from..].find(name) {
+        let start = from + found;
+        from = start + name.len();
+        let boundary = start == 0 || lower.as_bytes()[start - 1].is_ascii_whitespace();
+        let rest = tag[from..].trim_start();
+        if !boundary || !rest.starts_with('=') {
+            continue;
+        }
+        let value = rest[1..].trim_start();
+        let quote = value.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+        return value[1..].split(quote).next().map(str::to_string);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reads_html_attributes() {
+        let tag = r#"img src="docs/a.png" alt='Editor view' data-src="x""#;
+        assert_eq!(super::html_attr(tag, "src").as_deref(), Some("docs/a.png"));
+        assert_eq!(super::html_attr(tag, "alt").as_deref(), Some("Editor view"));
+        assert_eq!(super::html_attr("img width=3", "src"), None);
+    }
+
     use super::*;
 
     #[test]
