@@ -119,7 +119,7 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
             let (file, _, _) = split_location(path);
             let absolute = std::fs::canonicalize(&file).ok()?;
             if absolute.is_dir() {
-                Some(call_on(&socket, "open_folder", json!({ "path": absolute.to_string_lossy(), "host": "local" }), &[]))
+                Some(call_on(&socket, "open_folder", json!({ "path": crate::platform::host_path(&absolute), "host": "local" }), &[]))
             } else {
                 let mut params = open_params(path);
                 params["path"] = json!(absolute.to_string_lossy());
@@ -153,7 +153,7 @@ fn split_location(target: &str) -> (String, Option<i64>, Option<i64>) {
 
 fn open_params(target: &str) -> Value {
     let (file, line, column) = split_location(target);
-    let file = std::fs::canonicalize(&file).map(|p| p.to_string_lossy().into_owned()).unwrap_or(file);
+    let file = std::fs::canonicalize(&file).map(|p| crate::platform::host_path(&p)).unwrap_or(file);
     let mut params = json!({ "path": file });
     if let Some(line) = line {
         params["line"] = json!(line);

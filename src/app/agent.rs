@@ -1835,7 +1835,7 @@ pub fn open_link(app: &mut App, target: &str) {
     let Some(workspace) = &app.workspace else { return };
     let root = workspace.root.clone();
     let relative = path.trim_start_matches("./");
-    let full = if path.starts_with('/') {
+    let full = if crate::host::is_absolute(&path) {
         path.clone()
     } else if let Some(rest) = path.strip_prefix("~/") {
         crate::host::join(&workspace.host.home(), rest)

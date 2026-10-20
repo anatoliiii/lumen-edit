@@ -2073,6 +2073,7 @@ dependencies = [
  "serde_json",
  "shell-words",
  "similar",
+ "skrifa",
  "toml",
  "tree-sitter",
  "tree-sitter-bash",
@@ -2093,6 +2094,7 @@ dependencies = [
  "tree-sitter-toml-ng",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
+ "uds_windows",
  "url",
  "vt100",
 ]

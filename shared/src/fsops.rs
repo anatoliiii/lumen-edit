@@ -115,7 +115,7 @@ pub fn list_files(root: &str, max: usize) -> Vec<String> {
             continue;
         }
         if let Ok(relative) = entry.path().strip_prefix(root_path) {
-            files.push(relative.to_string_lossy().into_owned());
+            files.push(crate::path_string(relative));
             if files.len() >= max {
                 break;
             }
@@ -145,7 +145,7 @@ pub fn search(root: &str, query: &SearchQuery) -> Result<(Vec<SearchMatch>, bool
         if file.metadata().map(|m| m.len() > 8 * 1024 * 1024).unwrap_or(true) {
             continue;
         }
-        let relative = entry.path().strip_prefix(root_path).unwrap_or(entry.path()).to_string_lossy().into_owned();
+        let relative = crate::path_string(entry.path().strip_prefix(root_path).unwrap_or(entry.path()));
         let reader = io::BufReader::new(file);
         for (line_index, line) in reader.split(b'\n').enumerate() {
             let Ok(line) = line else { break };

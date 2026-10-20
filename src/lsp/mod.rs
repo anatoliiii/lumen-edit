@@ -51,12 +51,11 @@ pub fn default_servers() -> Vec<ServerSpec> {
 }
 
 pub fn path_to_uri(path: &str) -> String {
-    url::Url::from_file_path(path).map(|u| u.to_string()).unwrap_or_else(|_| format!("file://{path}"))
+    crate::platform::path_to_uri(path)
 }
 
 pub fn uri_to_path(uri: &str) -> Option<String> {
-    let url = url::Url::parse(uri).ok()?;
-    url.to_file_path().ok().map(|p| p.to_string_lossy().into_owned())
+    crate::platform::uri_to_path(uri)
 }
 
 /// Char index -> LSP position (UTF-8 bytes or UTF-16 units per server).

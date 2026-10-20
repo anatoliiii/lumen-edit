@@ -74,7 +74,7 @@ pub fn watch_tree(root: &str, sink: impl Fn(Vec<String>) + Send + 'static) -> Re
                     if created && path.is_dir() {
                         add(&weak, &count, &path);
                     }
-                    paths.insert(path.to_string_lossy().into_owned());
+                    paths.insert(crate::path_string(&path));
                 }
             };
             take(first);

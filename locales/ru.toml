@@ -16,6 +16,7 @@
 "+ Stage" = "+ В индекс"
 "--{name}: value required" = "--{name}: нужно значение"
 "[image]" = "[изображение]"
+"[process exited with code {code}]" = "[процесс завершён с кодом {code}]"
 "`edits` array is required" = "нужен массив `edits`"
 "`from` and `to` are required" = "нужны `from` и `to`"
 "`path` is required" = "нужен `path`"

@@ -9,13 +9,14 @@ pub mod methods;
 
 use std::{
     io::{BufRead, BufReader, Write},
-    os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
     time::Duration,
 };
 
 use crossbeam_channel::{Sender, bounded};
 use serde_json::{Value, json};
+
+use crate::platform::{ControlListener as UnixListener, ControlStream as UnixStream};
 
 pub type Reply = Sender<Result<Value, String>>;
 
@@ -42,8 +43,7 @@ pub fn serve(dispatch: impl Fn(ControlRequest) + Send + Sync + 'static) -> Optio
     let listener = UnixListener::bind(&path).ok()?;
     // The most recently started editor is the default target.
     let link = current_link();
-    let _ = std::fs::remove_file(&link);
-    let _ = std::os::unix::fs::symlink(&path, &link);
+    crate::platform::mark_current(&path, &link);
 
     let dispatch = std::sync::Arc::new(dispatch);
     std::thread::Builder::new()
@@ -90,7 +90,7 @@ fn handle_connection(stream: UnixStream, dispatch: &(dyn Fn(ControlRequest) + Se
 pub fn cleanup() {
     let path = socket_dir().join(format!("ctl-{}.sock", std::process::id()));
     let _ = std::fs::remove_file(&path);
-    if std::fs::read_link(current_link()).ok().as_ref() == Some(&path) {
+    if crate::platform::current_target(&current_link()).as_ref() == Some(&path) {
         let _ = std::fs::remove_file(current_link());
     }
 }
@@ -101,9 +101,10 @@ pub fn find_socket() -> Option<PathBuf> {
         return Some(PathBuf::from(path));
     }
     let alive = |path: &PathBuf| UnixStream::connect(path).is_ok();
-    let link = current_link();
-    if alive(&link) {
-        return Some(link);
+    if let Some(current) = crate::platform::current_socket(&current_link())
+        && alive(&current)
+    {
+        return Some(current);
     }
     instances().into_iter().find(alive)
 }

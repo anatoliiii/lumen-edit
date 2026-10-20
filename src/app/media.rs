@@ -317,7 +317,8 @@ pub enum ImageEntry {
 
 /// Resolves `relative` against `base_dir`, folding `.` and `..`.
 pub fn resolve_path(base_dir: &str, relative: &str) -> String {
-    let joined = if relative.starts_with('/') { relative.to_string() } else { format!("{}/{relative}", base_dir.trim_end_matches('/')) };
+    let joined =
+        if crate::host::is_absolute(relative) { relative.to_string() } else { format!("{}/{relative}", base_dir.trim_end_matches('/')) };
     let mut parts: Vec<&str> = Vec::new();
     for part in joined.split('/') {
         match part {

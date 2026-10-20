@@ -72,6 +72,11 @@ shell-words = "1"
 png = "0.18"
 pulldown-cmark = { version = "0.13", default-features = false }
 
+
+[target.'cfg(windows)'.dependencies]
+# AF_UNIX sockets (Windows 10 1803+) for the control socket.
+uds_windows = "1"
+
 [profile.release]
 lto = "thin"
 codegen-units = 4
@@ -79,3 +84,7 @@ strip = true
 
 [profile.dev.package."*"]
 opt-level = 2
+
+[dev-dependencies]
+# Reads font charmaps in the glyph test (already used by egui).
+skrifa = "0.44"

@@ -423,7 +423,7 @@ fn terminal_view(ui: &mut egui::Ui, app: &mut App) {
     let output = app.terminals[app.active_terminal].show(ui, id, font_size);
     if let Some((path, line, col)) = output.open_location {
         let cwd = app.terminals[app.active_terminal].cwd.clone();
-        let full = if path.starts_with('/') {
+        let full = if crate::host::is_absolute(&path) {
             path
         } else if let Some(rest) = path.strip_prefix("~/") {
             host::join(&app.host().map(|h| h.home()).unwrap_or_default(), rest)

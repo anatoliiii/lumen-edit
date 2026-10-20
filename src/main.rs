@@ -21,6 +21,7 @@ mod control;
 mod git;
 mod host;
 mod lsp;
+mod platform;
 mod syntax;
 mod tasks;
 mod terminal;

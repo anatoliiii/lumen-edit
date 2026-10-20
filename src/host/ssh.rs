@@ -185,7 +185,7 @@ impl Remote {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(test, unix)), allow(dead_code))]
     pub fn has_agent(&self) -> bool {
         self.agent().is_some()
     }
@@ -307,7 +307,7 @@ fn log_error(error: &str) {
 }
 
 /// Shared flag helper for callers that track a master terminal.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(all(test, unix)), allow(dead_code))]
 pub fn alive_flag() -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(true))
 }

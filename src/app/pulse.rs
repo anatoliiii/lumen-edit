@@ -493,7 +493,9 @@ mod tests {
         assert_eq!(sample.hostname, "box");
     }
 
+    /// The script reads Linux `/proc`.
     #[test]
+    #[cfg(unix)]
     fn parses_real_host() {
         let output = std::process::Command::new("sh").arg("-c").arg(SCRIPT).output().unwrap();
         // The editor treats a failing script as an error, so it must succeed.

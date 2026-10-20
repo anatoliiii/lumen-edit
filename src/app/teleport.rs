@@ -94,7 +94,7 @@ pub fn open(app: &mut App) {
     let left_path = if right_host.is_remote() {
         local_home
     } else {
-        std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or(local_home)
+        std::env::current_dir().map(|p| crate::platform::host_path(&p)).unwrap_or(local_home)
     };
     let id = app.next_id();
     let mut tab = TeleportTab {
@@ -660,7 +660,7 @@ pub fn upload_dropped(app: &mut App, paths: Vec<std::path::PathBuf>, dir: String
     // Group by parent folder so each tar stream has one source directory.
     let mut groups: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     for path in paths {
-        let parent = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into());
+        let parent = path.parent().map(crate::platform::host_path).unwrap_or_else(|| "/".into());
         if let Some(name) = path.file_name() {
             groups.entry(parent).or_default().push(name.to_string_lossy().into_owned());
         }
@@ -682,7 +682,7 @@ pub fn upload_dropped(app: &mut App, paths: Vec<std::path::PathBuf>, dir: String
     app.notify(t!("Uploading to {dir} — progress is in the Teleport tab", dir = dir), false);
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

@@ -46,7 +46,7 @@ fn position(params: &Value, line: &str, column: &str) -> (usize, usize) {
 impl App {
     fn resolve(&self, path: &str) -> String {
         let root = self.workspace.as_ref().map(|w| w.root.clone());
-        if path.starts_with('/') {
+        if host::is_absolute(path) {
             return path.to_string();
         }
         if let Some(rest) = path.strip_prefix("~/") {
@@ -55,7 +55,7 @@ impl App {
         }
         match root {
             Some(root) => host::join(&root, path.trim_start_matches("./")),
-            None => std::env::current_dir().map(|d| d.join(path).to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string()),
+            None => std::env::current_dir().map(|d| crate::platform::host_path(&d.join(path))).unwrap_or_else(|_| path.to_string()),
         }
     }
 
@@ -175,7 +175,7 @@ impl App {
                 };
                 let host_param = str_param(params, "host").map(str::to_string).unwrap_or_else(|| self.host().map(|h| h.key()).unwrap_or_else(|| "local".into()));
                 if host_param == "local" {
-                    let path = std::fs::canonicalize(&path).map(|p| p.to_string_lossy().into_owned()).unwrap_or(path);
+                    let path = std::fs::canonicalize(&path).map(|p| crate::platform::host_path(&p)).unwrap_or(path);
                     self.open_workspace(Host::Local, path.clone());
                     return done(json!(t!("opened {path}", path = path)));
                 }
@@ -751,7 +751,7 @@ impl App {
                 let project = self.host();
                 // Relative paths resolve against the project root on the project host.
                 let resolve = |path: &str, host: &Host, app: &App| -> String {
-                    if path.starts_with('/') || project.as_ref().is_none_or(|p| !p.same(host)) { path.to_string() } else { app.resolve(path) }
+                    if host::is_absolute(path) || project.as_ref().is_none_or(|p| !p.same(host)) { path.to_string() } else { app.resolve(path) }
                 };
                 let src = resolve(str_param(params, "src").unwrap_or("").trim_end_matches('/'), &src_host, self);
                 let dst_dir = resolve(str_param(params, "dst_dir").unwrap_or(""), &dst_host, self);

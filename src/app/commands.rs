@@ -603,7 +603,7 @@ impl App {
                 let start = self.workspace.as_ref().map(|w| w.root.clone()).unwrap_or_else(|| crate::host::Host::Local.home());
                 if let Some(path) = rfd::FileDialog::new().set_directory(&start).pick_folder() {
                     let path = path.canonicalize().unwrap_or(path);
-                    self.open_workspace(crate::host::Host::Local, path.to_string_lossy().into_owned());
+                    self.open_workspace(crate::host::Host::Local, crate::platform::host_path(&path));
                 }
             }
         }

@@ -397,16 +397,16 @@ impl App {
             } else {
                 let path = std::fs::canonicalize(&arg).unwrap_or_else(|_| arg.clone().into());
                 if path.is_dir() {
-                    app.open_workspace(Host::Local, path.to_string_lossy().into_owned());
+                    app.open_workspace(Host::Local, crate::platform::host_path(&path));
                     if let Some(file) = crate::gui_args().get(1)
                         && let Ok(file) = std::fs::canonicalize(file)
                     {
-                        app.open_file(file.to_string_lossy().into_owned(), None);
+                        app.open_file(crate::platform::host_path(&file), None);
                     }
                 } else if path.is_file() {
-                    let parent = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into());
+                    let parent = path.parent().map(crate::platform::host_path).unwrap_or_else(|| "/".into());
                     app.open_workspace(Host::Local, parent);
-                    app.open_file(path.to_string_lossy().into_owned(), None);
+                    app.open_file(crate::platform::host_path(&path), None);
                 }
             }
         }
@@ -1000,7 +1000,7 @@ impl App {
         match task {
             Some(task) => {
                 let cwd = match &task.cwd {
-                    Some(dir) if dir.starts_with('/') => dir.clone(),
+                    Some(dir) if host::is_absolute(dir) => dir.clone(),
                     Some(dir) => host::join(&root, dir),
                     None => root.clone(),
                 };
@@ -1755,52 +1755,23 @@ fn local_watcher(root: &str, bus: Bus) -> Option<lumen_shared::watch::TreeWatche
 
 fn install_fonts(ctx: &egui::Context, config: &Config) {
     let mut fonts = egui::FontDefinitions::default();
-    let ui_candidates = [
-        "/usr/share/fonts/inter/Inter.ttc",
-        "/usr/share/fonts/TTF/Inter-Regular.ttf",
-        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/cantarell/Cantarell-VF.otf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ];
-    if let Some(data) = ui_candidates.iter().find_map(|p| std::fs::read(p).ok()) {
+    let candidates = crate::platform::FONTS;
+    if let Some(data) = candidates.ui.iter().find_map(|p| std::fs::read(p).ok()) {
         fonts.font_data.insert("ui".into(), egui::FontData::from_owned(data).into());
         fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "ui".into());
     }
-    let mono_candidates: Vec<String> = config
-        .editor_font
-        .iter()
-        .cloned()
-        .chain(
-            [
-                "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
-                "/usr/share/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf",
-                "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
-            ]
-            .iter()
-            .map(|s| s.to_string()),
-        )
-        .collect();
+    let mono_candidates: Vec<String> = config.editor_font.iter().cloned().chain(candidates.mono.iter().map(|s| s.to_string())).collect();
     if let Some(data) = mono_candidates.iter().find_map(|p| std::fs::read(p).ok()) {
         fonts.font_data.insert("code".into(), egui::FontData::from_owned(data).into());
         fonts.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "code".into());
     }
     // Powerline / Nerd Font glyphs used by shell prompts.
-    let nerd = ["/usr/share/fonts/TTF/SymbolsNerdFont-Regular.ttf", "/usr/share/fonts/TTF/SymbolsNerdFontMono-Regular.ttf"];
-    if let Some(data) = nerd.iter().find_map(|p| std::fs::read(p).ok()) {
+    if let Some(data) = candidates.nerd.iter().find_map(|p| std::fs::read(p).ok()) {
         fonts.font_data.insert("nerd".into(), egui::FontData::from_owned(data).into());
         fonts.families.entry(egui::FontFamily::Monospace).or_default().push("nerd".into());
     }
     // Symbols for icons that the UI font may lack.
-    let symbols = [
-        "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf",
-        "/usr/share/fonts/noto/NotoSansSymbols-Regular.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/noto/NotoSansMath-Regular.ttf",
-    ];
-    for (i, path) in symbols.iter().enumerate() {
+    for (i, path) in candidates.symbols.iter().enumerate() {
         if let Ok(data) = std::fs::read(path) {
             let name = format!("symbols{i}");
             fonts.font_data.insert(name.clone(), egui::FontData::from_owned(data).into());
@@ -2037,6 +2008,17 @@ mod glyph_tests {
             });
         });
         output.textures_delta.clear();
+        // egui reports a glyph as missing when it lives in the font that also
+        // serves the replacement glyph; ask the font files themselves.
+        let candidates = crate::platform::FONTS;
+        let files: Vec<Vec<u8>> =
+            candidates.ui.iter().chain(candidates.symbols).chain(candidates.nerd).filter_map(|p| std::fs::read(p).ok()).collect();
+        missing.retain(|c| {
+            !files.iter().any(|data| {
+                use skrifa::MetadataProvider;
+                skrifa::FontRef::from_index(data, 0).is_ok_and(|font| font.charmap().map(c).is_some())
+            })
+        });
         assert!(missing.is_empty(), "glyphs missing from fonts: {missing}");
     }
 }
