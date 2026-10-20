@@ -1,0 +1,9 @@
+[package]
+name = "codium-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+codium-shared = { path = "../shared" }
+notify = "8"

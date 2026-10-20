@@ -1,0 +1,7 @@
+# The agent is pure Rust, so musl targets link with the bundled rust-lld
+# and need no cross C toolchain.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"

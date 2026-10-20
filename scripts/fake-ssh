@@ -1,0 +1,25 @@
+#!/bin/sh
+# Test double for `ssh`: accepts OpenSSH-style arguments and runs the remote
+# command on this machine. Used by tests and for trying the remote mode
+# without an SSH server: PATH=scripts/fake-ssh-dir:$PATH codium-rs ssh://fake/path
+master=0
+check=""
+target=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -O) check="$2"; shift 2 ;;
+        -S|-o|-p|-i|-l|-F|-J|-L|-R|-D|-E|-b|-c|-m|-W) shift 2 ;;
+        -M|-N) master=1; shift ;;
+        -*) shift ;;
+        *) target="$1"; shift; break ;;
+    esac
+done
+[ -n "$check" ] && exit 0
+if [ "$master" = 1 ] && [ $# -eq 0 ]; then
+    echo "fake-ssh: connected to $target"
+    exec sleep 100000
+fi
+if [ $# -eq 0 ]; then
+    exec "${SHELL:-/bin/sh}" -l
+fi
+exec sh -c "$*"
