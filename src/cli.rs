@@ -6,38 +6,9 @@ use serde_json::{Value, json};
 
 use crate::control::{self, methods};
 
-const HELP: &str = "\
-Lumen Edit — нативный редактор кода
-
-Запуск:
-  lumen-edit [ПАПКА [ФАЙЛ]]           открыть окно (если редактор уже запущен,
-  lumen-edit ФАЙЛ[:СТРОКА[:СТОЛБЕЦ]]   путь откроется в нём)
-  lumen-edit ssh://ХОСТ/ПУТЬ           открыть проект на SSH-хосте
-  lumen-edit --new-window ...          всегда новое окно
-
-Управление запущенным редактором:
-  lumen-edit open ФАЙЛ[:СТРОКА[:СТОЛБЕЦ]]
-  lumen-edit cmd КОМАНДА               любая команда меню (список: lumen-edit commands)
-  lumen-edit МЕТОД [АРГУМЕНТЫ]         любой метод, например:
-      lumen-edit state
-      lumen-edit read_file src/main.rs start_line=1 end_line=40
-      lumen-edit search 'fn main' --include .rs
-      lumen-edit exec 'cargo build'
-      lumen-edit git_commit 'fix: …' --all
-      lumen-edit terminal_read --wait_ms 500
-  lumen-edit call МЕТОД '{\"json\": \"параметры\"}'
-  lumen-edit methods                   список методов
-  lumen-edit help МЕТОД                параметры метода
-  lumen-edit instances                 запущенные редакторы
-
-MCP:
-  lumen-edit mcp                       MCP-сервер на stdio (запускает редактор при необходимости)
-  lumen-edit mcp --granular            по инструменту на метод (для поиска инструментов по запросу)
-
-Аргументы: key=value, --key value, --flag, JSON-объект или значения обязательных
-параметров по порядку. --json — вывод в JSON. Переменная LUMEN_SOCKET выбирает
-конкретный редактор.
-";
+fn help() -> &'static str {
+    t_file!("cli-help.txt")
+}
 
 /// Returns `None` when the GUI should start.
 pub fn run(args: &[String]) -> Option<ExitCode> {
@@ -45,7 +16,7 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
     let rest = &args[1..];
     match first.as_str() {
         "-h" | "--help" => {
-            print!("{HELP}");
+            print!("{}", help());
             Some(ExitCode::SUCCESS)
         }
         "-V" | "--version" => {
@@ -70,13 +41,13 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
             Some(method) => {
                 println!("{}\n\n{}", method.name, method.description);
                 for param in method.params {
-                    let required = if param.required { " (обязательный)" } else { "" };
+                    let required = if param.required { t!(" (required)") } else { "" };
                     println!("  {:<14}{required} {}", param.name, param.description);
                 }
                 Some(ExitCode::SUCCESS)
             }
             None => {
-                print!("{HELP}");
+                print!("{}", help());
                 Some(ExitCode::SUCCESS)
             }
         },
@@ -89,25 +60,25 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
         "commands" => Some(call_and_print("commands", json!({}), rest)),
         "cmd" | "command" => {
             let Some(id) = rest.first() else {
-                eprintln!("укажите команду: lumen-edit commands");
+                eprintln!("{}", t!("name a command: lumen-edit commands"));
                 return Some(ExitCode::FAILURE);
             };
             Some(call_and_print("run_command", json!({ "command": id }), &rest[1..]))
         }
         "open" => {
             let Some(target) = rest.first() else {
-                eprintln!("укажите файл");
+                eprintln!("{}", t!("name a file"));
                 return Some(ExitCode::FAILURE);
             };
             Some(call_and_print("open_file", open_params(target), &rest[1..]))
         }
         "call" => {
             let Some(name) = rest.first() else {
-                eprintln!("укажите метод: lumen-edit methods");
+                eprintln!("{}", t!("name a method: lumen-edit methods"));
                 return Some(ExitCode::FAILURE);
             };
             let Some(method) = methods::find(name) else {
-                eprintln!("неизвестный метод {name}");
+                eprintln!("{}", t!("unknown method {name}", name = name));
                 return Some(ExitCode::FAILURE);
             };
             Some(match parse_args(method, &rest[1..]) {
@@ -125,13 +96,13 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
         // A path: hand it to a running editor if there is one.
         path => {
             if path.starts_with('-') {
-                eprintln!("неизвестный параметр {path}\n\n{HELP}");
+                eprintln!("{}", t!("unknown option {path}\n\n{HELP}", path = path, HELP = help()));
                 return Some(ExitCode::FAILURE);
             }
             // A bare word that is not a file is a mistyped command, not a
             // reason to open a window.
             if !path.contains(['/', '.']) && !std::path::Path::new(path).exists() {
-                eprintln!("неизвестная команда {path}; список: lumen-edit methods");
+                eprintln!("{}", t!("unknown command {path}; see: lumen-edit methods", path = path));
                 return Some(ExitCode::FAILURE);
             }
             if path.starts_with("ssh://") {
@@ -163,7 +134,7 @@ fn first_sentence(text: &str) -> &str {
 }
 
 fn fail(error: String) -> ExitCode {
-    eprintln!("ошибка: {error}");
+    eprintln!("{}", t!("error: {error}", error = error));
     ExitCode::FAILURE
 }
 
@@ -207,7 +178,11 @@ fn parse_args(method: &methods::Method, args: &[String]) -> Result<Value, String
                 normalized.push(format!("{name}={value}"));
                 continue;
             }
-            let param = method.params.iter().find(|p| p.name == name).ok_or_else(|| format!("у {} нет параметра --{name}", method.name))?;
+            let param = method
+                .params
+                .iter()
+                .find(|p| p.name == name)
+                .ok_or_else(|| t!("{n1} has no parameter --{name}", n1 = method.name, name = name))?;
             let is_bool = matches!(param.kind, methods::Kind::Bool);
             match iter.peek() {
                 Some(next) if !is_bool && !next.starts_with("--") => normalized.push(format!("{name}={}", iter.next().unwrap())),
@@ -215,7 +190,7 @@ fn parse_args(method: &methods::Method, args: &[String]) -> Result<Value, String
                     normalized.push(format!("{name}={}", iter.next().unwrap()))
                 }
                 _ if is_bool => normalized.push(format!("{name}=true")),
-                _ => return Err(format!("--{name}: нужно значение")),
+                _ => return Err(t!("--{name}: value required", name = name)),
             }
             continue;
         }

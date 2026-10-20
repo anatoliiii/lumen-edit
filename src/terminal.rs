@@ -386,7 +386,7 @@ impl Terminal {
             }
         }
         if self.scrollback > 0 {
-            let label = format!("↑ {} строк", self.scrollback);
+            let label = t!("{n1} lines ↑", n1 = self.scrollback);
             painter.text(
                 rect.right_top() + Vec2::new(-10.0, 6.0),
                 egui::Align2::RIGHT_TOP,

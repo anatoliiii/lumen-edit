@@ -236,7 +236,7 @@ fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Val
             }
         }
         match client.as_mut().unwrap().call(method, arguments.clone()) {
-            Err(error) if error.contains("закрыто") || error.contains("Broken pipe") => *client = None,
+            Err(error) if error.contains(t!("closed")) || error.contains("Broken pipe") => *client = None,
             other => {
                 result = Some(other);
                 break;
@@ -255,7 +255,7 @@ fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Val
             json!({ "content": content })
         }
         Some(Err(error)) => tool_error(error),
-        None => tool_error("редактор недоступен".into()),
+        None => tool_error(t!("the editor is not available").into()),
     }
 }
 

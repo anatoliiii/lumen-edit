@@ -48,7 +48,7 @@ pub use commands::Command;
 
 /// Version line for `lumen-edit --version`.
 pub fn about_line() -> String {
-    format!("{} — {}\nАвтор: {}\n{}", about::version_line(), about::TAGLINE, about::AUTHOR, about::REPOSITORY)
+    t!("{n1} — {n2}\nAuthor: {n3}\n{n4}", n1 = about::version_line(), n2 = about::tagline(), n3 = about::author(), n4 = about::REPOSITORY)
 }
 use diffview::{DiffTab, LogTab};
 use document::Document;
@@ -212,9 +212,9 @@ impl Tab {
         match self {
             Tab::Doc(doc) => doc.name().to_string(),
             Tab::Diff(diff) => diff.title.clone(),
-            Tab::Log(_) => "История git".into(),
+            Tab::Log(_) => t!("Git history").into(),
             Tab::Agent(agent) => agent.title.clone(),
-            Tab::Teleport(_) => "⇄ Телепорт".into(),
+            Tab::Teleport(_) => t!("⇄ Teleport").into(),
             Tab::Image(image) => host::file_name(&image.path).to_string(),
         }
     }
@@ -375,7 +375,7 @@ impl App {
         let control_bus = app.bus.clone();
         app.control_socket = crate::control::serve(move |request| control_bus.send(Msg::Control(request)));
         if app.control_socket.is_none() {
-            eprintln!("lumen-edit: не удалось открыть управляющий сокет");
+            eprintln!("{}", t!("lumen-edit: could not open the control socket"));
         }
 
         // `lumen-edit [path]` or `lumen-edit ssh://host/path`.
@@ -610,18 +610,18 @@ impl App {
         let data = match result {
             Ok(data) => data,
             Err(error) => {
-                self.notify(format!("Не удалось открыть {}: {error}", host::file_name(&path)), true);
+                self.notify(t!("Could not open {n1}: {error}", n1 = host::file_name(&path), error = error), true);
                 self.run_doc_waiters(&path, Err(error));
                 return;
             }
         };
         if media::kind(&path) == Some(media::Media::Raster) {
             media::open_image_tab(self, path.clone(), data);
-            self.run_doc_waiters(&path, Err("это изображение".into()));
+            self.run_doc_waiters(&path, Err(t!("this is an image").into()));
             return;
         }
         if data.iter().take(8000).any(|b| *b == 0) {
-            self.notify(format!("{} — двоичный файл, не открываю", host::file_name(&path)), true);
+            self.notify(t!("{n1} is a binary file, not opening it", n1 = host::file_name(&path)), true);
             return;
         }
         let text = String::from_utf8(data).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
@@ -775,7 +775,7 @@ impl App {
                     self.refresh_tasks();
                 }
             }
-            Err(error) => self.notify(format!("Не удалось сохранить: {error}"), true),
+            Err(error) => self.notify(t!("Could not save: {error}", error = error), true),
         }
     }
 
@@ -843,7 +843,7 @@ impl App {
             let result = if host.which("shellcheck") {
                 crate::lsp::shellcheck::run(&host, &cwd, &text)
             } else {
-                Err("shellcheck не найден".into())
+                Err(t!("shellcheck not found").into())
             };
             Msg::Shellcheck { doc_id, version, result }
         });
@@ -1024,7 +1024,7 @@ impl App {
                 self.panel_tab = PanelTab::Terminal;
                 self.terminal_focus = true;
             }
-            Err(error) => self.notify(format!("Не удалось запустить терминал: {error}"), true),
+            Err(error) => self.notify(t!("Could not start the terminal: {error}", error = error), true),
         }
     }
 
@@ -1145,7 +1145,11 @@ impl App {
                         let summary = output.lines().last().unwrap_or("").to_string();
                         self.output.push((format!("git {label}: {output}"), false));
                         self.toasts.push(Toast {
-                            text: if summary.is_empty() { format!("git {label}: готово") } else { format!("git {label}: {summary}") },
+                            text: if summary.is_empty() {
+                                t!("git {label}: done", label = label)
+                            } else {
+                                format!("git {label}: {summary}")
+                            },
                             error: false,
                             at: Instant::now(),
                         });
@@ -1214,7 +1218,7 @@ impl App {
                         Ok(files) => workspace.file_index = Some(files),
                         Err(error) => {
                             workspace.file_index = Some(Vec::new());
-                            self.notify(format!("Не удалось получить список файлов: {error}"), true);
+                            self.notify(t!("Could not list files: {error}", error = error), true);
                         }
                     }
                 }
@@ -1225,7 +1229,7 @@ impl App {
                 }
             }
             Msg::WorkspaceEditDone(result) => match result {
-                Ok(count) if count > 0 => self.notify(format!("Изменено файлов на диске: {count}"), false),
+                Ok(count) if count > 0 => self.notify(t!("Files changed on disk: {count}", count = count), false),
                 Ok(_) => {}
                 Err(error) => self.notify(error, true),
             },
@@ -1499,17 +1503,17 @@ impl App {
             Dialog::CloseTab { index } => {
                 let name = self.tabs.get(index).map(|t| t.title()).unwrap_or_default();
                 let mut choice = None;
-                modal(ctx, "Несохранённые изменения", &mut |ui| {
-                    ui.label(format!("Сохранить изменения в «{name}»?"));
+                modal(ctx, t!("Unsaved changes"), &mut |ui| {
+                    ui.label(t!("Save changes to “{name}”?", name = name));
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Сохранить").clicked() {
+                        if ui.button(t!("Save")).clicked() {
                             choice = Some(0);
                         }
-                        if ui.button("Не сохранять").clicked() {
+                        if ui.button(t!("Don't save")).clicked() {
                             choice = Some(1);
                         }
-                        if ui.button("Отмена").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button(t!("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             choice = Some(2);
                         }
                     });
@@ -1530,17 +1534,17 @@ impl App {
             }
             Dialog::CloseWorkspace { then } => {
                 let mut choice = None;
-                modal(ctx, "Несохранённые изменения", &mut |ui| {
-                    ui.label("Есть несохранённые файлы. Сохранить их?");
+                modal(ctx, t!("Unsaved changes"), &mut |ui| {
+                    ui.label(t!("There are unsaved files. Save them?"));
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Сохранить все").clicked() {
+                        if ui.button(t!("Save All")).clicked() {
                             choice = Some(0);
                         }
-                        if ui.button("Не сохранять").clicked() {
+                        if ui.button(t!("Don't save")).clicked() {
                             choice = Some(1);
                         }
-                        if ui.button("Отмена").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button(t!("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             choice = Some(2);
                         }
                     });
@@ -1566,17 +1570,17 @@ impl App {
             }
             Dialog::Quit => {
                 let mut choice = None;
-                modal(ctx, "Выход", &mut |ui| {
-                    ui.label("Есть несохранённые файлы.");
+                modal(ctx, t!("Quit"), &mut |ui| {
+                    ui.label(t!("There are unsaved files."));
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Сохранить и выйти").clicked() {
+                        if ui.button(t!("Save and quit")).clicked() {
                             choice = Some(0);
                         }
-                        if ui.button("Выйти без сохранения").clicked() {
+                        if ui.button(t!("Quit without saving")).clicked() {
                             choice = Some(1);
                         }
-                        if ui.button("Отмена").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button(t!("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             choice = Some(2);
                         }
                     });
@@ -1598,10 +1602,10 @@ impl App {
                     ui.label(&message);
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Да").color(theme::ERROR)).clicked() {
+                        if ui.button(RichText::new(t!("Yes")).color(theme::ERROR)).clicked() {
                             choice = Some(true);
                         }
-                        if ui.button("Отмена").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button(t!("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             choice = Some(false);
                         }
                     });
@@ -1628,7 +1632,7 @@ impl App {
                         if ui.button("OK").clicked() {
                             choice = Some(true);
                         }
-                        if ui.button("Отмена").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button(t!("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             choice = Some(false);
                         }
                     });

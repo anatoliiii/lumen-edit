@@ -1,0 +1,30 @@
+Lumen Edit — нативный редактор кода
+
+Запуск:
+  lumen-edit [ПАПКА [ФАЙЛ]]           открыть окно (если редактор уже запущен,
+  lumen-edit ФАЙЛ[:СТРОКА[:СТОЛБЕЦ]]   путь откроется в нём)
+  lumen-edit ssh://ХОСТ/ПУТЬ           открыть проект на SSH-хосте
+  lumen-edit --new-window ...          всегда новое окно
+
+Управление запущенным редактором:
+  lumen-edit open ФАЙЛ[:СТРОКА[:СТОЛБЕЦ]]
+  lumen-edit cmd КОМАНДА               любая команда меню (список: lumen-edit commands)
+  lumen-edit МЕТОД [АРГУМЕНТЫ]         любой метод, например:
+      lumen-edit state
+      lumen-edit read_file src/main.rs start_line=1 end_line=40
+      lumen-edit search 'fn main' --include .rs
+      lumen-edit exec 'cargo build'
+      lumen-edit git_commit 'fix: …' --all
+      lumen-edit terminal_read --wait_ms 500
+  lumen-edit call МЕТОД '{"json": "параметры"}'
+  lumen-edit methods                   список методов
+  lumen-edit help МЕТОД                параметры метода
+  lumen-edit instances                 запущенные редакторы
+
+MCP:
+  lumen-edit mcp                       MCP-сервер на stdio (запускает редактор при необходимости)
+  lumen-edit mcp --granular            по инструменту на метод (для поиска инструментов по запросу)
+
+Аргументы: key=value, --key value, --flag, JSON-объект или значения обязательных
+параметров по порядку. --json — вывод в JSON. Переменная LUMEN_SOCKET выбирает
+конкретный редактор.

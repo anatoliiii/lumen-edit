@@ -71,13 +71,13 @@ impl Palette {
 
 fn placeholder(mode: &Mode) -> &'static str {
     match mode {
-        Mode::Files => "Имя файла (> — команды, : — строка)",
-        Mode::Commands => "Команда",
-        Mode::GotoLine => "Номер строки[:столбец]",
-        Mode::Recent => "Недавний проект",
-        Mode::Tasks => "Задача для запуска",
-        Mode::Branches { merge: false } => "Ветка для переключения (или имя новой)",
-        Mode::Branches { merge: true } => "Ветка для слияния в текущую",
+        Mode::Files => t!("File name (> commands, : line)"),
+        Mode::Commands => t!("Command"),
+        Mode::GotoLine => t!("Line number[:column]"),
+        Mode::Recent => t!("Recent project"),
+        Mode::Tasks => t!("Task to run"),
+        Mode::Branches { merge: false } => t!("Branch to switch to (or a new name)"),
+        Mode::Branches { merge: true } => t!("Branch to merge into current"),
     }
 }
 
@@ -99,7 +99,7 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
                 for tab in app.tabs.iter().rev() {
                     if let super::Tab::Doc(doc) = tab {
                         let relative = workspace.relative(&doc.path).to_string();
-                        push(doc.name().to_string(), relative, "открыт".into(), Action::OpenFile(doc.path.clone()), None);
+                        push(doc.name().to_string(), relative, t!("open tab").into(), Action::OpenFile(doc.path.clone()), None);
                     }
                 }
             }
@@ -146,7 +146,7 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
                 items.push((
                     0,
                     Item {
-                        label: format!("Перейти к строке {line}, столбец {col}"),
+                        label: t!("Go to line {line}, column {col}", line = line, col = col),
                         detail: String::new(),
                         hint: String::new(),
                         matches: Vec::new(),
@@ -163,7 +163,7 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
                 } else {
                     format!("{} — {}", recent.host.trim_start_matches("ssh:"), recent.path)
                 };
-                let hint = if recent.host == "local" { "локально".into() } else { "SSH".into() };
+                let hint = if recent.host == "local" { t!("local").into() } else { "SSH".into() };
                 push(
                     name,
                     where_.clone(),
@@ -192,7 +192,7 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
                     if branch.current {
                         continue;
                     }
-                    let hint = if branch.remote { "удалённая" } else { "" };
+                    let hint = if branch.remote { t!("remote") } else { "" };
                     let action = if *merge { Action::Merge(branch.name.clone()) } else { Action::Checkout(branch.clone()) };
                     push(
                         branch.name.clone(),
@@ -207,7 +207,7 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
                     items.push((
                         u32::MAX,
                         Item {
-                            label: format!("+ Создать ветку «{name}»"),
+                            label: t!("+ Create branch “{name}”", name = name),
                             detail: String::new(),
                             hint: String::new(),
                             matches: Vec::new(),
@@ -285,7 +285,7 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                 if palette.mode == Mode::Files && app.workspace.as_ref().is_some_and(|w| w.file_index_loading) {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new("Индексация файлов…").small().color(theme::MUTED_TEXT));
+                        ui.label(RichText::new(t!("Indexing files…")).small().color(theme::MUTED_TEXT));
                     });
                 }
                 ui.add_space(4.0);
@@ -343,7 +343,7 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                     }
                 });
                 if items.is_empty() && !palette.query.is_empty() {
-                    ui.label(RichText::new("Ничего не найдено").color(theme::MUTED_TEXT));
+                    ui.label(RichText::new(t!("Nothing found")).color(theme::MUTED_TEXT));
                 }
             });
         });

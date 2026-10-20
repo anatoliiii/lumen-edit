@@ -75,7 +75,7 @@ fn handle_connection(stream: UnixStream, dispatch: &(dyn Fn(ControlRequest) + Se
                 match rx.recv_timeout(Duration::from_secs(600)) {
                     Ok(Ok(result)) => json!({ "id": id, "result": result }),
                     Ok(Err(error)) => json!({ "id": id, "error": error }),
-                    Err(_) => json!({ "id": id, "error": "редактор не ответил" }),
+                    Err(_) => json!({ "id": id, "error": t!("the editor did not answer") }),
                 }
             }
             Err(error) => json!({ "id": null, "error": format!("bad request: {error}") }),
@@ -148,7 +148,7 @@ impl Client {
         let mut line = String::new();
         self.reader.read_line(&mut line).map_err(|e| e.to_string())?;
         if line.is_empty() {
-            return Err("соединение с редактором закрыто".into());
+            return Err(t!("the connection to the editor closed").into());
         }
         let response: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
         match response.get("error") {
@@ -164,7 +164,7 @@ pub fn connect_or_launch(launch: bool) -> Result<Client, String> {
         return Client::connect(&path);
     }
     if !launch {
-        return Err("редактор не запущен (запустите lumen-edit или используйте --launch)".into());
+        return Err(t!("the editor is not running (start lumen-edit or use --launch)").into());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::process::Command::new(exe)
@@ -180,5 +180,5 @@ pub fn connect_or_launch(launch: bool) -> Result<Client, String> {
             return Client::connect(&path);
         }
     }
-    Err("редактор не запустился".into())
+    Err(t!("the editor did not start").into())
 }

@@ -87,13 +87,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     let mut open: Option<(String, usize, usize, usize)> = None;
 
     egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
-        ui.label(RichText::new("ПОИСК").small().strong().color(theme::MUTED_TEXT));
+        ui.label(RichText::new(t!("SEARCH")).small().strong().color(theme::MUTED_TEXT));
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if ui.small_button(if search.show_replace { "⏷" } else { "⏵" }).on_hover_text("Замена").clicked() {
+            if ui.small_button(if search.show_replace { "⏷" } else { "⏵" }).on_hover_text(t!("Toggle replace")).clicked() {
                 search.show_replace = !search.show_replace;
             }
-            let input = ui.add(egui::TextEdit::singleline(&mut search.query).hint_text("Искать").desired_width(ui.available_width()));
+            let input = ui.add(egui::TextEdit::singleline(&mut search.query).hint_text(t!("Search")).desired_width(ui.available_width()));
             if search.focus {
                 input.request_focus();
                 search.focus = false;
@@ -104,15 +104,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         });
         ui.horizontal(|ui| {
             ui.add_space(22.0);
-            run |= ui.toggle_value(&mut search.case_sensitive, "Aa").on_hover_text("Учитывать регистр").changed();
-            run |= ui.toggle_value(&mut search.whole_word, "ab").on_hover_text("Слово целиком").changed();
-            run |= ui.toggle_value(&mut search.regex, ".*").on_hover_text("Регулярное выражение").changed();
+            run |= ui.toggle_value(&mut search.case_sensitive, "Aa").on_hover_text(t!("Match case")).changed();
+            run |= ui.toggle_value(&mut search.whole_word, "ab").on_hover_text(t!("Whole word")).changed();
+            run |= ui.toggle_value(&mut search.regex, ".*").on_hover_text(t!("Regular expression")).changed();
         });
         if search.show_replace {
             ui.horizontal(|ui| {
                 ui.add_space(22.0);
-                ui.add(egui::TextEdit::singleline(&mut search.replace).hint_text("Заменить").desired_width(ui.available_width() - 70.0));
-                if ui.button("Все").on_hover_text("Заменить во всех найденных файлах").clicked() {
+                ui.add(egui::TextEdit::singleline(&mut search.replace).hint_text(t!("Replace")).desired_width(ui.available_width() - 70.0));
+                if ui.button(t!("All")).on_hover_text(t!("Replace in all matched files")).clicked() {
                     replace_all = true;
                 }
             });
@@ -120,7 +120,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         ui.horizontal(|ui| {
             ui.add_space(22.0);
             let input = ui.add(
-                egui::TextEdit::singleline(&mut search.include).hint_text("Файлы (напр. .rs, src/)").desired_width(ui.available_width()),
+                egui::TextEdit::singleline(&mut search.include).hint_text(t!("Files (e.g. .rs, src/)")).desired_width(ui.available_width()),
             );
             if input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 run = true;
@@ -130,7 +130,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         ui.horizontal(|ui| {
             if search.running {
                 ui.spinner();
-                ui.label(RichText::new("Поиск…").small().color(theme::MUTED_TEXT));
+                ui.label(RichText::new(t!("Searching…")).small().color(theme::MUTED_TEXT));
             } else if let Some(error) = &search.error {
                 ui.label(RichText::new(error).small().color(theme::ERROR));
             } else if search.last_query.is_some() {
@@ -141,7 +141,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 };
                 let more = if search.truncated { "+" } else { "" };
                 ui.label(
-                    RichText::new(format!("{}{more} совпадений в {files} файлах", search.results.len())).small().color(theme::MUTED_TEXT),
+                    RichText::new(t!("{n1}{more} matches in {files} files", n1 = search.results.len(), more = more, files = files))
+                        .small()
+                        .color(theme::MUTED_TEXT),
                 );
             }
         });

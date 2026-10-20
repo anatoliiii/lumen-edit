@@ -63,11 +63,11 @@ fn checkerboard(painter: &egui::Painter, rect: egui::Rect) {
 
 fn human_size(bytes: usize) -> String {
     if bytes >= 1 << 20 {
-        format!("{:.1} МБ", bytes as f64 / 1048576.0)
+        t!("{n1} MB", n1 = format!("{:.1}", bytes as f64 / 1048576.0))
     } else if bytes >= 1024 {
-        format!("{:.1} КБ", bytes as f64 / 1024.0)
+        t!("{n1} KB", n1 = format!("{:.1}", bytes as f64 / 1024.0))
     } else {
-        format!("{bytes} Б")
+        t!("{bytes} B", bytes = bytes)
     }
 }
 
@@ -82,7 +82,7 @@ fn image_view(ui: &mut egui::Ui, uri: String, bytes: Bytes, file_size: usize, zo
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
-                ui.label(RichText::new(format!("Не удалось показать изображение: {error}")).color(theme::ERROR));
+                ui.label(RichText::new(t!("Could not show the image: {error}", error = error)).color(theme::ERROR));
             });
             return;
         }
@@ -106,13 +106,13 @@ fn image_view(ui: &mut egui::Ui, uri: String, bytes: Bytes, file_size: usize, zo
             }
             let label = match zoom {
                 Some(z) => format!("{:.0}%", *z * 100.0),
-                None => "по окну".into(),
+                None => t!("fit").into(),
             };
             ui.label(RichText::new(label).small().color(theme::MUTED_TEXT));
             if ui.small_button("−").clicked() {
                 *zoom = Some((zoom.unwrap_or(1.0) / 1.25).max(0.05));
             }
-            if ui.selectable_label(zoom.is_none(), "по окну").clicked() {
+            if ui.selectable_label(zoom.is_none(), t!("fit")).clicked() {
                 *zoom = None;
             }
             if ui.selectable_label(*zoom == Some(1.0), "100%").clicked() {
@@ -219,10 +219,12 @@ pub fn show_table(ui: &mut egui::Ui, doc: &mut super::document::Document) {
     let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
     ui.horizontal(|ui| {
         ui.add_space(14.0);
-        ui.label(RichText::new(format!("{} строк × {} столбцов", rows.len().saturating_sub(1), columns)).small().color(theme::MUTED_TEXT));
+        ui.label(
+            RichText::new(t!("{n1} rows × {n2} columns", n1 = rows.len().saturating_sub(1), n2 = columns)).small().color(theme::MUTED_TEXT),
+        );
     });
     if rows.is_empty() || columns == 0 {
-        ui.label(RichText::new("Пустая таблица").color(theme::MUTED_TEXT));
+        ui.label(RichText::new(t!("Empty table")).color(theme::MUTED_TEXT));
         return;
     }
     let header = &rows[0];

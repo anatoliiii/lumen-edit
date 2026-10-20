@@ -1,0 +1,30 @@
+Lumen Edit — native code editor
+
+Start:
+  lumen-edit [FOLDER [FILE]]           open a window (if the editor is already running,
+  lumen-edit FILE[:LINE[:COLUMN]]      the path opens there)
+  lumen-edit ssh://HOST/PATH           open a project on an SSH host
+  lumen-edit --new-window ...          always a new window
+
+Control a running editor:
+  lumen-edit open FILE[:LINE[:COLUMN]]
+  lumen-edit cmd COMMAND               any menu command (list: lumen-edit commands)
+  lumen-edit METHOD [ARGUMENTS]        any method, for example:
+      lumen-edit state
+      lumen-edit read_file src/main.rs start_line=1 end_line=40
+      lumen-edit search 'fn main' --include .rs
+      lumen-edit exec 'cargo build'
+      lumen-edit git_commit 'fix: …' --all
+      lumen-edit terminal_read --wait_ms 500
+  lumen-edit call METHOD '{"json": "params"}'
+  lumen-edit methods                   list methods
+  lumen-edit help METHOD               method parameters
+  lumen-edit instances                 running editors
+
+MCP:
+  lumen-edit mcp                       MCP server on stdio (starts the editor if needed)
+  lumen-edit mcp --granular            one tool per method (for on-demand tool search)
+
+Arguments: key=value, --key value, --flag, a JSON object, or the values of the
+required parameters in order. --json prints JSON. LUMEN_SOCKET picks a
+specific editor.

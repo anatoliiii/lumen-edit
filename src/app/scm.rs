@@ -92,32 +92,32 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                             ui.close();
                         }
                         ui.separator();
-                        if ui.button("Новая ветка…").clicked() {
+                        if ui.button(t!("New branch…")).clicked() {
                             actions.push(Action::NewBranch);
                             ui.close();
                         }
-                        if ui.button("Спрятать изменения (stash)").clicked() {
+                        if ui.button(t!("Stash changes")).clicked() {
                             actions.push(Action::Stash);
                             ui.close();
                         }
-                        if ui.button("История (граф)").clicked() {
+                        if ui.button(t!("History (graph)")).clicked() {
                             actions.push(Action::Log);
                             ui.close();
                         }
                         ui.separator();
-                        if ui.button("Добавить всё в индекс").clicked() {
+                        if ui.button(t!("Stage all")).clicked() {
                             actions.push(Action::StageAll);
                             ui.close();
                         }
-                        if ui.button("Убрать всё из индекса").clicked() {
+                        if ui.button(t!("Unstage all")).clicked() {
                             actions.push(Action::UnstageAll);
                             ui.close();
                         }
                     });
-                    if ui.small_button("⎘").on_hover_text("История").clicked() {
+                    if ui.small_button("⎘").on_hover_text(t!("History")).clicked() {
                         actions.push(Action::Log);
                     }
-                    if ui.small_button("⟳").on_hover_text("Обновить").clicked() {
+                    if ui.small_button("⟳").on_hover_text(t!("Refresh")).clicked() {
                         actions.push(Action::Refresh);
                     }
                 }
@@ -130,9 +130,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             if !git.checked {
                 ui.spinner();
             } else {
-                ui.label(RichText::new("Папка не является git-репозиторием.").color(theme::MUTED_TEXT));
+                ui.label(RichText::new(t!("This folder is not a git repository.")).color(theme::MUTED_TEXT));
                 ui.add_space(8.0);
-                if ui.button("Инициализировать репозиторий").clicked() {
+                if ui.button(t!("Initialize repository")).clicked() {
                     actions.push(Action::Init);
                 }
             }
@@ -147,7 +147,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 0)).show(ui, |ui| {
         ui.horizontal(|ui| {
             let branch = if status.detached { "(detached HEAD)".to_string() } else { status.branch.clone() };
-            if ui.button(format!("⎇ {branch}")).on_hover_text("Переключить ветку").clicked() {
+            if ui.button(format!("⎇ {branch}")).on_hover_text(t!("Switch branch")).clicked() {
                 actions.push(Action::Checkout(git::Branch {
                     name: String::new(),
                     remote: false,
@@ -159,15 +159,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 }));
             }
             let sync_label = match (&status.upstream, status.ahead, status.behind) {
-                (None, _, _) => "↑ Опубликовать".to_string(),
+                (None, _, _) => t!("↑ Publish").to_string(),
                 (Some(_), 0, 0) => "⟳".to_string(),
                 (Some(_), ahead, behind) => format!("⟳ {behind}↓ {ahead}↑"),
             };
-            let hint = if status.upstream.is_none() {
-                "Отправить ветку на origin"
-            } else {
-                "Синхронизировать: pull, затем push"
-            };
+            let hint = if status.upstream.is_none() { t!("Push the branch to origin") } else { t!("Sync: pull, then push") };
             if ui.button(sync_label).on_hover_text(hint).clicked() {
                 actions.push(if status.upstream.is_none() { Action::Push } else { Action::Sync });
             }
@@ -183,22 +179,25 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             .corner_radius(4.0)
             .show(ui, |ui| {
                 let label = match status.state {
-                    RepoState::Merging => "Идёт слияние",
-                    RepoState::Rebasing => "Идёт rebase",
-                    RepoState::CherryPicking => "Идёт cherry-pick",
-                    RepoState::Reverting => "Идёт revert",
+                    RepoState::Merging => t!("Merge in progress"),
+                    RepoState::Rebasing => t!("Rebase in progress"),
+                    RepoState::CherryPicking => t!("Cherry-pick in progress"),
+                    RepoState::Reverting => t!("Revert in progress"),
                     RepoState::Clean => "",
                 };
                 ui.label(RichText::new(label).color(theme::WARNING).strong());
                 let conflicts = status.files.iter().filter(|f| f.conflict).count();
                 if conflicts > 0 {
-                    ui.label(RichText::new(format!("Конфликтов: {conflicts}. Разрешите их в редакторе и добавьте в индекс.")).small());
+                    ui.label(
+                        RichText::new(t!("Conflicts: {conflicts}. Resolve them in the editor and stage the files.", conflicts = conflicts))
+                            .small(),
+                    );
                 }
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(conflicts == 0, egui::Button::new("Продолжить")).clicked() {
+                    if ui.add_enabled(conflicts == 0, egui::Button::new(t!("Continue"))).clicked() {
                         actions.push(Action::Continue);
                     }
-                    if ui.button(RichText::new("Прервать").color(theme::ERROR)).clicked() {
+                    if ui.button(RichText::new(t!("Abort")).color(theme::ERROR)).clicked() {
                         actions.push(Action::Abort);
                     }
                 });
@@ -207,11 +206,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
 
     // Commit box.
     egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
-        let hint = if git.amend {
-            "Новое сообщение для последнего коммита"
-        } else {
-            "Сообщение коммита (Ctrl+Enter)"
-        };
+        let hint = if git.amend { t!("New message for the last commit") } else { t!("Commit message (Ctrl+Enter)") };
         let editor =
             ui.add(egui::TextEdit::multiline(&mut git.commit_message).hint_text(hint).desired_rows(3).desired_width(f32::INFINITY));
         if editor.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)) {
@@ -220,17 +215,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         ui.horizontal(|ui| {
             let staged = status.files.iter().filter(|f| f.staged()).count();
             let label = if git.amend {
-                "✓ Исправить коммит".to_string()
+                t!("✓ Amend commit").to_string()
             } else if staged == 0 && !status.files.is_empty() {
-                "✓ Коммит (всё)".to_string()
+                t!("✓ Commit (all)").to_string()
             } else {
-                "✓ Коммит".to_string()
+                t!("✓ Commit").to_string()
             };
             let enabled = !git.commit_message.trim().is_empty() && (!status.files.is_empty() || git.amend) && git.busy.is_none();
             if ui.add_enabled(enabled, egui::Button::new(RichText::new(label).strong()).fill(theme::ACCENT_DIM)).clicked() {
                 actions.push(Action::Commit);
             }
-            if ui.checkbox(&mut git.amend, "amend").on_hover_text("Изменить последний коммит").changed()
+            if ui.checkbox(&mut git.amend, "amend").on_hover_text(t!("Amend the last commit")).changed()
                 && git.amend
                 && git.commit_message.is_empty()
             {
@@ -249,15 +244,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     egui::ScrollArea::vertical().id_salt("scm_scroll").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         if !conflicts.is_empty() {
-            section_header(ui, "КОНФЛИКТЫ", conflicts.len(), &mut false, |_| {});
+            section_header(ui, t!("CONFLICTS"), conflicts.len(), &mut false, |_| {});
             for file in &conflicts {
                 file_row(ui, file, false, &mut actions, true);
             }
         }
         if !staged.is_empty() {
             let mut hide = git.hide_staged;
-            section_header(ui, "В ИНДЕКСЕ", staged.len(), &mut hide, |ui| {
-                if ui.small_button("−").on_hover_text("Убрать всё из индекса").clicked() {
+            section_header(ui, t!("STAGED"), staged.len(), &mut hide, |ui| {
+                if ui.small_button("−").on_hover_text(t!("Unstage all")).clicked() {
                     actions.push(Action::UnstageAll);
                 }
             });
@@ -269,12 +264,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             }
         }
         let mut hide = git.hide_changes;
-        section_header(ui, "ИЗМЕНЕНИЯ", changes.len(), &mut hide, |ui| {
+        section_header(ui, t!("CHANGES"), changes.len(), &mut hide, |ui| {
             if !changes.is_empty() {
-                if ui.small_button("+").on_hover_text("Добавить всё").clicked() {
+                if ui.small_button("+").on_hover_text(t!("Stage all")).clicked() {
                     actions.push(Action::StageAll);
                 }
-                if ui.small_button("↺").on_hover_text("Отменить все изменения").clicked() {
+                if ui.small_button("↺").on_hover_text(t!("Discard all changes")).clicked() {
                     actions.push(Action::Discard(changes.iter().map(|f| (*f).clone()).collect()));
                 }
             }
@@ -285,7 +280,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    ui.label(RichText::new("Рабочая копия чистая").small().color(theme::FAINT_TEXT));
+                    ui.label(RichText::new(t!("Working tree is clean")).small().color(theme::FAINT_TEXT));
                 });
             }
             for file in &changes {
@@ -299,8 +294,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         let local: Vec<&git::Branch> = git.branches.iter().filter(|b| !b.remote).collect();
         let remote: Vec<&git::Branch> = git.branches.iter().filter(|b| b.remote).collect();
         let mut collapsed = !show_branches;
-        section_header(ui, "ВЕТКИ", local.len(), &mut collapsed, |ui| {
-            if ui.small_button("+").on_hover_text("Новая ветка").clicked() {
+        section_header(ui, t!("BRANCHES"), local.len(), &mut collapsed, |ui| {
+            if ui.small_button("+").on_hover_text(t!("New branch")).clicked() {
                 actions.push(Action::NewBranch);
             }
         });
@@ -315,7 +310,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         // Remotes.
         let mut collapsed = !git.show_remotes;
         section_header(ui, "REMOTES", git.remotes.len(), &mut collapsed, |ui| {
-            if ui.small_button("+").on_hover_text("Добавить remote").clicked() {
+            if ui.small_button("+").on_hover_text(t!("Add remote")).clicked() {
                 actions.push(Action::AddRemote);
             }
         });
@@ -324,7 +319,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             if git.remotes.is_empty() {
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    if ui.small_button("Добавить origin…").clicked() {
+                    if ui.small_button(t!("Add origin…")).clicked() {
                         actions.push(Action::AddRemote);
                     }
                 });
@@ -336,11 +331,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     ui.add(egui::Label::new(RichText::new(&remote.url).small().color(theme::MUTED_TEXT)).truncate());
                 });
                 response.response.interact(Sense::click()).context_menu(|ui| {
-                    if ui.button("Изменить URL…").clicked() {
+                    if ui.button(t!("Change URL…")).clicked() {
                         actions.push(Action::EditRemote(remote.clone()));
                         ui.close();
                     }
-                    if ui.button("Копировать URL").clicked() {
+                    if ui.button(t!("Copy URL")).clicked() {
                         ui.ctx().copy_text(remote.url.clone());
                         ui.close();
                     }
@@ -349,7 +344,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button(RichText::new("Удалить").color(theme::ERROR)).clicked() {
+                    if ui.button(RichText::new(t!("Delete")).color(theme::ERROR)).clicked() {
                         actions.push(Action::RemoveRemote(remote.name.clone()));
                         ui.close();
                     }
@@ -360,7 +355,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         // Stashes.
         let mut collapsed = !git.show_stashes;
         section_header(ui, "STASH", git.stashes.len(), &mut collapsed, |ui| {
-            if ui.small_button("+").on_hover_text("Спрятать изменения").clicked() {
+            if ui.small_button("+").on_hover_text(t!("Stash changes")).clicked() {
                 actions.push(Action::Stash);
             }
         });
@@ -372,13 +367,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     ui.label(RichText::new(&stash.message).small()).on_hover_text(format!("{} — {}", stash.name, stash.date));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(6.0);
-                        if ui.small_button("✕").on_hover_text("Удалить").clicked() {
+                        if ui.small_button("✕").on_hover_text(t!("Delete")).clicked() {
                             actions.push(Action::StashAction("drop", stash.name.clone()));
                         }
-                        if ui.small_button("↓").on_hover_text("Применить и удалить (pop)").clicked() {
+                        if ui.small_button("↓").on_hover_text(t!("Apply and drop (pop)")).clicked() {
                             actions.push(Action::StashAction("pop", stash.name.clone()));
                         }
-                        if ui.small_button("✓").on_hover_text("Применить (apply)").clicked() {
+                        if ui.small_button("✓").on_hover_text(t!("Apply")).clicked() {
                             actions.push(Action::StashAction("apply", stash.name.clone()));
                         }
                     });
@@ -444,28 +439,28 @@ fn file_row(ui: &mut egui::Ui, file: &FileStatus, staged: bool, actions: &mut Ve
         );
         let paths = vec![file.path.clone()];
         if conflict {
-            if child.small_button("+").on_hover_text("Отметить как разрешённый").clicked() {
+            if child.small_button("+").on_hover_text(t!("Mark as resolved")).clicked() {
                 actions.push(Action::Stage(paths.clone()));
             }
-            if child.small_button("их").on_hover_text("Взять входящую версию целиком").clicked() {
+            if child.small_button(t!("theirs")).on_hover_text(t!("Take the incoming version entirely")).clicked() {
                 actions.push(Action::TakeSide(file.path.clone(), false));
             }
-            if child.small_button("моё").on_hover_text("Взять текущую версию целиком").clicked() {
+            if child.small_button(t!("mine")).on_hover_text(t!("Take the current version entirely")).clicked() {
                 actions.push(Action::TakeSide(file.path.clone(), true));
             }
         } else if staged {
-            if child.small_button("−").on_hover_text("Убрать из индекса").clicked() {
+            if child.small_button("−").on_hover_text(t!("Unstage")).clicked() {
                 actions.push(Action::Unstage(paths.clone()));
             }
         } else {
-            if child.small_button("+").on_hover_text("Добавить в индекс").clicked() {
+            if child.small_button("+").on_hover_text(t!("Stage")).clicked() {
                 actions.push(Action::Stage(paths.clone()));
             }
-            if child.small_button("↺").on_hover_text("Отменить изменения").clicked() {
+            if child.small_button("↺").on_hover_text(t!("Discard changes")).clicked() {
                 actions.push(Action::Discard(vec![file.clone()]));
             }
         }
-        if child.small_button("🗋").on_hover_text("Открыть файл").clicked() {
+        if child.small_button("🗋").on_hover_text(t!("Open File")).clicked() {
             actions.push(Action::Open(file.path.clone()));
         }
     }
@@ -516,21 +511,21 @@ fn branch_row(ui: &mut egui::Ui, branch: &git::Branch, actions: &mut Vec<Action>
         actions.push(Action::Checkout(branch.clone()));
     }
     response.context_menu(|ui| {
-        if !branch.current && ui.button("Переключиться").clicked() {
+        if !branch.current && ui.button(t!("Switch")).clicked() {
             actions.push(Action::Checkout(branch.clone()));
             ui.close();
         }
-        if !branch.current && ui.button("Слить в текущую (merge)").clicked() {
+        if !branch.current && ui.button(t!("Merge into current")).clicked() {
             actions.push(Action::MergeBranch(branch.name.clone()));
             ui.close();
         }
-        if !branch.current && ui.button("Rebase текущей на эту").clicked() {
+        if !branch.current && ui.button(t!("Rebase current onto this")).clicked() {
             actions.push(Action::RebaseOnto(branch.name.clone()));
             ui.close();
         }
         if !branch.current && !branch.remote {
             ui.separator();
-            if ui.button(RichText::new("Удалить ветку").color(theme::ERROR)).clicked() {
+            if ui.button(RichText::new(t!("Delete branch")).color(theme::ERROR)).clicked() {
                 actions.push(Action::DeleteBranch(branch.name.clone()));
                 ui.close();
             }
@@ -549,12 +544,12 @@ fn drop_actions(app: &mut App, actions: Vec<Action>) {
             Action::Discard(files) => {
                 let names: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
                 let message = if names.len() == 1 {
-                    format!("Отменить изменения в «{}»? Их нельзя будет вернуть.", names[0])
+                    t!("Discard changes in “{n1}”? They cannot be recovered.", n1 = names[0])
                 } else {
-                    format!("Отменить изменения в {} файлах? Их нельзя будет вернуть.", names.len())
+                    t!("Discard changes in {n1} files? They cannot be recovered.", n1 = names.len())
                 };
                 app.dialog = Some(Dialog::Confirm {
-                    title: "Отмена изменений".into(),
+                    title: t!("Discard changes").into(),
                     message,
                     action: Box::new(move |app: &mut App| {
                         app.git_op("restore", move |h, r| git::discard(h, r, &files).map(|_| String::new()))
@@ -581,8 +576,8 @@ fn drop_actions(app: &mut App, actions: Vec<Action>) {
             Action::Checkout(branch) => app.git_op("switch", move |h, r| git::checkout(h, r, &branch)),
             Action::DeleteBranch(name) => {
                 app.dialog = Some(Dialog::Confirm {
-                    title: "Удаление ветки".into(),
-                    message: format!("Удалить ветку «{name}»?"),
+                    title: t!("Delete branch").into(),
+                    message: t!("Delete branch “{name}”?", name = name),
                     action: Box::new(move |app: &mut App| {
                         app.git_op("branch -d", move |h, r| {
                             git::delete_branch(h, r, &name, false)
@@ -596,7 +591,7 @@ fn drop_actions(app: &mut App, actions: Vec<Action>) {
             Action::NewBranch => prompt_new_branch(app),
             Action::Stash => {
                 app.dialog = Some(Dialog::Input {
-                    title: "Сообщение для stash (необязательно)".into(),
+                    title: t!("Stash message (optional)").into(),
                     value: "wip".into(),
                     focus: true,
                     action: Box::new(|app: &mut App, message: String| {
@@ -610,7 +605,7 @@ fn drop_actions(app: &mut App, actions: Vec<Action>) {
             Action::AddRemote => prompt_add_remote(app, None),
             Action::EditRemote(remote) => {
                 app.dialog = Some(Dialog::Input {
-                    title: format!("URL для «{}»", remote.name),
+                    title: t!("URL for “{n1}”", n1 = remote.name),
                     value: remote.url.clone(),
                     focus: true,
                     action: Box::new(move |app: &mut App, url: String| {
@@ -621,8 +616,8 @@ fn drop_actions(app: &mut App, actions: Vec<Action>) {
             }
             Action::RemoveRemote(name) => {
                 app.dialog = Some(Dialog::Confirm {
-                    title: "Удаление remote".into(),
-                    message: format!("Удалить remote «{name}»? Сам удалённый репозиторий не пострадает."),
+                    title: t!("Remove remote").into(),
+                    message: t!("Remove remote “{name}”? The remote repository itself is not affected.", name = name),
                     action: Box::new(move |app: &mut App| app.git_op("remote remove", move |h, r| git::remove_remote(h, r, &name))),
                 });
             }
@@ -649,7 +644,7 @@ pub fn commit(app: &mut App, amend_flag: bool) {
     if message.is_empty() {
         app.side_view = super::SideView::Git;
         app.sidebar_open = true;
-        app.notify("Введите сообщение коммита", true);
+        app.notify(t!("Enter a commit message"), true);
         return;
     }
     let nothing_staged = workspace.git.status.as_ref().is_some_and(|s| !s.files.iter().any(|f| f.staged()));
@@ -681,9 +676,9 @@ pub fn prompt_add_remote(app: &mut App, publish: Option<()>) {
     let first = app.workspace.as_ref().is_none_or(|w| w.git.remotes.is_empty());
     app.dialog = Some(Dialog::Input {
         title: if publish.is_some() {
-            "Куда опубликовать: URL репозитория (git@host:user/repo.git)".into()
+            t!("Where to publish: repository URL (git@host:user/repo.git)").into()
         } else {
-            "Новый remote: имя и URL через пробел (или только URL для origin)".into()
+            t!("New remote: name and URL separated by a space (or just a URL for origin)").into()
         },
         value: if first || publish.is_some() { String::new() } else { "upstream ".into() },
         focus: true,
@@ -709,7 +704,7 @@ pub fn prompt_add_remote(app: &mut App, publish: Option<()>) {
 
 pub fn prompt_new_branch(app: &mut App) {
     app.dialog = Some(Dialog::Input {
-        title: "Имя новой ветки".into(),
+        title: t!("New branch name").into(),
         value: String::new(),
         focus: true,
         action: Box::new(|app: &mut App, name: String| {

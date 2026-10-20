@@ -20,12 +20,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
 
     egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("ЗАПУСК").small().strong().color(theme::MUTED_TEXT));
+            ui.label(RichText::new(t!("RUN")).small().strong().color(theme::MUTED_TEXT));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("⚙").on_hover_text("Настроить tasks.toml").clicked() {
+                if ui.small_button("⚙").on_hover_text(t!("Configure tasks.toml")).clicked() {
                     edit = true;
                 }
-                if ui.small_button("⟳").on_hover_text("Обновить список").clicked() {
+                if ui.small_button("⟳").on_hover_text(t!("Refresh list")).clicked() {
                     refresh = true;
                 }
             });
@@ -35,7 +35,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         ui.horizontal(|ui| {
             let label = match &default {
                 Some(task) => format!("⏵  {}", task.label),
-                None => "⏵  Запуск".to_string(),
+                None => t!("⏵  Run").to_string(),
             };
             if ui.add(egui::Button::new(RichText::new(label).strong()).fill(theme::ACCENT_DIM)).on_hover_text("F5").clicked() {
                 match default {
@@ -43,7 +43,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     None => edit = true,
                 }
             }
-            if app.last_task.is_some() && ui.button("↻").on_hover_text("Повторить последнюю (Ctrl+F5)").clicked() {
+            if app.last_task.is_some() && ui.button("↻").on_hover_text(t!("Rerun last (Ctrl+F5)")).clicked() {
                 rerun = true;
             }
         });
@@ -84,13 +84,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                ui.label(RichText::new("Задачи не найдены. Создайте .lumen/tasks.toml.").small().color(theme::MUTED_TEXT));
+                ui.label(RichText::new(t!("No tasks found. Create .lumen/tasks.toml.")).small().color(theme::MUTED_TEXT));
             });
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             ui.add_space(10.0);
-            ui.label(RichText::new("Терминалы").small().color(theme::MUTED_TEXT));
+            ui.label(RichText::new(t!("Terminals")).small().color(theme::MUTED_TEXT));
         });
         let mut focus = None;
         for (index, terminal) in app.terminals.iter().enumerate() {
@@ -133,9 +133,9 @@ pub fn edit_tasks_file(app: &mut App) {
     let dir = host::parent(&path);
     app.bus.spawn(move || {
         if host.stat(&path).is_err()
-            && let Err(error) = host.create_dir(&dir).and_then(|_| host.write_file(&path, tasks::TASKS_TEMPLATE.as_bytes()))
+            && let Err(error) = host.create_dir(&dir).and_then(|_| host.write_file(&path, tasks::tasks_template().as_bytes()))
         {
-            return Msg::Notice(format!("Не удалось создать {path}: {error}"), true);
+            return Msg::Notice(t!("Could not create {path}: {error}", path = path, error = error), true);
         }
         Msg::FsOpDone { reload: vec![dir], open: Some(path), renamed: None, error: None }
     });

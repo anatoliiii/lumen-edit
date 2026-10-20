@@ -28,8 +28,10 @@ Open a project locally or on a remote machine over SSH, edit with full language-
 - **Server pulse** — live CPU, memory, disks and top processes of the project host (local or SSH) in the status bar and a panel with charts; warns before a build fills the disk; kill processes from the list.
 - **Teleport** — two-pane file transfer between this computer, the project host and any other connected SSH host (server to server too), streamed as `tar | tar` through the open connections with progress and cancel. Drop files from your desktop into the window to upload them into the project, even on a remote server.
 - **CI/CD aware** — GitLab CI, GitHub/Gitea/Forgejo Actions, Woodpecker, Drone, Bitbucket, Azure, CircleCI, Travis, Jenkinsfile, Dockerfile, Compose, Kubernetes, Ansible and Terraform are recognised by path: platform icons, pipeline keys, job names, `${{ }}` expressions and `$VARIABLES` highlighted on top of YAML.
-- **Markdown preview** — `.md` files open rendered (tables, task lists, highlighted code); toggle with Ctrl+Alt+P.
+- **Markdown preview** — `.md` files open rendered (tables, task lists, highlighted code, local images); toggle with Ctrl+Alt+P.
+- **Images, SVG and tables** — PNG, JPEG, GIF, WebP, BMP and ICO open in a viewer with zoom; SVG shows a live preview next to its source; CSV/TSV open as a table (delimiter detected, quoted fields supported).
 - **pi agent tab** — the [pi coding agent](https://pi.dev) with your own configuration, rendered as a real chat (streaming Markdown, tool cards, model/mode/thinking pickers, sessions), sandboxed with bubblewrap.
+- **English and Russian interface** — follows the system locale; switch it in Settings → Language.
 - **CLI and MCP** — every GUI command and more (buffers, LSP, diagnostics, search, git, terminals, shell on the project host, screenshots) is scriptable from the command line and exposed to AI agents via MCP.
 
 <table>
@@ -41,11 +43,15 @@ Open a project locally or on a remote machine over SSH, edit with full language-
 <td><img src="docs/screenshots/search.png" alt="Project search"/></td>
 <td><img src="docs/screenshots/terminal.png" alt="Terminal"/></td>
 </tr>
+<tr>
+<td><img src="docs/screenshots/table.png" alt="CSV as a table"/></td>
+<td><img src="docs/screenshots/about.png" alt="About"/></td>
+</tr>
 </table>
 
 ## Installation
 
-Requirements: Linux (x86_64 or aarch64), Rust stable, `git`, `ssh`. Optional: `bwrap` for the agent sandbox, `shellcheck`, language servers.
+Requirements: Linux (x86_64 or aarch64), Rust 1.95 or newer, `git`, `ssh`. Optional: `bwrap` for the agent sandbox, `shellcheck`, language servers.
 
 ```sh
 git clone https://github.com/anatoliiii/lumen-edit-rs.git
@@ -133,7 +139,7 @@ Tools are grouped by entity (`state`, `workspace`, `file`, `search`, `code`, `ex
 
 ## Configuration
 
-`~/.config/lumen-edit/config.toml`, or the Settings window (Ctrl+,): fonts, indentation, format on save, auto save, blame, SSH agent, `pull --rebase`, language servers, pi command/model/mode and sandbox.
+`~/.config/lumen-edit/config.toml`, or the Settings window (Ctrl+,): interface language, fonts, indentation, format on save, auto save, blame, SSH agent, `pull --rebase`, language servers, pi command/model/mode and sandbox.
 
 ## Architecture
 
@@ -149,6 +155,8 @@ src/
   git.rs      git through the command line (same locally and over SSH)
   control/    control socket, method registry, MCP server
   app/        UI: editor, explorer, search, git, panels, palette, agent, SSH flow
+  i18n.rs     interface language, t!() and t_file!()
+locales/      translations (ru.toml) and long texts per language
 ```
 
 ## Development

@@ -174,7 +174,7 @@ impl LspClient {
 
     pub fn request_timeout(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
         if !self.is_alive() {
-            return Err(format!("{} не запущен", self.name));
+            return Err(t!("{n1} is not running", n1 = self.name));
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = bounded(1);
@@ -189,7 +189,7 @@ impl LspClient {
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
                 self.notify("$/cancelRequest", json!({ "id": id }));
-                Err(format!("{}: нет ответа на {method}", self.name))
+                Err(t!("{n1}: no answer to {method}", n1 = self.name, method = method))
             }
         }
     }

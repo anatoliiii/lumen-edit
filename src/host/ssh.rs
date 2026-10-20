@@ -82,10 +82,10 @@ pub fn wait_and_establish(target: String, master_alive: Arc<AtomicBool>, use_age
             break;
         }
         if !master_alive.load(Ordering::Relaxed) {
-            return Err("SSH-соединение закрылось. Подробности — в окне подключения.".into());
+            return Err(t!("The SSH connection closed. Details are in the connection window.").into());
         }
         if started.elapsed() > Duration::from_secs(300) {
-            return Err("Истекло время ожидания подключения".into());
+            return Err(t!("Timed out waiting for the connection").into());
         }
         std::thread::sleep(Duration::from_millis(250));
     }
@@ -96,7 +96,7 @@ pub fn wait_and_establish(target: String, master_alive: Arc<AtomicBool>, use_age
         home: String::new(),
         arch: String::new(),
         agent: Mutex::new(None),
-        agent_status: Mutex::new("агент не используется".into()),
+        agent_status: Mutex::new(t!("agent not used").into()),
         events: Arc::new(Mutex::new(None)),
         connected: AtomicBool::new(true),
         agent_wanted: AtomicBool::new(false),
@@ -170,7 +170,7 @@ impl Remote {
         match super::agent::install_and_start(self) {
             Ok(client) => {
                 *self.agent.lock().unwrap() = Some(Arc::new(client));
-                *self.agent_status.lock().unwrap() = "агент запущен".into();
+                *self.agent_status.lock().unwrap() = t!("agent running").into();
                 self.agent_wanted.store(true, Ordering::Relaxed);
                 let root = self.watch_root.lock().unwrap().clone();
                 if let Some(root) = root {
@@ -179,7 +179,7 @@ impl Remote {
                 Ok(())
             }
             Err(error) => {
-                *self.agent_status.lock().unwrap() = format!("без агента: {error}");
+                *self.agent_status.lock().unwrap() = t!("no agent: {error}", error = error);
                 Err(error)
             }
         }
@@ -194,7 +194,7 @@ impl Remote {
         let mut guard = self.agent.lock().unwrap();
         if guard.as_ref().is_some_and(|agent| !agent.is_alive()) {
             *guard = None;
-            *self.agent_status.lock().unwrap() = "агент остановился, работаю через shell; перезапущу, когда хост ответит".into();
+            *self.agent_status.lock().unwrap() = t!("agent stopped, using the shell; will restart it when the host answers").into();
         }
         guard.clone()
     }

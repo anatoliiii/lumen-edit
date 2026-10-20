@@ -578,11 +578,11 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     {
         let changed = doc.line_changes.iter().any(|(l, c)| *l == cursor_line && *c != LineChange::DeletedAbove);
         let label = if changed {
-            Some("Вы • не закоммичено".to_string())
+            Some(t!("You • not committed").to_string())
         } else {
             doc.blame.as_ref().and_then(|blame| blame.get(cursor_line)).map(|b| {
                 if b.hash.starts_with("0000000") {
-                    "Вы • не закоммичено".to_string()
+                    t!("You • not committed").to_string()
                 } else {
                     format!("{}, {} • {}", b.author, util::time_ago(b.time), b.summary)
                 }
@@ -753,7 +753,7 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
         let y = y_of(conflict.start, scroll.y);
         let mut x = text_rect.right() - 12.0;
         let mut choice = None;
-        for (label, which) in [("Оба", 2), ("Принять входящее", 1), ("Принять текущее", 0)] {
+        for (label, which) in [(t!("Both"), 2), (t!("Accept incoming"), 1), (t!("Accept current"), 0)] {
             let galley = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.0), theme::ACCENT);
             let w = galley.size().x + 12.0;
             x -= w + 6.0;
@@ -819,50 +819,50 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
         ui.set_min_width(250.0);
         let has_selection = !doc.buffer.primary().is_empty();
         let shortcut = |text: &str| RichText::new(text.to_string()).color(theme::FAINT_TEXT);
-        if ui.add_enabled(has_selection, egui::Button::new("Вырезать").shortcut_text(shortcut("Ctrl+X"))).clicked() {
+        if ui.add_enabled(has_selection, egui::Button::new(t!("Cut")).shortcut_text(shortcut("Ctrl+X"))).clicked() {
             ui.ctx().copy_text(doc.buffer.selected_text());
             doc.buffer.delete_backward(false);
             ui.close();
         }
-        if ui.add_enabled(has_selection, egui::Button::new("Копировать").shortcut_text(shortcut("Ctrl+C"))).clicked() {
+        if ui.add_enabled(has_selection, egui::Button::new(t!("Copy")).shortcut_text(shortcut("Ctrl+C"))).clicked() {
             ui.ctx().copy_text(doc.buffer.selected_text());
             ui.close();
         }
         if settings.has_lsp {
             ui.separator();
-            if ui.add(egui::Button::new("Перейти к определению").shortcut_text(shortcut("F12"))).clicked() {
+            if ui.add(egui::Button::new(t!("Go to Definition")).shortcut_text(shortcut("F12"))).clicked() {
                 actions.push(EditorAction::GotoDefinition);
                 ui.close();
             }
-            if ui.add(egui::Button::new("Найти все ссылки").shortcut_text(shortcut("Shift+F12"))).clicked() {
+            if ui.add(egui::Button::new(t!("Find All References")).shortcut_text(shortcut("Shift+F12"))).clicked() {
                 actions.push(EditorAction::References);
                 ui.close();
             }
-            if ui.add(egui::Button::new("Переименовать символ").shortcut_text(shortcut("F2"))).clicked() {
+            if ui.add(egui::Button::new(t!("Rename Symbol")).shortcut_text(shortcut("F2"))).clicked() {
                 let word = doc.buffer.word_at(doc.buffer.primary().head);
                 doc.view.rename = Some(RenamePopup { text: doc.buffer.slice(word), focus: true });
                 ui.close();
             }
-            if ui.add(egui::Button::new("Быстрые исправления").shortcut_text(shortcut("Ctrl+."))).clicked() {
+            if ui.add(egui::Button::new(t!("Quick fixes")).shortcut_text(shortcut("Ctrl+."))).clicked() {
                 actions.push(EditorAction::CodeActions);
                 ui.close();
             }
-            if ui.add(egui::Button::new("Форматировать документ").shortcut_text(shortcut("Ctrl+Shift+I"))).clicked() {
+            if ui.add(egui::Button::new(t!("Format Document")).shortcut_text(shortcut("Ctrl+Shift+I"))).clicked() {
                 actions.push(EditorAction::Format);
                 ui.close();
             }
         }
         ui.separator();
-        let what = if has_selection { "выделенный фрагмент" } else { "текущую строку" };
-        ui.menu_button(RichText::new("π  Спросить агента").color(theme::ACCENT), |ui| {
+        let what = if has_selection { t!("the selected fragment") } else { t!("the current line") };
+        ui.menu_button(RichText::new(t!("π  Ask the agent")).color(theme::ACCENT), |ui| {
             ui.set_min_width(260.0);
-            ui.label(RichText::new(format!("Отправит {what}")).small().color(theme::FAINT_TEXT));
+            ui.label(RichText::new(t!("Sends {what}", what = what)).small().color(theme::FAINT_TEXT));
             let asks: [(&str, Option<&str>); 5] = [
-                ("Добавить в чат (свой вопрос)", None),
-                ("Объяснить", Some("Объясни, что делает этот фрагмент и зачем.")),
-                ("Найти ошибки", Some("Найди ошибки и потенциальные проблемы в этом фрагменте. Не меняй файлы, только опиши.")),
-                ("Исправить / улучшить", Some("Исправь проблемы и улучши этот фрагмент, затем кратко опиши изменения.")),
-                ("Написать тесты", Some("Напиши тесты для этого фрагмента в стиле проекта.")),
+                (t!("Add to chat (your own question)"), None),
+                (t!("Explain"), Some(t!("Explain what this fragment does and why."))),
+                (t!("Find bugs"), Some(t!("Find bugs and potential problems in this fragment. Do not change files, only describe them."))),
+                (t!("Fix / improve"), Some(t!("Fix the problems and improve this fragment, then briefly describe the changes."))),
+                (t!("Write tests"), Some(t!("Write tests for this fragment in the style of the project."))),
             ];
             for (label, instruction) in asks {
                 if ui.button(label).clicked() {
@@ -872,7 +872,7 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
             }
         })
         .response
-        .on_hover_text("Ctrl+Alt+A — добавить выделение в чат");
+        .on_hover_text(t!("Ctrl+Alt+A — add the selection to the chat"));
     });
 
     // ------------------------------------------------------------- popups
@@ -1212,10 +1212,10 @@ fn show_find_bar(ui: &mut egui::Ui, doc: &mut Document, text_rect: Rect) {
                 ui.set_width(width);
                 ui.horizontal(|ui| {
                     let toggle = if find.show_replace { "▾" } else { "▸" };
-                    if ui.small_button(toggle).on_hover_text("Замена").clicked() {
+                    if ui.small_button(toggle).on_hover_text(t!("Toggle replace")).clicked() {
                         find.show_replace = !find.show_replace;
                     }
-                    let input = ui.add(egui::TextEdit::singleline(&mut find.query).hint_text("Найти").desired_width(200.0));
+                    let input = ui.add(egui::TextEdit::singleline(&mut find.query).hint_text(t!("Find")).desired_width(200.0));
                     if find.focus_query {
                         input.request_focus();
                         find.focus_query = false;
@@ -1227,13 +1227,13 @@ fn show_find_bar(ui: &mut egui::Ui, doc: &mut Document, text_rect: Rect) {
                     if input.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
                         close = true;
                     }
-                    ui.toggle_value(&mut find.case_sensitive, "Aa").on_hover_text("Учитывать регистр");
-                    ui.toggle_value(&mut find.whole_word, "ab").on_hover_text("Слово целиком");
-                    ui.toggle_value(&mut find.regex, ".*").on_hover_text("Регулярное выражение");
+                    ui.toggle_value(&mut find.case_sensitive, "Aa").on_hover_text(t!("Match case"));
+                    ui.toggle_value(&mut find.whole_word, "ab").on_hover_text(t!("Whole word"));
+                    ui.toggle_value(&mut find.regex, ".*").on_hover_text(t!("Regular expression"));
                     let status = if find.error.is_some() {
-                        egui::RichText::new("ошибка").color(theme::ERROR).small()
+                        egui::RichText::new(t!("error")).color(theme::ERROR).small()
                     } else if find.matches.is_empty() {
-                        egui::RichText::new("нет").color(theme::MUTED_TEXT).small()
+                        egui::RichText::new(t!("none")).color(theme::MUTED_TEXT).small()
                     } else {
                         egui::RichText::new(format!("{}/{}", find.current + 1, find.matches.len())).color(theme::MUTED_TEXT).small()
                     };
@@ -1251,15 +1251,15 @@ fn show_find_bar(ui: &mut egui::Ui, doc: &mut Document, text_rect: Rect) {
                 if find.show_replace {
                     ui.horizontal(|ui| {
                         ui.add_space(22.0);
-                        let input = ui.add(egui::TextEdit::singleline(&mut find.replace).hint_text("Заменить").desired_width(200.0));
+                        let input = ui.add(egui::TextEdit::singleline(&mut find.replace).hint_text(t!("Replace")).desired_width(200.0));
                         if input.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                             do_replace = true;
                             input.request_focus();
                         }
-                        if ui.button("Заменить").clicked() {
+                        if ui.button(t!("Replace")).clicked() {
                             do_replace = true;
                         }
-                        if ui.button("Все").clicked() {
+                        if ui.button(t!("All")).clicked() {
                             do_replace_all = true;
                         }
                     });
@@ -1428,7 +1428,7 @@ fn show_popups(
                 egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
                     ui.set_min_width(260.0);
                     if popup.titles.is_empty() {
-                        ui.label(egui::RichText::new("Нет доступных действий").color(theme::MUTED_TEXT));
+                        ui.label(egui::RichText::new(t!("No actions available")).color(theme::MUTED_TEXT));
                     }
                     for (i, title) in popup.titles.iter().enumerate() {
                         if ui.selectable_label(i == popup.selected, title).clicked() {
@@ -1468,7 +1468,7 @@ fn show_popups(
             &ctx,
             |ui| {
                 egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-                    ui.label(egui::RichText::new("Переименовать (Enter — применить)").small().color(theme::MUTED_TEXT));
+                    ui.label(egui::RichText::new(t!("Rename (Enter to apply)")).small().color(theme::MUTED_TEXT));
                     let input = ui.add(egui::TextEdit::singleline(&mut rename.text).desired_width(260.0));
                     if rename.focus {
                         input.request_focus();

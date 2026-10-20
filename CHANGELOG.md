@@ -7,6 +7,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- English and Russian interface: text in the code is English, Russian comes from `locales/`; follows the system locale or Settings → Language. A test keeps the catalog complete.
 - Server pulse: live CPU, memory, disks and top processes of the project host, status bar indicator, charts panel, disk/memory alerts, `pulse` in CLI/MCP.
 - Teleport: two-pane file transfer between local and SSH hosts (including server to server) with progress and cancel, desktop drag-and-drop upload, `transfer` in CLI/MCP.
 - CI/CD awareness: platform detection and icons, pipeline-key, job-name, expression and variable highlighting for GitLab, GitHub, Gitea, Forgejo, Woodpecker, Drone and more.

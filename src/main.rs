@@ -10,6 +10,9 @@ macro_rules! debug_log {
 }
 pub(crate) use debug_log;
 
+#[macro_use]
+mod i18n;
+
 mod app;
 mod ci;
 mod cli;
@@ -33,6 +36,7 @@ pub fn gui_args() -> &'static [String] {
 
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    i18n::set(i18n::from_setting(&config::Config::load().language));
     if let Some(code) = cli::run(&args) {
         return code;
     }

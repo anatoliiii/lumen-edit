@@ -358,14 +358,14 @@ pub fn parse_cli_params(method: &Method, args: &[String]) -> Result<Value, Strin
         let (name, raw) = match arg.split_once('=') {
             Some((name, raw)) if method.params.iter().any(|p| p.name == name) => (name.to_string(), raw.to_string()),
             _ => {
-                let param = positional.find(|p| !params.contains_key(p.name)).ok_or_else(|| format!("лишний аргумент: {arg}"))?;
+                let param = positional.find(|p| !params.contains_key(p.name)).ok_or_else(|| t!("unexpected argument: {arg}", arg = arg))?;
                 (param.name.to_string(), arg.clone())
             }
         };
         let param = method.params.iter().find(|p| p.name == name).unwrap();
         let value = match param.kind {
             Str => json!(raw),
-            Int => json!(raw.parse::<i64>().map_err(|_| format!("{name}: ожидалось число"))?),
+            Int => json!(raw.parse::<i64>().map_err(|_| t!("{name}: expected a number", name = name))?),
             Bool => json!(matches!(raw.as_str(), "1" | "true" | "yes" | "on" | "")),
             StrArray => match serde_json::from_str::<Value>(&raw) {
                 Ok(v @ Value::Array(_)) => v,
@@ -377,7 +377,7 @@ pub fn parse_cli_params(method: &Method, args: &[String]) -> Result<Value, Strin
     }
     for param in method.params.iter().filter(|p| p.required) {
         if !params.contains_key(param.name) {
-            return Err(format!("не хватает параметра {}", param.name));
+            return Err(t!("missing parameter {n1}", n1 = param.name));
         }
     }
     Ok(Value::Object(params))

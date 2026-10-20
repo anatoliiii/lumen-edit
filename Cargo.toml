@@ -9,7 +9,7 @@ license = "MIT"
 authors = ["Анатолий Копейкин"]
 repository = "https://github.com/anatoliiii/lumen-edit-rs"
 homepage = "https://github.com/anatoliiii/lumen-edit-rs"
-rust-version = "1.88"
+rust-version = "1.95"
 
 [package]
 name = "lumen-edit"

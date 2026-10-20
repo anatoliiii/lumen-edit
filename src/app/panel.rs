@@ -132,28 +132,28 @@ fn tab_bar(ui: &mut egui::Ui, app: &mut App) {
                 if let Tab::Doc(doc) = tab {
                     let path = doc.path.clone();
                     response.on_hover_text(path.clone()).context_menu(|ui| {
-                        if ui.button("Закрыть").clicked() {
+                        if ui.button(t!("Close")).clicked() {
                             close = Some(index);
                             ui.close();
                         }
-                        if ui.button("Закрыть остальные").clicked() {
+                        if ui.button(t!("Close Others")).clicked() {
                             close_others = Some(index);
                             ui.close();
                         }
-                        if ui.button("Закрыть все").clicked() {
+                        if ui.button(t!("Close All")).clicked() {
                             close_all = true;
                             ui.close();
                         }
                         ui.separator();
-                        if ui.button("Копировать путь").clicked() {
+                        if ui.button(t!("Copy path")).clicked() {
                             copy_path = Some(path.clone());
                             ui.close();
                         }
-                        if ui.button("Показать в проводнике").clicked() {
+                        if ui.button(t!("Reveal in Explorer")).clicked() {
                             reveal = Some(path.clone());
                             ui.close();
                         }
-                        if ui.button(RichText::new("π  Отправить в агента").color(theme::ACCENT)).clicked() {
+                        if ui.button(RichText::new(t!("π  Send to the agent")).color(theme::ACCENT)).clicked() {
                             send_to_agent = Some(path.clone());
                             ui.close();
                         }
@@ -213,13 +213,13 @@ fn markdown_toggle(ui: &mut egui::Ui, app: &mut App, index: usize) -> bool {
     if doc.lang != crate::syntax::Lang::Markdown && media.is_none() {
         return false;
     }
-    let preview_label = if media == Some(super::media::Media::Table) { "Таблица" } else { "Просмотр" };
+    let preview_label = if media == Some(super::media::Media::Table) { t!("Table") } else { t!("Preview") };
     ui.horizontal(|ui| {
         ui.add_space(14.0);
         if ui.selectable_label(doc.preview, preview_label).on_hover_text("Ctrl+Alt+P").clicked() {
             doc.preview = true;
         }
-        if ui.selectable_label(!doc.preview, "Код").on_hover_text("Ctrl+Alt+P").clicked() {
+        if ui.selectable_label(!doc.preview, t!("Source")).on_hover_text("Ctrl+Alt+P").clicked() {
             doc.preview = false;
             doc.view.focus_request = true;
         }
@@ -294,11 +294,11 @@ fn empty_state(ui: &mut egui::Ui, app: &mut App) {
     ui.allocate_rect(rect, Sense::hover());
     let center = rect.center();
     let lines = [
-        ("Перейти к файлу", "Ctrl+P"),
-        ("Палитра команд", "Ctrl+Shift+P"),
-        ("Поиск по проекту", "Ctrl+Shift+F"),
-        ("Запуск", "F5"),
-        ("Терминал", "Ctrl+`"),
+        (t!("Go to file"), "Ctrl+P"),
+        (t!("Command Palette"), "Ctrl+Shift+P"),
+        (t!("Search in Project"), "Ctrl+Shift+F"),
+        (t!("Run"), "F5"),
+        (t!("Terminal"), "Ctrl+`"),
         ("Git", "Ctrl+Shift+G"),
     ];
     let painter = ui.painter();
@@ -319,11 +319,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         ui.add_space(8.0);
         ui.spacing_mut().item_spacing.x = 2.0;
         let tabs = [
-            (PanelTab::Terminal, "ТЕРМИНАЛ".to_string()),
-            (PanelTab::Problems, if errors + warnings > 0 { format!("ПРОБЛЕМЫ  {}", errors + warnings) } else { "ПРОБЛЕМЫ".into() }),
-            (PanelTab::Output, "ВЫВОД".into()),
-            (PanelTab::References, if app.references.is_empty() { "ССЫЛКИ".into() } else { format!("ССЫЛКИ  {}", app.references.len()) }),
-            (PanelTab::Pulse, "ПУЛЬС".into()),
+            (PanelTab::Terminal, t!("TERMINAL").to_string()),
+            (PanelTab::Problems, if errors + warnings > 0 { t!("PROBLEMS  {n1}", n1 = errors + warnings) } else { t!("PROBLEMS").into() }),
+            (PanelTab::Output, t!("OUTPUT").into()),
+            (
+                PanelTab::References,
+                if app.references.is_empty() { t!("REFERENCES").into() } else { t!("REFERENCES  {n1}", n1 = app.references.len()) },
+            ),
+            (PanelTab::Pulse, t!("PULSE").into()),
         ];
         for (tab, label) in tabs {
             let active = app.panel_tab == tab;
@@ -343,16 +346,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
-            if ui.small_button("×").on_hover_text("Скрыть панель (Ctrl+J)").clicked() {
+            if ui.small_button("×").on_hover_text(t!("Hide the panel (Ctrl+J)")).clicked() {
                 app.panel_open = false;
             }
             if app.panel_tab == PanelTab::Terminal {
-                if ui.small_button("🗑").on_hover_text("Закрыть терминал").clicked() && app.active_terminal < app.terminals.len()
-                {
+                if ui.small_button("🗑").on_hover_text(t!("Close terminal")).clicked() && app.active_terminal < app.terminals.len() {
                     app.terminals.remove(app.active_terminal);
                     app.active_terminal = app.active_terminal.saturating_sub(1);
                 }
-                if ui.small_button("+").on_hover_text("Новый терминал (Ctrl+Shift+`)").clicked() {
+                if ui.small_button("+").on_hover_text(t!("New terminal (Ctrl+Shift+`)")).clicked() {
                     app.new_terminal(None);
                 }
                 // Terminal switcher.
@@ -395,7 +397,7 @@ fn terminal_view(ui: &mut egui::Ui, app: &mut App) {
     if app.terminals.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(30.0);
-            if ui.button("Открыть терминал").clicked() {
+            if ui.button(t!("Open terminal")).clicked() {
                 app.new_terminal(None);
             }
         });
@@ -499,7 +501,7 @@ fn problems(ui: &mut egui::Ui, app: &mut App) {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.add_space(14.0);
-            ui.label(RichText::new("Проблем не найдено").color(theme::MUTED_TEXT));
+            ui.label(RichText::new(t!("No problems found")).color(theme::MUTED_TEXT));
         });
     }
     let row_h = 22.0;
@@ -555,7 +557,7 @@ fn output(ui: &mut egui::Ui, app: &mut App) {
         let unavailable = app.lsp.unavailable();
         if !unavailable.is_empty() {
             ui.label(
-                RichText::new(format!("Не установлены языковые серверы: {}", unavailable.join(", ")))
+                RichText::new(t!("Language servers not installed: {n1}", n1 = unavailable.join(", ")))
                     .monospace()
                     .small()
                     .color(theme::MUTED_TEXT),

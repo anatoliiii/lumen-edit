@@ -113,7 +113,7 @@ impl Lang {
             Lang::Groovy => "Groovy",
             Lang::Hcl => "HCL",
             Lang::Dockerfile => "Dockerfile",
-            Lang::Plain => "Текст",
+            Lang::Plain => t!("Text"),
         }
     }
 

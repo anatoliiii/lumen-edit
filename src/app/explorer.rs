@@ -133,7 +133,7 @@ fn collect_rows(state: &ExplorerState, dir: &str, depth: usize, rows: &mut Vec<R
     match state.dirs.get(dir) {
         None | Some(DirState::Loading) => {
             rows.push(Row {
-                path: format!("{dir}/…"), name: String::new(), depth, is_dir: false, placeholder: Some("загрузка…".into())
+                path: format!("{dir}/…"), name: String::new(), depth, is_dir: false, placeholder: Some(t!("loading…").into())
             })
         }
         Some(DirState::Error(error)) => {
@@ -142,7 +142,11 @@ fn collect_rows(state: &ExplorerState, dir: &str, depth: usize, rows: &mut Vec<R
         Some(DirState::Loaded(entries)) => {
             if entries.is_empty() && depth > 0 {
                 rows.push(Row {
-                    path: format!("{dir}/∅"), name: String::new(), depth, is_dir: false, placeholder: Some("пусто".into())
+                    path: format!("{dir}/∅"),
+                    name: String::new(),
+                    depth,
+                    is_dir: false,
+                    placeholder: Some(t!("empty").into()),
                 });
             }
             for entry in entries {
@@ -187,16 +191,16 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             .on_hover_text(format!("{} — {root}", workspace.host.label()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(6.0);
-            if ui.small_button("⊟").on_hover_text("Свернуть все").clicked() {
+            if ui.small_button("⊟").on_hover_text(t!("Collapse all")).clicked() {
                 actions.push(Action::CollapseAll);
             }
-            if ui.small_button("⟳").on_hover_text("Обновить").clicked() {
+            if ui.small_button("⟳").on_hover_text(t!("Refresh")).clicked() {
                 actions.push(Action::Refresh);
             }
-            if ui.small_button("🗀").on_hover_text("Новая папка").clicked() {
+            if ui.small_button("🗀").on_hover_text(t!("New folder")).clicked() {
                 actions.push(Action::NewFolder(workspace.explorer.target_dir(&root)));
             }
-            if ui.small_button("🗋").on_hover_text("Новый файл").clicked() {
+            if ui.small_button("🗋").on_hover_text(t!("New file")).clicked() {
                 actions.push(Action::NewFile(workspace.explorer.target_dir(&root)));
             }
         });
@@ -204,7 +208,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     ui.horizontal(|ui| {
         ui.add_space(8.0);
         ui.add(
-            egui::TextEdit::singleline(&mut workspace.explorer.filter).hint_text("Фильтр файлов").desired_width(ui.available_width() - 8.0),
+            egui::TextEdit::singleline(&mut workspace.explorer.filter)
+                .hint_text(t!("Filter files"))
+                .desired_width(ui.available_width() - 8.0),
         );
     });
     ui.add_space(4.0);
@@ -302,38 +308,38 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             }
             response.context_menu(|ui| {
                 let dir = if row.is_dir { row.path.clone() } else { host::parent(&row.path) };
-                if ui.button("Новый файл…").clicked() {
+                if ui.button(t!("New File…")).clicked() {
                     actions.push(Action::NewFile(dir.clone()));
                     ui.close();
                 }
-                if ui.button("Новая папка…").clicked() {
+                if ui.button(t!("New Folder…")).clicked() {
                     actions.push(Action::NewFolder(dir.clone()));
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Переименовать…").clicked() {
+                if ui.button(t!("Rename…")).clicked() {
                     actions.push(Action::Rename(row.path.clone()));
                     ui.close();
                 }
-                if ui.button(RichText::new("Удалить").color(theme::ERROR)).clicked() {
+                if ui.button(RichText::new(t!("Delete")).color(theme::ERROR)).clicked() {
                     actions.push(Action::Delete(row.path.clone()));
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Копировать путь").clicked() {
+                if ui.button(t!("Copy path")).clicked() {
                     actions.push(Action::CopyPath(row.path.clone()));
                     ui.close();
                 }
-                if ui.button("Копировать относительный путь").clicked() {
+                if ui.button(t!("Copy relative path")).clicked() {
                     actions.push(Action::CopyRelative(row.path.clone()));
                     ui.close();
                 }
-                if ui.button("Открыть в терминале").clicked() {
+                if ui.button(t!("Open in terminal")).clicked() {
                     actions.push(Action::Terminal(dir));
                     ui.close();
                 }
                 ui.separator();
-                if ui.button(RichText::new("π  Отправить в агента").color(theme::ACCENT)).clicked() {
+                if ui.button(RichText::new(t!("π  Send to the agent")).color(theme::ACCENT)).clicked() {
                     actions.push(Action::SendToAgent(row.path.clone()));
                     ui.close();
                 }
@@ -342,11 +348,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     });
     // Right-click on empty space.
     background.context_menu(|ui| {
-        if ui.button("Новый файл…").clicked() {
+        if ui.button(t!("New File…")).clicked() {
             actions.push(Action::NewFile(root.clone()));
             ui.close();
         }
-        if ui.button("Новая папка…").clicked() {
+        if ui.button(t!("New Folder…")).clicked() {
             actions.push(Action::NewFolder(root.clone()));
             ui.close();
         }
@@ -379,7 +385,7 @@ fn apply(app: &mut App, action: Action, root: &str) {
         Action::Rename(path) => {
             let name = host::file_name(&path).to_string();
             app.dialog = Some(Dialog::Input {
-                title: format!("Переименовать «{name}»"),
+                title: t!("Rename “{name}”", name = name),
                 value: name,
                 focus: true,
                 action: Box::new(move |app: &mut App, new_name: String| {
@@ -401,8 +407,8 @@ fn apply(app: &mut App, action: Action, root: &str) {
         Action::Delete(path) => {
             let name = host::file_name(&path).to_string();
             app.dialog = Some(Dialog::Confirm {
-                title: "Удаление".into(),
-                message: format!("Удалить «{name}»? Это действие нельзя отменить."),
+                title: t!("Delete").into(),
+                message: t!("Delete “{name}”? This cannot be undone.", name = name),
                 action: Box::new(move |app: &mut App| {
                     let Some(host) = app.host() else { return };
                     // Close tabs for the deleted path.
@@ -459,11 +465,7 @@ fn apply(app: &mut App, action: Action, root: &str) {
 
 pub fn prompt_create(app: &mut App, dir: String, folder: bool) {
     app.dialog = Some(Dialog::Input {
-        title: if folder {
-            "Новая папка".into()
-        } else {
-            "Новый файл (можно с подпапками: src/mod.rs)".into()
-        },
+        title: if folder { t!("New folder").into() } else { t!("New file (subfolders allowed: src/mod.rs)").into() },
         value: String::new(),
         focus: true,
         action: Box::new(move |app: &mut App, name: String| {
@@ -475,7 +477,7 @@ pub fn prompt_create(app: &mut App, dir: String, folder: bool) {
                     host.create_dir(&path)
                 } else {
                     host.create_dir(&parent).and_then(|_| match host.stat(&path) {
-                        Ok(_) => Err("файл уже существует".into()),
+                        Ok(_) => Err(t!("the file already exists").into()),
                         Err(_) => host.write_file(&path, b""),
                     })
                 };

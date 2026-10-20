@@ -16,6 +16,8 @@ pub struct RecentProject {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Interface language: `auto` (system locale), `en` or `ru`.
+    pub language: String,
     pub ui_font_size: f32,
     pub editor_font_size: f32,
     pub terminal_font_size: f32,
@@ -54,6 +56,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            language: "auto".into(),
             ui_font_size: 13.5,
             editor_font_size: 14.0,
             terminal_font_size: 13.5,

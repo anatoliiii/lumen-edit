@@ -154,14 +154,14 @@ pub fn start_transfer(app: &mut App, tab_id: u64, job: Job) {
         return;
     }
     if src.same(&dst) && src_dir == dst_dir {
-        app.notify("Источник и назначение совпадают", true);
+        app.notify(t!("Source and destination are the same"), true);
         return;
     }
     let label = format!(
         "{} {} → {}:{}",
-        if move_after { "Перенос" } else { "Копия" },
-        if names.len() == 1 { names[0].clone() } else { format!("{} объектов", names.len()) },
-        if dst.is_remote() { dst.label() } else { "локально".into() },
+        if move_after { t!("Moving") } else { t!("Copying") },
+        if names.len() == 1 { names[0].clone() } else { t!("{n1} items", n1 = names.len()) },
+        if dst.is_remote() { dst.label() } else { t!("local").into() },
         dst_dir
     );
     let done = Arc::new(AtomicU64::new(0));
@@ -241,15 +241,15 @@ fn pipe(src: &Host, src_dir: &str, list: &str, dst: &Host, dst_dir: &str, done: 
         let _ = writer.kill();
         let _ = reader.wait();
         let _ = writer.wait();
-        return Err("отменено".into());
+        return Err(t!("cancelled").into());
     }
     let read_status = reader.wait_with_output().map_err(|e| e.to_string())?;
     let write_status = writer.wait_with_output().map_err(|e| e.to_string())?;
     if !read_status.status.success() {
-        return Err(format!("чтение: {}", String::from_utf8_lossy(&read_status.stderr).trim()));
+        return Err(t!("read: {n1}", n1 = String::from_utf8_lossy(&read_status.stderr).trim()));
     }
     if !write_status.status.success() {
-        return Err(format!("запись: {}", String::from_utf8_lossy(&write_status.stderr).trim()));
+        return Err(t!("write: {n1}", n1 = String::from_utf8_lossy(&write_status.stderr).trim()));
     }
     Ok(())
 }
@@ -278,14 +278,14 @@ fn finish(app: &mut App, tab_id: u64, index: usize, total: Arc<Mutex<Option<u64>
 }
 
 fn human(bytes: u64) -> String {
-    let units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+    let units = [t!("B"), t!("KB"), t!("MB"), t!("GB"), t!("TB")];
     let mut value = bytes as f64;
     let mut unit = 0;
     while value >= 1024.0 && unit < units.len() - 1 {
         value /= 1024.0;
         unit += 1;
     }
-    if unit == 0 { format!("{bytes} Б") } else { format!("{value:.1} {}", units[unit]) }
+    if unit == 0 { t!("{bytes} B", bytes = bytes) } else { format!("{value:.1} {}", units[unit]) }
 }
 
 enum Action {
@@ -315,10 +315,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, index: usize) {
     let mut bar = ui.new_child(
         egui::UiBuilder::new().max_rect(toolbar.shrink2(vec2(12.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    bar.label(RichText::new("⇄ Телепорт").strong());
-    bar.label(RichText::new("перетащите файлы между панелями или используйте кнопки").small().color(theme::FAINT_TEXT));
+    bar.label(RichText::new(t!("⇄ Teleport")).strong());
+    bar.label(RichText::new(t!("drag files between the panes or use the buttons")).small().color(theme::FAINT_TEXT));
     bar.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if ui.button("+ Подключить хост…").clicked() {
+        if ui.button(t!("+ Connect host…")).clicked() {
             actions.push(Action::ConnectHost);
         }
     });
@@ -336,8 +336,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, index: usize) {
         let rect = egui::Rect::from_min_max(pos2(total.left(), panes_rect.bottom()), total.max).shrink2(vec2(12.0, 4.0));
         let mut queue = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
         queue.horizontal(|ui| {
-            ui.label(RichText::new("ПЕРЕДАЧИ").small().strong().color(theme::MUTED_TEXT));
-            if ui.small_button("очистить завершённые").clicked() {
+            ui.label(RichText::new(t!("TRANSFERS")).small().strong().color(theme::MUTED_TEXT));
+            if ui.small_button(t!("clear finished")).clicked() {
                 tab.transfers.retain(|t| t.finished.is_none());
             }
         });
@@ -366,10 +366,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, index: usize) {
                     ui.painter().rect_filled(filled, CornerRadius::same(3), color);
                     let detail = match &transfer.finished {
                         Some(Err(error)) => error.clone(),
-                        _ => format!("{} · {}/с", human(done), human(speed as u64)),
+                        _ => t!("{n1} · {n2}/s", n1 = human(done), n2 = human(speed as u64)),
                     };
                     ui.label(RichText::new(detail).small().color(theme::MUTED_TEXT));
-                    if transfer.finished.is_none() && ui.small_button("отмена").clicked() {
+                    if transfer.finished.is_none() && ui.small_button(t!("cancel")).clicked() {
                         transfer.cancel.store(true, Ordering::Relaxed);
                     }
                 });
@@ -385,7 +385,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, index: usize) {
 
 fn pane(ui: &mut egui::Ui, tab: &mut TeleportTab, side: usize, hosts: &[Host], actions: &mut Vec<Action>) {
     let other = 1 - side;
-    let arrow = if side == 0 { "Копировать →" } else { "← Копировать" };
+    let arrow = if side == 0 { t!("Copy →") } else { t!("← Copy") };
     egui::Frame::new()
         .fill(theme::SIDEBAR_BACKGROUND)
         .stroke(Stroke::new(1.0, theme::BORDER))
@@ -395,22 +395,22 @@ fn pane(ui: &mut egui::Ui, tab: &mut TeleportTab, side: usize, hosts: &[Host], a
             ui.set_min_size(ui.available_size());
             let pane = &mut tab.panes[side];
             ui.horizontal(|ui| {
-                let current = if pane.host.is_remote() { pane.host.label() } else { "⌂ Этот компьютер".into() };
+                let current = if pane.host.is_remote() { pane.host.label() } else { t!("⌂ This computer").into() };
                 egui::ComboBox::from_id_salt(("teleport_host", tab.id, side)).selected_text(current).width(150.0).show_ui(ui, |ui| {
                     for host in hosts {
-                        let label = if host.is_remote() { host.label() } else { "⌂ Этот компьютер".into() };
+                        let label = if host.is_remote() { host.label() } else { t!("⌂ This computer").into() };
                         if ui.selectable_label(host.same(&pane.host), label).clicked() {
                             actions.push(Action::SetHost(side, host.clone()));
                         }
                     }
                 });
-                if ui.small_button("⇧").on_hover_text("Вверх").clicked() {
+                if ui.small_button("⇧").on_hover_text(t!("Up")).clicked() {
                     actions.push(Action::Navigate(side, host::parent(&pane.path)));
                 }
-                if ui.small_button("⌂").on_hover_text("Домашняя папка").clicked() {
+                if ui.small_button("⌂").on_hover_text(t!("Home folder")).clicked() {
                     actions.push(Action::Navigate(side, pane.host.home()));
                 }
-                if ui.small_button("⟳").on_hover_text("Обновить").clicked() {
+                if ui.small_button("⟳").on_hover_text(t!("Refresh")).clicked() {
                     actions.push(Action::Refresh(side));
                 }
             });
@@ -425,18 +425,17 @@ fn pane(ui: &mut egui::Ui, tab: &mut TeleportTab, side: usize, hosts: &[Host], a
                 if ui.add_enabled(any, egui::Button::new(arrow)).clicked() {
                     actions.push(Action::Transfer { from: side, names: selection.clone(), move_after: false });
                 }
-                if ui.add_enabled(any, egui::Button::new("Перенести")).on_hover_text("Скопировать и удалить источник").clicked()
-                {
+                if ui.add_enabled(any, egui::Button::new(t!("Move"))).on_hover_text(t!("Copy and delete the source")).clicked() {
                     actions.push(Action::Transfer { from: side, names: selection.clone(), move_after: true });
                 }
-                if ui.add_enabled(any, egui::Button::new(RichText::new("Удалить").color(theme::ERROR))).clicked() {
+                if ui.add_enabled(any, egui::Button::new(RichText::new(t!("Delete")).color(theme::ERROR))).clicked() {
                     actions.push(Action::Delete(side, selection.clone()));
                 }
-                if ui.button("+ Папка").clicked() {
+                if ui.button(t!("+ Folder")).clicked() {
                     actions.push(Action::NewFolder(side));
                 }
                 if any {
-                    ui.label(RichText::new(format!("выбрано: {}", selection.len())).small().color(theme::MUTED_TEXT));
+                    ui.label(RichText::new(t!("selected: {n1}", n1 = selection.len())).small().color(theme::MUTED_TEXT));
                 }
             });
             ui.separator();
@@ -532,8 +531,7 @@ fn pane(ui: &mut egui::Ui, tab: &mut TeleportTab, side: usize, hosts: &[Host], a
                             && let Some(pointer) = ui.ctx().pointer_latest_pos()
                             && let Some(payload) = egui::DragAndDrop::payload::<(u64, usize, Vec<String>)>(ui.ctx())
                         {
-                            let text =
-                                if payload.2.len() == 1 { payload.2[0].clone() } else { format!("{} объектов", payload.2.len()) };
+                            let text = if payload.2.len() == 1 { payload.2[0].clone() } else { t!("{n1} items", n1 = payload.2.len()) };
                             egui::Area::new(Id::new("teleport_drag"))
                                 .order(egui::Order::Tooltip)
                                 .fixed_pos(pointer + vec2(12.0, 8.0))
@@ -585,8 +583,8 @@ fn apply(app: &mut App, index: usize, tab_id: u64, actions: Vec<Action>) {
                 let dir = tab.panes[side].path.clone();
                 let count = names.len();
                 app.dialog = Some(Dialog::Confirm {
-                    title: "Удаление".into(),
-                    message: format!("Удалить {count} объект(ов) в {dir}? Это нельзя отменить."),
+                    title: t!("Delete").into(),
+                    message: t!("Delete {count} item(s) in {dir}? This cannot be undone.", count = count, dir = dir),
                     action: Box::new(move |app: &mut App| {
                         let list: Vec<String> = names.iter().map(|n| shell_quote(n)).collect();
                         app.bus.spawn(move || {
@@ -612,7 +610,7 @@ fn apply(app: &mut App, index: usize, tab_id: u64, actions: Vec<Action>) {
                 let host = tab.panes[side].host.clone();
                 let dir = tab.panes[side].path.clone();
                 app.dialog = Some(Dialog::Input {
-                    title: "Новая папка".into(),
+                    title: t!("New folder").into(),
                     value: String::new(),
                     focus: true,
                     action: Box::new(move |app: &mut App, name: String| {
@@ -645,7 +643,7 @@ fn apply(app: &mut App, index: usize, tab_id: u64, actions: Vec<Action>) {
                 if app.workspace.as_ref().is_some_and(|w| w.host.same(&tab.panes[side].host)) {
                     app.open_file(path, None);
                 } else {
-                    app.notify("Открыть в редакторе можно только файлы хоста проекта", false);
+                    app.notify(t!("Only files of the project host can be opened in the editor"), false);
                 }
             }
         }
@@ -681,7 +679,7 @@ pub fn upload_dropped(app: &mut App, paths: Vec<std::path::PathBuf>, dir: String
             Job { src: Host::Local, src_dir: parent, names, dst: host.clone(), dst_dir: dir.clone(), move_after: false },
         );
     }
-    app.notify(format!("Загрузка в {dir} — ход во вкладке «Телепорт»"), false);
+    app.notify(t!("Uploading to {dir} — progress is in the Teleport tab", dir = dir), false);
 }
 
 #[cfg(test)]

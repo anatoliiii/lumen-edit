@@ -252,7 +252,7 @@ impl Writer<'_> {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(&label).small().color(theme::FAINT_TEXT));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("копировать").clicked() {
+                        if ui.small_button(t!("copy")).clicked() {
                             ui.ctx().copy_text(copy.clone());
                         }
                     });

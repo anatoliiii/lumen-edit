@@ -93,7 +93,7 @@ fn local_agent_binary(arch: &str) -> Option<PathBuf> {
 }
 
 pub fn install_and_start(remote: &Arc<Remote>) -> Result<AgentClient, String> {
-    let binary = local_agent_binary(&remote.arch).ok_or_else(|| format!("нет сборки агента для {}", remote.arch))?;
+    let binary = local_agent_binary(&remote.arch).ok_or_else(|| t!("no agent build for {n1}", n1 = remote.arch))?;
     let data = std::fs::read(&binary).map_err(|e| e.to_string())?;
     let hash = data.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
     let remote_path = format!("{}/.cache/lumen-edit/agent-{hash:016x}", remote.home);
@@ -104,7 +104,7 @@ pub fn install_and_start(remote: &Arc<Remote>) -> Result<AgentClient, String> {
         let upload = format!(
             "mkdir -p \"$HOME/.cache/lumen-edit\" && cat > {quoted}.tmp && chmod +x {quoted}.tmp && mv -f {quoted}.tmp {quoted} && {quoted} --version"
         );
-        run_with_input(&mut remote.ssh_command(&upload, false), Some(&data)).map_err(|e| format!("не удалось запустить агент: {e}"))?;
+        run_with_input(&mut remote.ssh_command(&upload, false), Some(&data)).map_err(|e| t!("could not start the agent: {e}", e = e))?;
         // Remove agents left over from older builds.
         let cleanup = format!("for f in \"$HOME\"/.cache/lumen-edit/agent-*; do [ \"$f\" = {quoted} ] || rm -f \"$f\"; done");
         let _ = run_with_input(&mut remote.ssh_command(&cleanup, false), None);
@@ -156,7 +156,7 @@ fn spawn(remote: &Arc<Remote>, path: &str) -> Result<AgentClient, String> {
         AgentClient { writer: Mutex::new(BufWriter::new(stdin)), pending, next_id: AtomicU64::new(1), alive, child: Mutex::new(child) };
     match client.call(Op::Hello, &[]) {
         Ok((Reply::Hello { .. }, _)) => Ok(client),
-        Ok(_) => Err("агент ответил неожиданно".into()),
+        Ok(_) => Err(t!("unexpected answer from the agent").into()),
         Err(error) => Err(error),
     }
 }

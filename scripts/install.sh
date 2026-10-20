@@ -20,8 +20,10 @@ cat > "$DATA/applications/lumen-edit.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Lumen Edit
-GenericName=Редактор кода
-Comment=Нативный редактор: локально и по SSH, LSP, терминал, git
+GenericName=Code Editor
+GenericName[ru]=Редактор кода
+Comment=Native editor: local and over SSH, LSP, terminal, git
+Comment[ru]=Нативный редактор: локально и по SSH, LSP, терминал, git
 Exec=$PREFIX/bin/lumen-edit %F
 Icon=lumen-edit
 Terminal=false
@@ -41,4 +43,4 @@ if command -v claude >/dev/null 2>&1; then
     claude mcp add lumen --scope user -- "$PREFIX/bin/lumen-edit" mcp
 fi
 
-echo "Готово: $PREFIX/bin/lumen-edit"
+echo "Installed: $PREFIX/bin/lumen-edit"

@@ -169,7 +169,7 @@ impl Pulse {
 
     pub fn json(&self) -> Value {
         let Some(sample) = &self.sample else {
-            return json!({ "error": self.error.clone().unwrap_or_else(|| "нет данных".into()) });
+            return json!({ "error": self.error.clone().unwrap_or_else(|| t!("no data").into()) });
         };
         json!({
             "host": sample.hostname,
@@ -225,7 +225,7 @@ pub fn tick(app: &mut App) {
                     app.pulse.update(sample);
                     alerts(app);
                 }
-                Ok(_) => app.pulse.error = Some("хост не похож на Linux: нет /proc".into()),
+                Ok(_) => app.pulse.error = Some(t!("the host does not look like Linux: no /proc").into()),
                 Err(error) => app.pulse.error = Some(error),
             }
         }))
@@ -239,13 +239,13 @@ fn alerts(app: &mut App) {
     if disk >= 95.0 && !app.pulse.alerted_disk {
         app.pulse.alerted_disk = true;
         let mount = app.pulse.project_disk().map(|d| d.mount.clone()).unwrap_or_default();
-        app.notify(format!("Диск {mount} заполнен на {disk:.0}% — сборка может упасть"), true);
+        app.notify(t!("Disk {mount} is {disk}% full — builds may fail", mount = mount, disk = format!("{:.0}", disk)), true);
     } else if disk < 90.0 {
         app.pulse.alerted_disk = false;
     }
     if mem >= 95.0 && !app.pulse.alerted_mem {
         app.pulse.alerted_mem = true;
-        app.notify(format!("Память занята на {mem:.0}%"), true);
+        app.notify(t!("Memory is {mem}% used", mem = format!("{:.0}", mem)), true);
     } else if mem < 90.0 {
         app.pulse.alerted_mem = false;
     }
@@ -276,7 +276,11 @@ fn uptime(seconds: u64) -> String {
     let days = seconds / 86_400;
     let hours = seconds % 86_400 / 3600;
     let minutes = seconds % 3600 / 60;
-    if days > 0 { format!("{days} д {hours} ч") } else { format!("{hours} ч {minutes} мин") }
+    if days > 0 {
+        t!("{days} d {hours} h", days = days, hours = hours)
+    } else {
+        t!("{hours} h {minutes} min", hours = hours, minutes = minutes)
+    }
 }
 
 /// Compact text for the status bar.
@@ -288,7 +292,16 @@ pub fn status_text(app: &App) -> Option<(String, Color32)> {
     let disk = sample.project_disk.as_ref().map(Disk::percent).unwrap_or(0.0);
     let worst = cpu.max(mem).max(disk);
     let used = sample.mem_total_kb - sample.mem_available_kb;
-    Some((format!("CPU {cpu:.0}%  ОЗУ {}/{}  диск {disk:.0}%", human_kb(used), human_kb(sample.mem_total_kb)), level_color(worst)))
+    Some((
+        t!(
+            "CPU {cpu}%  RAM {n1}/{n2}  disk {disk}%",
+            cpu = format!("{:.0}", cpu),
+            n1 = human_kb(used),
+            n2 = human_kb(sample.mem_total_kb),
+            disk = format!("{:.0}", disk)
+        ),
+        level_color(worst),
+    ))
 }
 
 fn sparkline(ui: &mut egui::Ui, values: &VecDeque<f32>, color: Color32, height: f32) {
@@ -334,8 +347,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     if !app.config.pulse {
         ui.horizontal(|ui| {
             ui.add_space(14.0);
-            ui.label(RichText::new("Пульс выключен").color(theme::MUTED_TEXT));
-            if ui.button("Включить").clicked() {
+            ui.label(RichText::new(t!("Pulse is off")).color(theme::MUTED_TEXT));
+            if ui.button(t!("Turn on")).clicked() {
                 app.config.pulse = true;
                 app.config.save();
             }
@@ -357,15 +370,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
             ui.horizontal(|ui| {
-                let where_ = if host.as_ref().is_some_and(Host::is_remote) { "по SSH" } else { "локально" };
+                let where_ = if host.as_ref().is_some_and(Host::is_remote) { t!("over SSH") } else { t!("local") };
                 ui.label(RichText::new(&sample.hostname).strong());
                 ui.label(RichText::new(where_).small().color(theme::MUTED_TEXT));
-                ui.label(RichText::new(format!("· работает {}", uptime(sample.uptime_s))).small().color(theme::MUTED_TEXT));
+                ui.label(RichText::new(t!("· up {n1}", n1 = uptime(sample.uptime_s))).small().color(theme::MUTED_TEXT));
                 let load_color = level_color(sample.load[0] / sample.cores as f32 * 100.0);
                 ui.label(
-                    RichText::new(format!(
-                        "· нагрузка {:.2} {:.2} {:.2} на {} ядер",
-                        sample.load[0], sample.load[1], sample.load[2], sample.cores
+                    RichText::new(t!(
+                        "· load {n1} {n2} {n3} on {n4} cores",
+                        n1 = format!("{:.2}", sample.load[0]),
+                        n2 = format!("{:.2}", sample.load[1]),
+                        n3 = format!("{:.2}", sample.load[2]),
+                        n4 = sample.cores
                     ))
                     .small()
                     .color(load_color),
@@ -385,22 +401,28 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     String::new()
                 };
                 columns[1].label(
-                    RichText::new(format!("Память {}/{} ({mem:.0}%){swap_text}", human_kb(used), human_kb(sample.mem_total_kb)))
-                        .color(value_color(mem)),
+                    RichText::new(t!(
+                        "Memory {n1}/{n2} ({mem}%){swap_text}",
+                        n1 = human_kb(used),
+                        n2 = human_kb(sample.mem_total_kb),
+                        mem = format!("{:.0}", mem),
+                        swap_text = swap_text
+                    ))
+                    .color(value_color(mem)),
                 );
                 sparkline(&mut columns[1], &app.pulse.mem, theme::SUCCESS, 70.0);
             });
             ui.add_space(8.0);
-            ui.label(RichText::new("ДИСКИ").small().strong().color(theme::MUTED_TEXT));
+            ui.label(RichText::new(t!("DISKS")).small().strong().color(theme::MUTED_TEXT));
             let project_mount = sample.project_disk.as_ref().map(|d| d.mount.clone());
             for disk in &sample.disks {
                 let label = if Some(&disk.mount) == project_mount.as_ref() { format!("{} ◆", disk.mount) } else { disk.mount.clone() };
-                bar(ui, &label, disk.percent(), &format!("{} из {}", human_kb(disk.used_kb), human_kb(disk.total_kb)));
+                bar(ui, &label, disk.percent(), &t!("{n1} of {n2}", n1 = human_kb(disk.used_kb), n2 = human_kb(disk.total_kb)));
             }
             ui.add_space(8.0);
-            ui.label(RichText::new("ПРОЦЕССЫ").small().strong().color(theme::MUTED_TEXT));
+            ui.label(RichText::new(t!("PROCESSES")).small().strong().color(theme::MUTED_TEXT));
             egui::Grid::new("pulse_processes").striped(true).spacing([18.0, 3.0]).show(ui, |ui| {
-                for header in ["PID", "CPU", "MEM", "RSS", "Процесс", ""] {
+                for header in ["PID", "CPU", "MEM", "RSS", t!("Process"), ""] {
                     ui.label(RichText::new(header).small().color(theme::FAINT_TEXT));
                 }
                 ui.end_row();
@@ -416,7 +438,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     ui.label(RichText::new(human_kb(process.rss_kb)).monospace().small());
                     ui.label(&process.name);
                     ui.horizontal(|ui| {
-                        if ui.small_button("стоп").on_hover_text("SIGTERM").clicked() {
+                        if ui.small_button(t!("stop")).on_hover_text("SIGTERM").clicked() {
                             kill = Some((process.pid, process.name.clone(), false));
                         }
                         if ui.small_button("kill -9").clicked() {
@@ -431,14 +453,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     if let (Some((pid, name, force)), Some(host)) = (kill, host) {
         let signal = if force { "-9" } else { "-15" };
         app.dialog = Some(Dialog::Confirm {
-            title: "Остановить процесс".into(),
-            message: format!("Отправить {} процессу {name} (PID {pid})?", if force { "SIGKILL" } else { "SIGTERM" }),
+            title: t!("Stop process").into(),
+            message: t!("Send {n1} to {name} (PID {pid})?", n1 = if force { "SIGKILL" } else { "SIGTERM" }, name = name, pid = pid),
             action: Box::new(move |app: &mut App| {
                 let root = app.workspace.as_ref().map(|w| w.root.clone()).unwrap_or_default();
                 app.bus.spawn(move || {
                     let result = crate::host::run_with_input(&mut host.shell(&root, &format!("kill {signal} {pid}")), None);
                     match result {
-                        Ok(_) => Msg::Notice(format!("{name} (PID {pid}): сигнал отправлен"), false),
+                        Ok(_) => Msg::Notice(t!("{name} (PID {pid}): signal sent", name = name, pid = pid), false),
                         Err(error) => Msg::Notice(format!("{name} (PID {pid}): {error}"), true),
                     }
                 });

@@ -36,6 +36,10 @@ CI runs the same checks.
 PATH=$PWD/scripts/fake-ssh-dir:$PATH cargo run -- ssh://fake$PWD
 ```
 
+## Interface text and translations
+
+Text in the code is English and goes through `t!("…")` (with placeholders: `t!("Saved {name}", name = path)`); longer texts live in `locales/en/` and `locales/ru/` and are read with `t_file!`. Add the Russian version of every new string to `locales/ru.toml` — `cargo test` fails if a string has no translation, if Cyrillic text is left in the code, or if a translation is no longer used.
+
 ## Commit messages
 
 Short imperative subject line (English or Russian), optional body explaining *why*.

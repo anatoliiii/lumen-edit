@@ -18,10 +18,10 @@ pub enum Group {
 impl Group {
     pub fn label(self) -> &'static str {
         match self {
-            Group::Run => "Запуск",
-            Group::Build => "Сборка",
-            Group::Test => "Тесты",
-            Group::Other => "Прочее",
+            Group::Run => t!("Run"),
+            Group::Build => t!("Build"),
+            Group::Test => t!("Tests"),
+            Group::Other => t!("Other"),
         }
     }
 }
@@ -50,20 +50,10 @@ struct TasksFile {
 pub const TASKS_FILE: &str = ".lumen/tasks.toml";
 const LEGACY_TASKS_FILE: &str = ".codium/tasks.toml";
 
-pub const TASKS_TEMPLATE: &str = r#"# Задачи проекта. Запуск: F5 (задача с default = true), Ctrl+Shift+B — сборка.
-# group: run | build | test | other
-
-[[task]]
-label = "run"
-command = "echo 'замените на свою команду'"
-group = "run"
-default = true
-
-# [[task]]
-# label = "deploy"
-# command = "./deploy.sh"
-# cwd = "scripts"
-"#;
+/// Starter `.lumen/tasks.toml`, commented in the interface language.
+pub fn tasks_template() -> &'static str {
+    t_file!("tasks.toml")
+}
 
 fn task(label: &str, command: &str, group: Group, source: &str) -> Task {
     Task { label: label.into(), command: command.into(), cwd: None, group, default: false, source: source.into() }

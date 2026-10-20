@@ -449,9 +449,9 @@ pub fn handle_event(app: &mut App, event: ServerEvent) {
         }
         ServerEvent::Exited { server, .. } => {
             if let Some(ServerState::Ready(_)) = app.lsp.servers.get(&server) {
-                app.lsp.servers.insert(server.clone(), ServerState::Failed("процесс завершился".into()));
+                app.lsp.servers.insert(server.clone(), ServerState::Failed(t!("the process exited").into()));
                 app.lsp.progress.remove(&server);
-                app.notify(format!("Языковой сервер {server} остановился. Перезапуск — через палитру команд."), true);
+                app.notify(t!("Language server {server} stopped. Restart it from the command palette.", server = server), true);
             }
         }
     }
@@ -679,7 +679,7 @@ pub fn on_result(app: &mut App, doc_id: u64, version: u64, request: Request, cli
                     let utf8 = client.utf8;
                     open_location(app, path, range, utf8);
                 }
-                None => app.notify("Определение не найдено", false),
+                None => app.notify(t!("Definition not found"), false),
             }
         }
         Request::References => {
@@ -695,7 +695,7 @@ pub fn on_result(app: &mut App, doc_id: u64, version: u64, request: Request, cli
             app.panel_open = true;
             app.panel_tab = super::PanelTab::References;
             if app.references.is_empty() {
-                app.notify("Ссылки не найдены", false);
+                app.notify(t!("No references found"), false);
             }
         }
         Request::Rename => {

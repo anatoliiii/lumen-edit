@@ -39,7 +39,7 @@ impl Host {
 
     pub fn label(&self) -> String {
         match self {
-            Host::Local => "Локально".into(),
+            Host::Local => t!("Local").into(),
             Host::Remote(remote) => format!("SSH: {}", remote.target),
         }
     }
@@ -191,7 +191,7 @@ impl Host {
 
     /// Command for an interactive terminal (or a task) in a local PTY.
     pub fn pty_command(&self, cwd: &str, task: Option<&str>) -> portable_pty::CommandBuilder {
-        let finish = "printf '\\n\\033[2m[процесс завершён с кодом %s]\\033[0m\\n' $?";
+        let finish = t!("printf '\\n\\033[2m[process exited with code %s]\\033[0m\\n' $?");
         match self {
             Host::Local => {
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());

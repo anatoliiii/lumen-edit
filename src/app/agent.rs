@@ -312,7 +312,7 @@ fn vendor(model: &Value) -> String {
             return vendor.into();
         }
     }
-    "другие".into()
+    t!("other").into()
 }
 
 fn model_key(model: &Value) -> String {
@@ -331,13 +331,13 @@ fn session_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actio
             egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
                 ui.set_width(460.0);
                 ui.horizontal(|ui| {
-                    if ui.button("+ Новая сессия").clicked() {
+                    if ui.button(t!("+ New session")).clicked() {
                         actions.push(Action::NewSession);
                         close = true;
                     }
                     match &mut agent.renaming {
                         Some(name) => {
-                            let field = ui.add(egui::TextEdit::singleline(name).hint_text("имя сессии").desired_width(200.0));
+                            let field = ui.add(egui::TextEdit::singleline(name).hint_text(t!("session name")).desired_width(200.0));
                             field.request_focus();
                             if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                                 actions.push(Action::RenameSession(name.trim().to_string()));
@@ -345,14 +345,15 @@ fn session_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actio
                             }
                         }
                         None => {
-                            if ui.button("Переименовать текущую").clicked() {
-                                agent.renaming = Some(agent.title.trim_start_matches("π ").replace("Агент", ""));
+                            if ui.button(t!("Rename current")).clicked() {
+                                agent.renaming = Some(agent.title.trim_start_matches("π ").replace(t!("Agent"), ""));
                             }
                         }
                     }
                 });
-                let search = ui
-                    .add(egui::TextEdit::singleline(&mut agent.session_filter).hint_text("поиск по сессиям").desired_width(f32::INFINITY));
+                let search = ui.add(
+                    egui::TextEdit::singleline(&mut agent.session_filter).hint_text(t!("search sessions")).desired_width(f32::INFINITY),
+                );
                 if agent.renaming.is_none() {
                     search.request_focus();
                 }
@@ -364,10 +365,10 @@ fn session_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actio
                         return;
                     };
                     if list.is_empty() {
-                        ui.label(RichText::new("Сессий в этой папке пока нет").color(theme::MUTED_TEXT));
+                        ui.label(RichText::new(t!("No sessions in this folder yet")).color(theme::MUTED_TEXT));
                     }
                     for session in list {
-                        let title = session.name.clone().or(session.first_message.clone()).unwrap_or_else(|| "(без сообщений)".into());
+                        let title = session.name.clone().or(session.first_message.clone()).unwrap_or_else(|| t!("(no messages)").into());
                         if !filter.is_empty()
                             && !format!("{} {}", title, session.first_message.as_deref().unwrap_or("")).to_lowercase().contains(&filter)
                         {
@@ -386,7 +387,7 @@ fn session_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actio
                             egui::FontId::proportional(13.0),
                             if current { theme::ACCENT } else { theme::TEXT },
                         );
-                        let meta = format!("{} · сообщений: {}", util::time_ago(session.modified), session.messages);
+                        let meta = t!("{n1} · messages: {n2}", n1 = util::time_ago(session.modified), n2 = session.messages);
                         painter.text(
                             rect.left_bottom() + vec2(8.0, -5.0),
                             egui::Align2::LEFT_BOTTOM,
@@ -486,7 +487,7 @@ fn model_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actions
                 ui.set_width(480.0);
                 let search = ui.add(
                     egui::TextEdit::singleline(&mut agent.model_filter)
-                        .hint_text("поиск: название, вендор, провайдер")
+                        .hint_text(t!("search: name, vendor, provider"))
                         .desired_width(f32::INFINITY),
                 );
                 search.request_focus();
@@ -494,7 +495,7 @@ fn model_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actions
                     agent.picker_selected = 0;
                 }
                 let total: usize = groups.values().flat_map(|v| v.values()).map(Vec::len).sum();
-                ui.label(RichText::new(format!("{total} моделей")).small().color(theme::FAINT_TEXT));
+                ui.label(RichText::new(t!("{total} models", total = total)).small().color(theme::FAINT_TEXT));
                 egui::ScrollArea::vertical().max_height(460.0).auto_shrink([false, true]).show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
                     let mut row = |ui: &mut egui::Ui, model: &Value, indent: f32| {
@@ -524,7 +525,7 @@ fn model_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actions
                             .unwrap_or_default();
                         let free = model["cost"]["input"].as_f64() == Some(0.0) && model["cost"]["output"].as_f64() == Some(0.0);
                         let price = if free {
-                            "бесплатно".to_string()
+                            t!("free").to_string()
                         } else {
                             format!(
                                 "${}/${}",
@@ -548,7 +549,7 @@ fn model_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actions
                         response.on_hover_text(key);
                     };
                     if !favorites.is_empty() {
-                        ui.label(RichText::new("ИЗБРАННЫЕ").small().strong().color(theme::WARNING));
+                        ui.label(RichText::new(t!("FAVORITES")).small().strong().color(theme::WARNING));
                         for model in &favorites {
                             row(ui, model, 12.0);
                         }
@@ -632,7 +633,7 @@ impl AgentTab {
     pub fn spawn(id: u64, host: &Host, root: &str, socket: Option<&Path>, options: &LaunchOptions, bus: Bus) -> Self {
         let mut tab = AgentTab {
             id,
-            title: "π Агент".into(),
+            title: t!("π Agent").into(),
             child: None,
             stdin: None,
             items: Vec::new(),
@@ -703,13 +704,9 @@ impl AgentTab {
         match ensure_pi_mcp_entry() {
             Ok(true) => tab
                 .items
-                .push(Item::Notice {
-                    text: "В ~/.pi/agent/mcp.json добавлен сервер lumen (инструменты по запросу)".into(), error: false
-                }),
+                .push(Item::Notice { text: t!("Added the lumen server to ~/.pi/agent/mcp.json (tools on demand)").into(), error: false }),
             Ok(false) => {}
-            Err(error) => {
-                tab.items.push(Item::Notice { text: format!("Не удалось настроить MCP для pi: {error}"), error: true })
-            }
+            Err(error) => tab.items.push(Item::Notice { text: t!("Could not set up MCP for pi: {error}", error = error), error: true }),
         }
 
         let mut pi_args: Vec<String> = vec!["--mode".into(), "rpc".into(), "--append-system-prompt".into(), context];
@@ -729,10 +726,10 @@ impl AgentTab {
         // Absolute path: inside bwrap there is no shell to search PATH.
         let pi = if options.pi_command.contains('/') { Some(PathBuf::from(&options.pi_command)) } else { which(&options.pi_command) };
         let Some(pi) = pi else {
-            tab.exited = Some(format!(
-                "{} не найден. Укажите полный путь в настройках (Агент pi: команда), PATH: {}",
-                options.pi_command,
-                crate::host::local_path()
+            tab.exited = Some(t!(
+                "{n1} not found. Set the full path in Settings (pi agent: command), PATH: {n2}",
+                n1 = options.pi_command,
+                n2 = crate::host::local_path()
             ));
             return tab;
         };
@@ -800,7 +797,7 @@ impl AgentTab {
                 }
             }
             Err(error) => {
-                tab.exited = Some(format!("не удалось запустить {}: {error}", options.pi_command));
+                tab.exited = Some(t!("could not start {n1}: {error}", n1 = options.pi_command, error = error));
             }
         }
         tab
@@ -858,7 +855,7 @@ impl AgentTab {
                 Item::Assistant { blocks, error } => {
                     let text: Vec<String> =
                         blocks.values().filter_map(|b| if let Block::Text(t) = b { Some(t.clone()) } else { None }).collect();
-                    format!("assistant: {}{}", text.join("\n"), error.as_ref().map(|e| format!(" [ошибка: {e}]")).unwrap_or_default())
+                    format!("assistant: {}{}", text.join("\n"), error.as_ref().map(|e| t!(" [error: {e}]", e = e)).unwrap_or_default())
                 }
                 Item::Tool(tool) => {
                     let status = if !tool.done {
@@ -911,7 +908,7 @@ impl AgentTab {
                 let success = event.get("success").and_then(Value::as_bool).unwrap_or(false);
                 let data = event.get("data").cloned().unwrap_or(Value::Null);
                 if !success {
-                    let error = event.get("error").and_then(Value::as_str).unwrap_or("ошибка");
+                    let error = event.get("error").and_then(Value::as_str).unwrap_or(t!("error"));
                     self.items.push(Item::Notice { text: format!("{command}: {error}"), error: true });
                     return false;
                 }
@@ -923,7 +920,7 @@ impl AgentTab {
                         if let Some(name) = data.get("sessionName").and_then(Value::as_str) {
                             self.title = format!("π {name}");
                         } else {
-                            self.title = "π Агент".into();
+                            self.title = t!("π Agent").into();
                         }
                         self.current_session = data.get("sessionFile").and_then(Value::as_str).map(str::to_string);
                     }
@@ -995,7 +992,7 @@ impl AgentTab {
                 self.streaming = false;
                 self.started_at = None;
                 if event.get("aborted").and_then(Value::as_bool) == Some(true) {
-                    self.items.push(Item::Notice { text: "Остановлено".into(), error: false });
+                    self.items.push(Item::Notice { text: t!("Stopped").into(), error: false });
                 }
             }
             "message_start" => {
@@ -1086,17 +1083,17 @@ impl AgentTab {
             }
             "auto_retry_start" => {
                 let error = event["errorMessage"].as_str().unwrap_or("");
-                self.items
-                    .push(Item::Notice {
-                        text: format!("Повтор {}/{}: {error}", event["attempt"], event["maxAttempts"]), error: true
-                    });
+                self.items.push(Item::Notice {
+                    text: t!("Retry {n1}/{n2}: {error}", n1 = event["attempt"], n2 = event["maxAttempts"], error = error),
+                    error: true,
+                });
             }
-            "compaction_start" => self.items.push(Item::Notice { text: "Сжатие контекста…".into(), error: false }),
+            "compaction_start" => self.items.push(Item::Notice { text: t!("Compacting context…").into(), error: false }),
             "compaction_end" => {
                 let text = if let Some(error) = event["errorMessage"].as_str() {
-                    format!("Сжатие не удалось: {error}")
+                    t!("Compaction failed: {error}", error = error)
                 } else {
-                    "Контекст сжат".into()
+                    t!("Context compacted").into()
                 };
                 self.items.push(Item::Notice { text, error: event["errorMessage"].is_string() });
             }
@@ -1107,18 +1104,13 @@ impl AgentTab {
                 }
             }
             "extension_error" => {
-                self.items
-                    .push(Item::Notice { text: format!("Расширение: {}", event["error"].as_str().unwrap_or("")), error: true });
+                self.items.push(Item::Notice { text: t!("Extension: {n1}", n1 = event["error"].as_str().unwrap_or("")), error: true });
             }
             "extension_ui_request" => self.ui_request(&event),
             "__exit" => {
                 self.streaming = false;
                 let tail = self.stderr_tail.lock().unwrap().join("\n");
-                let reason = if tail.trim().is_empty() {
-                    "pi завершился".to_string()
-                } else {
-                    format!("pi завершился:\n{tail}")
-                };
+                let reason = if tail.trim().is_empty() { t!("pi exited").to_string() } else { t!("pi exited:\n{tail}", tail = tail) };
                 self.exited = Some(reason);
                 self.stdin = None;
             }
@@ -1258,7 +1250,7 @@ fn content_text(content: &Value) -> String {
             .iter()
             .filter_map(|b| match b["type"].as_str() {
                 Some("text") => b["text"].as_str().map(str::to_string),
-                Some("image") => Some("[изображение]".into()),
+                Some("image") => Some(t!("[image]").into()),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -1283,8 +1275,8 @@ fn assistant_blocks(message: &Value) -> (BTreeMap<usize, Block>, Option<String>)
         }
     }
     let error = match message["stopReason"].as_str() {
-        Some("error") => Some(message["errorMessage"].as_str().unwrap_or("ошибка модели").to_string()),
-        Some("length") => Some("ответ обрезан по лимиту токенов".into()),
+        Some("error") => Some(message["errorMessage"].as_str().unwrap_or(t!("model error")).to_string()),
+        Some("length") => Some(t!("reply cut off by the token limit").into()),
         _ => None,
     };
     (blocks, error)
@@ -1363,7 +1355,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
         ui.set_width(ui.available_width());
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("π").size(18.0).color(theme::ACCENT).strong());
-            let current = agent.model.as_ref().map(AgentTab::model_label).unwrap_or_else(|| "модель…".into());
+            let current = agent.model.as_ref().map(AgentTab::model_label).unwrap_or_else(|| t!("model…").into());
             let button = ui.add(egui::Button::new(format!("{}  ▾", util::truncate_middle(&current, 28))).min_size(vec2(150.0, 0.0)));
             if button.clicked() {
                 agent.picker_open = !agent.picker_open;
@@ -1374,62 +1366,67 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                 model_picker(ui, agent, button.rect, &mut actions);
             }
             if !agent.modes.is_empty() {
-                let current = agent.current_mode().unwrap_or_else(|| "режим".into());
-                egui::ComboBox::from_id_salt(("agent_mode", agent.id)).selected_text(format!("режим: {current}")).show_ui(ui, |ui| {
-                    for mode in &agent.modes {
-                        if ui.selectable_label(*mode == current, mode).clicked() {
-                            actions.push(Action::Send(format!("/mode {mode}")));
-                        }
-                    }
-                });
-            }
-            if !agent.levels.is_empty() && agent.levels != ["off"] {
-                egui::ComboBox::from_id_salt(("agent_thinking", agent.id)).selected_text(format!("мышление: {}", agent.thinking)).show_ui(
+                let current = agent.current_mode().unwrap_or_else(|| t!("mode").into());
+                egui::ComboBox::from_id_salt(("agent_mode", agent.id)).selected_text(t!("mode: {current}", current = current)).show_ui(
                     ui,
                     |ui| {
-                        for level in &agent.levels {
-                            if ui.selectable_label(*level == agent.thinking, level).clicked() {
-                                actions.push(Action::SetThinking(level.clone()));
+                        for mode in &agent.modes {
+                            if ui.selectable_label(*mode == current, mode).clicked() {
+                                actions.push(Action::Send(format!("/mode {mode}")));
                             }
                         }
                     },
                 );
             }
+            if !agent.levels.is_empty() && agent.levels != ["off"] {
+                egui::ComboBox::from_id_salt(("agent_thinking", agent.id))
+                    .selected_text(t!("thinking: {n1}", n1 = agent.thinking))
+                    .show_ui(ui, |ui| {
+                        for level in &agent.levels {
+                            if ui.selectable_label(*level == agent.thinking, level).clicked() {
+                                actions.push(Action::SetThinking(level.clone()));
+                            }
+                        }
+                    });
+            }
         });
         // Second row: sandbox, usage, extension statuses and session buttons.
         ui.horizontal(|ui| {
             let (badge, color, hint) = if agent.sandboxed {
-                ("⚿ песочница", theme::SUCCESS, "pi может писать только в папку проекта, ~/.pi и кэши")
+                (t!("⚿ sandbox"), theme::SUCCESS, t!("pi can only write to the project folder, ~/.pi and caches"))
             } else {
-                ("без песочницы", theme::WARNING, "bubblewrap не найден или песочница отключена в настройках")
+                (t!("no sandbox"), theme::WARNING, t!("bubblewrap not found or the sandbox is disabled in Settings"))
             };
             ui.label(RichText::new(badge).small().color(color)).on_hover_text(hint);
             if let Some(usage) = &agent.usage {
                 let total = usage["totalTokens"].as_u64().unwrap_or(0);
                 let cost = usage["cost"]["total"].as_f64().unwrap_or(0.0);
-                let text = if cost > 0.0 { format!("{total} ток · ${cost:.3}") } else { format!("{total} ток") };
+                let text = if cost > 0.0 {
+                    t!("{total} tok · ${cost}", total = total, cost = format!("{:.3}", cost))
+                } else {
+                    t!("{total} tok", total = total)
+                };
                 ui.label(RichText::new(text).small().color(theme::FAINT_TEXT));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if loc == Loc::Dock && ui.small_button("×").on_hover_text("Скрыть панель (агент продолжит работу)").clicked()
-                {
+                if loc == Loc::Dock && ui.small_button("×").on_hover_text(t!("Hide the panel (the agent keeps working)")).clicked() {
                     actions.push(Action::Hide);
                 }
                 let dock_label = if loc == Loc::Dock { "⇱" } else { "⇥" };
-                let dock_hint = if loc == Loc::Dock { "Открыть во вкладке" } else { "Справа от кода" };
+                let dock_hint = if loc == Loc::Dock { t!("Open in a tab") } else { t!("Beside the code") };
                 if ui.small_button(dock_label).on_hover_text(dock_hint).clicked() {
                     actions.push(Action::ToggleDock);
                 }
-                if ui.small_button("⟳").on_hover_text("Перезапустить pi").clicked() {
+                if ui.small_button("⟳").on_hover_text(t!("Restart pi")).clicked() {
                     actions.push(Action::Restart);
                 }
-                if ui.small_button("⊟").on_hover_text("Сжать контекст").clicked() {
+                if ui.small_button("⊟").on_hover_text(t!("Compact context")).clicked() {
                     actions.push(Action::Compact);
                 }
-                if ui.small_button("+").on_hover_text("Новая сессия").clicked() {
+                if ui.small_button("+").on_hover_text(t!("New session")).clicked() {
                     actions.push(Action::NewSession);
                 }
-                let sessions_button = ui.small_button("☰ Сессии").on_hover_text("Список сессий этой папки");
+                let sessions_button = ui.small_button(t!("☰ Sessions")).on_hover_text(t!("Sessions of this folder"));
                 if sessions_button.clicked() {
                     agent.sessions_open = !agent.sessions_open;
                     if agent.sessions_open {
@@ -1478,10 +1475,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                     ui.add_space(40.0);
                     ui.label(RichText::new("π").size(48.0).color(theme::SURFACE_HOVER));
                     ui.add(
-                        egui::Label::new(RichText::new("Агент pi с вашими настройками, расширениями и навыками").color(theme::MUTED_TEXT))
+                        egui::Label::new(RichText::new(t!("pi agent with your settings, extensions and skills")).color(theme::MUTED_TEXT))
                             .wrap(),
                     );
-                    ui.add(egui::Label::new(RichText::new(format!("Папка: {}", agent.cwd)).small().color(theme::FAINT_TEXT)).truncate());
+                    ui.add(egui::Label::new(RichText::new(t!("Folder: {n1}", n1 = agent.cwd)).small().color(theme::FAINT_TEXT)).truncate());
                 });
             }
             for (i, item) in agent.items.iter_mut().enumerate() {
@@ -1507,7 +1504,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                                         }
                                     }
                                     Block::Thinking(text) if !text.trim().is_empty() => {
-                                        egui::CollapsingHeader::new(RichText::new("размышления").small().color(theme::FAINT_TEXT))
+                                        egui::CollapsingHeader::new(RichText::new(t!("thinking")).small().color(theme::FAINT_TEXT))
                                             .id_salt(("thinking", agent.id, i))
                                             .show(ui, |ui| {
                                                 ui.label(RichText::new(text.as_str()).small().italics().color(theme::MUTED_TEXT));
@@ -1543,18 +1540,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if let Some(ms) = tool.duration_ms {
                                             ui.label(
-                                                RichText::new(format!("{:.1} с", ms as f64 / 1000.0)).small().color(theme::FAINT_TEXT),
+                                                RichText::new(t!("{n1} s", n1 = format!("{:.1}", ms as f64 / 1000.0)))
+                                                    .small()
+                                                    .color(theme::FAINT_TEXT),
                                             );
                                         }
                                         if let Some(path) = tool_path(tool)
-                                            && ui.small_button("открыть").clicked()
+                                            && ui.small_button(t!("open")).clicked()
                                         {
                                             actions.push(Action::OpenFile(path));
                                         }
                                         if let Some(command) = tool.args.get("command").and_then(Value::as_str)
                                             && ui
-                                                .small_button("в терминале")
-                                                .on_hover_text("Запустить эту команду во встроенном терминале")
+                                                .small_button(t!("in terminal"))
+                                                .on_hover_text(t!("Run this command in the built-in terminal"))
                                                 .clicked()
                                         {
                                             actions.push(Action::RunInTerminal(command.to_string()));
@@ -1587,7 +1586,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                                         theme::MUTED_TEXT
                                     }));
                                     if lines.len() > shown {
-                                        let label = format!("… ещё {} строк", lines.len() - shown);
+                                        let label = t!("… {n1} more lines", n1 = lines.len() - shown);
                                         if ui
                                             .add(egui::Button::new(RichText::new(label).small().color(theme::ACCENT)).frame(false))
                                             .clicked()
@@ -1597,7 +1596,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                                     } else if tool.expanded
                                         && lines.len() > 3
                                         && ui
-                                            .add(egui::Button::new(RichText::new("свернуть").small().color(theme::ACCENT)).frame(false))
+                                            .add(egui::Button::new(RichText::new(t!("collapse")).small().color(theme::ACCENT)).frame(false))
                                             .clicked()
                                     {
                                         tool.expanded = false;
@@ -1618,7 +1617,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                     ui.add_space(12.0);
                     ui.spinner();
                     let elapsed = agent.started_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
-                    ui.label(RichText::new(format!("работает… {elapsed} с")).small().color(theme::MUTED_TEXT));
+                    ui.label(RichText::new(t!("working… {elapsed} s", elapsed = elapsed)).small().color(theme::MUTED_TEXT));
                 });
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
             }
@@ -1630,7 +1629,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(12.0);
-                    if ui.button("Перезапустить").clicked() {
+                    if ui.button(t!("Restart")).clicked() {
                         actions.push(Action::Restart);
                     }
                 });
@@ -1668,10 +1667,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                 }
                 ui.horizontal_wrapped(|ui| match request.method.as_str() {
                     "confirm" => {
-                        if ui.button("Да").clicked() {
+                        if ui.button(t!("Yes")).clicked() {
                             answer = Some((index, json!({ "confirmed": true })));
                         }
-                        if ui.button("Нет").clicked() {
+                        if ui.button(t!("No")).clicked() {
                             answer = Some((index, json!({ "confirmed": false })));
                         }
                     }
@@ -1681,7 +1680,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                                 answer = Some((index, json!({ "value": option })));
                             }
                         }
-                        if ui.button("Отмена").clicked() {
+                        if ui.button(t!("Cancel")).clicked() {
                             answer = Some((index, json!({ "cancelled": true })));
                         }
                     }
@@ -1695,7 +1694,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                         if ui.button("OK").clicked() {
                             answer = Some((index, json!({ "value": request.value })));
                         }
-                        if ui.button("Отмена").clicked() {
+                        if ui.button(t!("Cancel")).clicked() {
                             answer = Some((index, json!({ "cancelled": true })));
                         }
                     }
@@ -1727,9 +1726,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
 
     let running = agent.is_running();
     let hint = if agent.streaming {
-        "Уточнение по ходу работы (Enter), Alt+Enter — после завершения"
+        t!("Steer while it works (Enter), Alt+Enter — after it finishes")
     } else {
-        "Задача для агента (Enter — отправить, Shift+Enter — новая строка, / — команды)"
+        t!("Task for the agent (Enter — send, Shift+Enter — new line, / — commands)")
     };
     let editor = ui.add_enabled(
         running,
@@ -1761,15 +1760,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
     }
     ui.horizontal(|ui| {
         if agent.streaming {
-            if ui.button(RichText::new("■ Стоп").color(theme::ERROR)).on_hover_text("Esc").clicked() {
+            if ui.button(RichText::new(t!("■ Stop")).color(theme::ERROR)).on_hover_text("Esc").clicked() {
                 actions.push(Action::Abort);
             }
-        } else if ui.add_enabled(running && !agent.input.trim().is_empty(), egui::Button::new("Отправить ⏎")).clicked() {
+        } else if ui.add_enabled(running && !agent.input.trim().is_empty(), egui::Button::new(t!("Send ⏎"))).clicked() {
             let text = std::mem::take(&mut agent.input);
             actions.push(Action::Send(text));
         }
-        if ui.small_button("+ выделение").on_hover_text("Вставить выделенный в редакторе код (Ctrl+Alt+A)").clicked()
-        {
+        if ui.small_button(t!("+ selection")).on_hover_text(t!("Insert the code selected in the editor (Ctrl+Alt+A)")).clicked() {
             actions.push(Action::Send("\u{0}selection".into()));
         }
         ui.add(egui::Label::new(RichText::new(&agent.cwd).small().color(theme::FAINT_TEXT)).truncate());
@@ -1878,7 +1876,7 @@ pub fn open_link(app: &mut App, target: &str) {
                     doc.view.focus_request = true;
                 }
             }
-            Err(error) => app.notify(format!("Не удалось открыть: {error}"), true),
+            Err(error) => app.notify(t!("Could not open: {error}", error = error), true),
         }),
     );
 }
@@ -1994,7 +1992,7 @@ pub fn open(app: &mut App) {
         return;
     }
     let Some(workspace) = &app.workspace else {
-        app.notify("Сначала откройте проект", true);
+        app.notify(t!("Open a project first"), true);
         return;
     };
     let host = workspace.host.clone();
