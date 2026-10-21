@@ -71,13 +71,13 @@ impl Palette {
 
 fn placeholder(mode: &Mode) -> &'static str {
     match mode {
-        Mode::Files => "Имя файла (> — команды, : — строка)",
-        Mode::Commands => "Команда",
-        Mode::GotoLine => "Номер строки[:столбец]",
-        Mode::Recent => "Недавний проект",
-        Mode::Tasks => "Задача для запуска",
-        Mode::Branches { merge: false } => "Ветка для переключения (или имя новой)",
-        Mode::Branches { merge: true } => "Ветка для слияния в текущую",
+        Mode::Files => t!("File name (> commands, : line)"),
+        Mode::Commands => t!("Command"),
+        Mode::GotoLine => t!("Line number[:column]"),
+        Mode::Recent => t!("Recent project"),
+        Mode::Tasks => t!("Task to run"),
+        Mode::Branches { merge: false } => t!("Branch to switch to (or a new name)"),
+        Mode::Branches { merge: true } => t!("Branch to merge into current"),
     }
 }
 
@@ -99,7 +99,7 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
                 for tab in app.tabs.iter().rev() {
                     if let super::Tab::Doc(doc) = tab {
                         let relative = workspace.relative(&doc.path).to_string();
-                        push(doc.name().to_string(), relative, "открыт".into(), Action::OpenFile(doc.path.clone()), None);
+                        push(doc.name().to_string(), relative, t!("open tab").into(), Action::OpenFile(doc.path.clone()), None);
                     }
                 }
             }
@@ -143,27 +143,46 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
             let line = parts.next().and_then(|l| l.trim().parse::<usize>().ok());
             let col = parts.next().and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(1);
             if let Some(line) = line {
-                items.push((0, Item {
-                    label: format!("Перейти к строке {line}, столбец {col}"),
-                    detail: String::new(),
-                    hint: String::new(),
-                    matches: Vec::new(),
-                    action: Action::GotoLine(line.saturating_sub(1), col.saturating_sub(1)),
-                }));
+                items.push((
+                    0,
+                    Item {
+                        label: t!("Go to line {line}, column {col}", line = line, col = col),
+                        detail: String::new(),
+                        hint: String::new(),
+                        matches: Vec::new(),
+                        action: Action::GotoLine(line.saturating_sub(1), col.saturating_sub(1)),
+                    },
+                ));
             }
         }
         Mode::Recent => {
             for recent in &app.config.recent {
                 let name = host::file_name(&recent.path).to_string();
-                let where_ = if recent.host == "local" { recent.path.clone() } else { format!("{} — {}", recent.host.trim_start_matches("ssh:"), recent.path) };
-                let hint = if recent.host == "local" { "локально".into() } else { "SSH".into() };
-                push(name, where_.clone(), hint, Action::OpenRecent(recent.clone()), Some(&format!("{} {where_}", host::file_name(&recent.path))));
+                let where_ = if recent.host == "local" {
+                    recent.path.clone()
+                } else {
+                    format!("{} — {}", recent.host.trim_start_matches("ssh:"), recent.path)
+                };
+                let hint = if recent.host == "local" { t!("local").into() } else { "SSH".into() };
+                push(
+                    name,
+                    where_.clone(),
+                    hint,
+                    Action::OpenRecent(recent.clone()),
+                    Some(&format!("{} {where_}", host::file_name(&recent.path))),
+                );
             }
         }
         Mode::Tasks => {
             if let Some(workspace) = &app.workspace {
                 for task in &workspace.tasks {
-                    push(task.label.clone(), task.command.clone(), format!("{} · {}", task.group.label(), task.source), Action::RunTask(task.clone()), None);
+                    push(
+                        task.label.clone(),
+                        task.command.clone(),
+                        format!("{} · {}", task.group.label(), task.source),
+                        Action::RunTask(task.clone()),
+                        None,
+                    );
                 }
             }
         }
@@ -173,13 +192,34 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
                     if branch.current {
                         continue;
                     }
-                    let hint = if branch.remote { "удалённая" } else { "" };
+                    let hint = if branch.remote {
+                        t!("remote")
+                    } else if !branch.worktree.is_empty() {
+                        t!("worktree")
+                    } else {
+                        ""
+                    };
                     let action = if *merge { Action::Merge(branch.name.clone()) } else { Action::Checkout(branch.clone()) };
-                    push(branch.name.clone(), format!("{} {}", branch.commit, branch.subject), format!("{hint} {}", branch.date), action, None);
+                    push(
+                        branch.name.clone(),
+                        format!("{} {}", branch.commit, branch.subject),
+                        format!("{hint} {}", branch.date),
+                        action,
+                        None,
+                    );
                 }
                 if !*merge && !query.trim().is_empty() && !workspace.git.branches.iter().any(|b| b.name == query.trim()) {
                     let name = query.trim().replace(' ', "-");
-                    items.push((u32::MAX, Item { label: format!("+ Создать ветку «{name}»"), detail: String::new(), hint: String::new(), matches: Vec::new(), action: Action::CreateBranch(name) }));
+                    items.push((
+                        u32::MAX,
+                        Item {
+                            label: t!("+ Create branch “{name}”", name = name),
+                            detail: String::new(),
+                            hint: String::new(),
+                            matches: Vec::new(),
+                            action: Action::CreateBranch(name),
+                        },
+                    ));
                 }
             }
         }
@@ -251,7 +291,7 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                 if palette.mode == Mode::Files && app.workspace.as_ref().is_some_and(|w| w.file_index_loading) {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new("Индексация файлов…").small().color(theme::MUTED_TEXT));
+                        ui.label(RichText::new(t!("Indexing files…")).small().color(theme::MUTED_TEXT));
                     });
                 }
                 ui.add_space(4.0);
@@ -272,8 +312,8 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                         let painter = ui.painter_at(rect);
                         let mut x = rect.left() + 10.0;
                         if matches!(palette.mode, Mode::Files) {
-                            let (icon, color) = util::file_icon(&item.label);
-                            painter.text(pos2(x + 6.0, rect.center().y), Align2::CENTER_CENTER, icon, FontId::monospace(12.0), color);
+                            let path = if item.detail.is_empty() { item.label.clone() } else { format!("/{}", item.detail) };
+                            super::icons::file(&painter, pos2(x + 6.0, rect.center().y), &path);
                             x += 20.0;
                         }
                         let job = util::highlighted_label(&item.label, &item.matches, theme::TEXT, theme::ACCENT, 13.5);
@@ -282,10 +322,22 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                             painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT);
                         } else {
                             painter.galley(pos2(x, rect.top() + 4.0), galley, theme::TEXT);
-                            painter.text(pos2(x, rect.bottom() - 5.0), Align2::LEFT_BOTTOM, util::truncate_middle(&item.detail, 90), FontId::proportional(11.5), theme::MUTED_TEXT);
+                            painter.text(
+                                pos2(x, rect.bottom() - 5.0),
+                                Align2::LEFT_BOTTOM,
+                                util::truncate_middle(&item.detail, 90),
+                                FontId::proportional(11.5),
+                                theme::MUTED_TEXT,
+                            );
                         }
                         if !item.hint.is_empty() {
-                            painter.text(rect.right_center() - vec2(10.0, 0.0), Align2::RIGHT_CENTER, &item.hint, FontId::proportional(11.5), theme::FAINT_TEXT);
+                            painter.text(
+                                rect.right_center() - vec2(10.0, 0.0),
+                                Align2::RIGHT_CENTER,
+                                &item.hint,
+                                FontId::proportional(11.5),
+                                theme::FAINT_TEXT,
+                            );
                         }
                         if selected {
                             response.scroll_to_me(None);
@@ -297,7 +349,7 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                     }
                 });
                 if items.is_empty() && !palette.query.is_empty() {
-                    ui.label(RichText::new("Ничего не найдено").color(theme::MUTED_TEXT));
+                    ui.label(RichText::new(t!("Nothing found")).color(theme::MUTED_TEXT));
                 }
             });
         });
@@ -328,7 +380,7 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
             }
             Action::OpenRecent(recent) => super::welcome::open_recent(app, recent),
             Action::RunTask(task) => app.run_task(task),
-            Action::Checkout(branch) => app.git_op("switch", move |h, r| git::checkout(h, r, &branch)),
+            Action::Checkout(branch) => super::scm::checkout(app, branch),
             Action::Merge(name) => app.git_op("merge", move |h, r| git::merge(h, r, &name)),
             Action::CreateBranch(name) => app.git_op("switch -c", move |h, r| git::create_branch(h, r, &name, true)),
         }

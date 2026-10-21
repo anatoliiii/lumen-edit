@@ -16,6 +16,7 @@ pub enum Command {
     CloseWorkspace,
     NewFile,
     NewFolder,
+    Teleport,
     Save,
     SaveAll,
     CloseTab,
@@ -32,6 +33,7 @@ pub enum Command {
     KillTerminal,
     ShowProblems,
     ShowOutput,
+    ShowPulse,
     RunDefault,
     RunTask,
     Build,
@@ -40,6 +42,7 @@ pub enum Command {
     EditTasks,
     Find,
     Replace,
+    MarkdownPreview,
     GotoDefinition,
     References,
     Rename,
@@ -69,6 +72,7 @@ pub enum Command {
     ZoomOut,
     ZoomReset,
     Settings,
+    About,
     Quit,
 }
 
@@ -82,6 +86,7 @@ pub const ALL: &[Command] = &[
     Command::CloseWorkspace,
     Command::NewFile,
     Command::NewFolder,
+    Command::Teleport,
     Command::Save,
     Command::SaveAll,
     Command::CloseTab,
@@ -98,6 +103,7 @@ pub const ALL: &[Command] = &[
     Command::KillTerminal,
     Command::ShowProblems,
     Command::ShowOutput,
+    Command::ShowPulse,
     Command::RunDefault,
     Command::RunTask,
     Command::Build,
@@ -106,6 +112,7 @@ pub const ALL: &[Command] = &[
     Command::EditTasks,
     Command::Find,
     Command::Replace,
+    Command::MarkdownPreview,
     Command::GotoDefinition,
     Command::References,
     Command::Rename,
@@ -135,6 +142,7 @@ pub const ALL: &[Command] = &[
     Command::ZoomOut,
     Command::ZoomReset,
     Command::Settings,
+    Command::About,
     Command::Quit,
 ];
 
@@ -159,69 +167,73 @@ impl Command {
 
     pub fn label(self) -> &'static str {
         match self {
-            Command::QuickOpen => "Перейти к файлу…",
-            Command::CommandPalette => "Палитра команд",
-            Command::GotoLine => "Перейти к строке…",
-            Command::OpenFolder => "Открыть папку…",
-            Command::ConnectSsh => "Подключиться по SSH…",
-            Command::OpenRecent => "Открыть недавние…",
-            Command::CloseWorkspace => "Закрыть проект",
-            Command::NewFile => "Новый файл…",
-            Command::NewFolder => "Новая папка…",
-            Command::Save => "Сохранить",
-            Command::SaveAll => "Сохранить все",
-            Command::CloseTab => "Закрыть вкладку",
-            Command::NextTab => "Следующая вкладка",
-            Command::PrevTab => "Предыдущая вкладка",
-            Command::ToggleSidebar => "Показать/скрыть боковую панель",
-            Command::ShowExplorer => "Проводник",
-            Command::ShowSearch => "Поиск по проекту",
-            Command::ShowGit => "Git: панель изменений",
-            Command::ShowRun => "Запуск и задачи",
-            Command::TogglePanel => "Показать/скрыть нижнюю панель",
-            Command::ToggleTerminal => "Терминал: показать/скрыть",
-            Command::NewTerminal => "Терминал: новый",
-            Command::KillTerminal => "Терминал: закрыть текущий",
-            Command::ShowProblems => "Проблемы",
-            Command::ShowOutput => "Вывод",
-            Command::RunDefault => "Запуск: задача по умолчанию",
-            Command::RunTask => "Запуск: выбрать задачу…",
-            Command::Build => "Запуск: сборка",
-            Command::Test => "Запуск: тесты",
-            Command::RerunLast => "Запуск: повторить последнюю задачу",
-            Command::EditTasks => "Запуск: настроить задачи (tasks.toml)",
-            Command::Find => "Найти",
-            Command::Replace => "Заменить",
-            Command::GotoDefinition => "Перейти к определению",
-            Command::References => "Найти все ссылки",
-            Command::Rename => "Переименовать символ",
-            Command::CodeActions => "Быстрые исправления…",
-            Command::Format => "Форматировать документ",
-            Command::RestartLsp => "Перезапустить языковые серверы",
-            Command::GitCommit => "Git: коммит",
-            Command::GitCommitAmend => "Git: исправить последний коммит (amend)",
+            Command::QuickOpen => t!("Go to File…"),
+            Command::CommandPalette => t!("Command Palette"),
+            Command::GotoLine => t!("Go to Line…"),
+            Command::OpenFolder => t!("Open Folder…"),
+            Command::ConnectSsh => t!("Connect via SSH…"),
+            Command::OpenRecent => t!("Open Recent…"),
+            Command::CloseWorkspace => t!("Close Project"),
+            Command::NewFile => t!("New File…"),
+            Command::NewFolder => t!("New Folder…"),
+            Command::Teleport => t!("File Teleport"),
+            Command::Save => t!("Save"),
+            Command::SaveAll => t!("Save All"),
+            Command::CloseTab => t!("Close Tab"),
+            Command::NextTab => t!("Next Tab"),
+            Command::PrevTab => t!("Previous Tab"),
+            Command::ToggleSidebar => t!("Toggle Sidebar"),
+            Command::ShowExplorer => t!("Explorer"),
+            Command::ShowSearch => t!("Search in Project"),
+            Command::ShowGit => t!("Git: Changes"),
+            Command::ShowRun => t!("Run and Tasks"),
+            Command::TogglePanel => t!("Toggle Bottom Panel"),
+            Command::ToggleTerminal => t!("Terminal: Toggle"),
+            Command::NewTerminal => t!("Terminal: New"),
+            Command::KillTerminal => t!("Terminal: Close Current"),
+            Command::ShowProblems => t!("Problems"),
+            Command::ShowOutput => t!("Output"),
+            Command::ShowPulse => t!("Server Pulse"),
+            Command::RunDefault => t!("Run: Default Task"),
+            Command::RunTask => t!("Run: Choose Task…"),
+            Command::Build => t!("Run: Build"),
+            Command::Test => t!("Run: Test"),
+            Command::RerunLast => t!("Run: Rerun Last Task"),
+            Command::EditTasks => t!("Run: Configure Tasks (tasks.toml)"),
+            Command::Find => t!("Find"),
+            Command::MarkdownPreview => t!("Markdown: Preview / Source"),
+            Command::Replace => t!("Replace"),
+            Command::GotoDefinition => t!("Go to Definition"),
+            Command::References => t!("Find All References"),
+            Command::Rename => t!("Rename Symbol"),
+            Command::CodeActions => t!("Quick Fixes…"),
+            Command::Format => t!("Format Document"),
+            Command::RestartLsp => t!("Restart Language Servers"),
+            Command::GitCommit => t!("Git: Commit"),
+            Command::GitCommitAmend => t!("Git: Amend Last Commit"),
             Command::GitPush => "Git: push",
             Command::GitPull => "Git: pull",
             Command::GitFetch => "Git: fetch",
-            Command::GitSync => "Git: синхронизировать (pull + push)",
-            Command::GitCheckout => "Git: переключить ветку…",
-            Command::GitNewBranch => "Git: создать ветку…",
-            Command::GitMerge => "Git: слить ветку в текущую…",
-            Command::GitStash => "Git: спрятать изменения (stash)",
-            Command::GitStashPop => "Git: вернуть спрятанное (stash pop)",
-            Command::GitLog => "Git: история (граф)",
-            Command::GitStageFile => "Git: добавить текущий файл в индекс",
-            Command::GitFileHistory => "Git: история текущего файла",
-            Command::GitInit => "Git: инициализировать репозиторий",
-            Command::GitAddRemote => "Git: добавить remote…",
-            Command::GitToggleBlame => "Git: показать/скрыть авторство строк",
-            Command::Agent => "Агент pi",
-            Command::AgentSendSelection => "Агент: отправить выделение",
-            Command::ZoomIn => "Увеличить шрифт",
-            Command::ZoomOut => "Уменьшить шрифт",
-            Command::ZoomReset => "Сбросить размер шрифта",
-            Command::Settings => "Настройки",
-            Command::Quit => "Выход",
+            Command::GitSync => t!("Git: Sync (pull + push)"),
+            Command::GitCheckout => t!("Git: Switch Branch…"),
+            Command::GitNewBranch => t!("Git: Create Branch…"),
+            Command::GitMerge => t!("Git: Merge Branch into Current…"),
+            Command::GitStash => t!("Git: Stash Changes"),
+            Command::GitStashPop => t!("Git: Pop Stash"),
+            Command::GitLog => t!("Git: History (graph)"),
+            Command::GitStageFile => t!("Git: Stage Current File"),
+            Command::GitFileHistory => t!("Git: Current File History"),
+            Command::GitInit => t!("Git: Initialize Repository"),
+            Command::GitAddRemote => t!("Git: Add Remote…"),
+            Command::GitToggleBlame => t!("Git: Toggle Line Blame"),
+            Command::Agent => t!("pi Agent"),
+            Command::AgentSendSelection => t!("Agent: Send Selection"),
+            Command::ZoomIn => t!("Zoom In"),
+            Command::ZoomOut => t!("Zoom Out"),
+            Command::ZoomReset => t!("Reset Zoom"),
+            Command::Settings => t!("Settings"),
+            Command::About => t!("About"),
+            Command::Quit => t!("Quit"),
         }
     }
 
@@ -233,6 +245,7 @@ impl Command {
             Command::OpenFolder => "Ctrl+O",
             Command::ConnectSsh => "Ctrl+Alt+O",
             Command::NewFile => "Ctrl+N",
+            Command::Teleport => "Ctrl+Alt+T",
             Command::Save => "Ctrl+S",
             Command::SaveAll => "Ctrl+Alt+S",
             Command::CloseTab => "Ctrl+W",
@@ -253,6 +266,7 @@ impl Command {
             Command::RerunLast => "Ctrl+F5",
             Command::KillTerminal => "Shift+F5",
             Command::Find => "Ctrl+F",
+            Command::MarkdownPreview => "Ctrl+Alt+P",
             Command::Replace => "Ctrl+H",
             Command::GotoDefinition => "F12",
             Command::References => "Shift+F12",
@@ -288,6 +302,7 @@ pub fn shortcuts() -> Vec<(KeyboardShortcut, Command)> {
         (s(ctrl_alt, Key::O), Command::ConnectSsh),
         (s(ctrl, Key::O), Command::OpenFolder),
         (s(ctrl, Key::N), Command::NewFile),
+        (s(ctrl_alt, Key::T), Command::Teleport),
         (s(ctrl_alt, Key::S), Command::SaveAll),
         (s(ctrl, Key::S), Command::Save),
         (s(ctrl, Key::W), Command::CloseTab),
@@ -296,6 +311,7 @@ pub fn shortcuts() -> Vec<(KeyboardShortcut, Command)> {
         (s(ctrl, Key::PageDown), Command::NextTab),
         (s(ctrl, Key::PageUp), Command::PrevTab),
         (s(ctrl, Key::B), Command::ToggleSidebar),
+        (s(ctrl_alt, Key::P), Command::MarkdownPreview),
         (s(ctrl_shift, Key::E), Command::ShowExplorer),
         (s(ctrl_shift, Key::F), Command::ShowSearch),
         (s(ctrl_shift, Key::G), Command::ShowGit),
@@ -338,6 +354,7 @@ impl App {
                 let dir = self.workspace.as_ref().map(|w| w.explorer.target_dir(&w.root)).unwrap_or_default();
                 super::explorer::prompt_create(self, dir, command == Command::NewFolder);
             }
+            Command::Teleport => super::teleport::open(self),
             Command::Save => {
                 if let Some(index) = self.active_tab {
                     self.save_tab(index);
@@ -394,14 +411,19 @@ impl App {
             Command::NewTerminal => self.new_terminal(None),
             Command::KillTerminal => {
                 if let Some(terminal) = self.terminals.get_mut(self.active_terminal)
-                    && terminal.is_alive() {
-                        terminal.write(b"\x03");
-                        terminal.kill();
-                    }
+                    && terminal.is_alive()
+                {
+                    terminal.write(b"\x03");
+                    terminal.kill();
+                }
             }
             Command::ShowProblems => {
                 self.panel_open = true;
                 self.panel_tab = PanelTab::Problems;
+            }
+            Command::ShowPulse => {
+                self.panel_open = true;
+                self.panel_tab = PanelTab::Pulse;
             }
             Command::ShowOutput => {
                 self.panel_open = true;
@@ -431,6 +453,14 @@ impl App {
                     doc.view.open_find(Some(selection), command == Command::Replace);
                 }
             }
+            Command::MarkdownPreview => {
+                if let Some(doc) = self.active_doc()
+                    && (doc.lang == crate::syntax::Lang::Markdown || super::media::kind(&doc.path).is_some())
+                {
+                    doc.preview = !doc.preview;
+                    doc.view.focus_request = !doc.preview;
+                }
+            }
             Command::GotoDefinition => self.editor_action(EditorAction::GotoDefinition),
             Command::References => self.editor_action(EditorAction::References),
             Command::CodeActions => self.editor_action(EditorAction::CodeActions),
@@ -453,7 +483,7 @@ impl App {
                         self.lsp.document_opened(doc, workspace);
                     }
                 }
-                self.notify("Языковые серверы перезапускаются", false);
+                self.notify(t!("Restarting language servers"), false);
             }
             Command::GitCommit => super::scm::commit(self, false),
             Command::GitCommitAmend => super::scm::commit(self, true),
@@ -540,12 +570,10 @@ impl App {
                 if let Some(Tab::Doc(doc)) = self.active_tab.and_then(|i| self.tabs.get(i)) {
                     self.last_doc_id = Some(doc.id);
                 }
-                super::agent::open(self);
-                if let Some(index) = self.tabs.iter().position(|t| matches!(t, Tab::Agent(_))) {
-                    super::agent::insert_selection(self, index);
-                }
+                super::agent::insert_selection(self);
             }
             Command::Settings => self.settings_open = !self.settings_open,
+            Command::About => self.about_open = true,
             Command::Quit => self.ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close),
             _ => {}
         }
@@ -575,7 +603,7 @@ impl App {
                 let start = self.workspace.as_ref().map(|w| w.root.clone()).unwrap_or_else(|| crate::host::Host::Local.home());
                 if let Some(path) = rfd::FileDialog::new().set_directory(&start).pick_folder() {
                     let path = path.canonicalize().unwrap_or(path);
-                    self.open_workspace(crate::host::Host::Local, path.to_string_lossy().into_owned());
+                    self.open_workspace(crate::host::Host::Local, crate::platform::host_path(&path));
                 }
             }
         }

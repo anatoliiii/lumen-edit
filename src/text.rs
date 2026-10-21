@@ -207,10 +207,8 @@ impl Buffer {
 
     pub fn set_selections(&mut self, selections: Vec<Selection>) {
         let len = self.len_chars();
-        let mut selections: Vec<Selection> = selections
-            .into_iter()
-            .map(|s| Selection { anchor: s.anchor.min(len), head: s.head.min(len) })
-            .collect();
+        let mut selections: Vec<Selection> =
+            selections.into_iter().map(|s| Selection { anchor: s.anchor.min(len), head: s.head.min(len) }).collect();
         if selections.is_empty() {
             selections.push(Selection::cursor(0));
         }
@@ -239,11 +237,8 @@ impl Buffer {
             {
                 let start = last.start().min(selection.start());
                 let end = last.end().max(selection.end());
-                *last = if last.head >= last.anchor {
-                    Selection { anchor: start, head: end }
-                } else {
-                    Selection { anchor: end, head: start }
-                };
+                *last =
+                    if last.head >= last.anchor { Selection { anchor: start, head: end } } else { Selection { anchor: end, head: start } };
                 continue;
             }
             merged.push(selection);
@@ -295,10 +290,7 @@ impl Buffer {
             (pos as isize + delta) as usize
         };
         let mapped = selections.unwrap_or_else(|| {
-            self.selections
-                .iter()
-                .map(|s| Selection { anchor: map(s.anchor, &edits, true), head: map(s.head, &edits, true) })
-                .collect()
+            self.selections.iter().map(|s| Selection { anchor: map(s.anchor, &edits, true), head: map(s.head, &edits, true) }).collect()
         });
 
         let mut changes = Vec::with_capacity(edits.len());
@@ -426,11 +418,8 @@ impl Buffer {
                     next_ok && prev_ok
                 });
                 if all_ok {
-                    let edits: Vec<_> = self
-                        .selections
-                        .iter()
-                        .map(|s| (s.range(), format!("{open}{}{close}", self.slice(s.range()))))
-                        .collect();
+                    let edits: Vec<_> =
+                        self.selections.iter().map(|s| (s.range(), format!("{open}{}{close}", self.slice(s.range())))).collect();
                     let selections: Vec<Selection> = {
                         let mut sorted: Vec<(usize, Selection)> = self.selections.iter().copied().enumerate().collect();
                         sorted.sort_by_key(|(_, s)| s.start());
@@ -624,11 +613,7 @@ impl Buffer {
             .filter_map(|line| {
                 let text = self.line_text(line);
                 let start = self.rope.line_to_char(line);
-                let remove = if text.starts_with('\t') {
-                    1
-                } else {
-                    text.chars().take(self.tab_size).take_while(|c| *c == ' ').count()
-                };
+                let remove = if text.starts_with('\t') { 1 } else { text.chars().take(self.tab_size).take_while(|c| *c == ' ').count() };
                 (remove > 0).then(|| (start..start + remove, String::new()))
             })
             .collect();
@@ -642,11 +627,7 @@ impl Buffer {
             return;
         }
         let all_commented = lines.iter().all(|&l| self.line_text(l).trim_start().starts_with(token));
-        let min_indent = lines
-            .iter()
-            .map(|&l| self.line_text(l).chars().take_while(|c| c.is_whitespace()).count())
-            .min()
-            .unwrap_or(0);
+        let min_indent = lines.iter().map(|&l| self.line_text(l).chars().take_while(|c| c.is_whitespace()).count()).min().unwrap_or(0);
         let edits = lines
             .iter()
             .map(|&line| {
@@ -864,7 +845,14 @@ impl Buffer {
     pub fn add_cursor_vertical(&mut self, down: bool, tab: usize) {
         let s = self.primary();
         let (line, col) = self.line_col(s.head);
-        let target = if down { line + 1 } else { match line.checked_sub(1) { Some(l) => l, None => return } };
+        let target = if down {
+            line + 1
+        } else {
+            match line.checked_sub(1) {
+                Some(l) => l,
+                None => return,
+            }
+        };
         if target >= self.line_count() {
             return;
         }
@@ -887,10 +875,7 @@ impl Buffer {
         let needle = self.slice(primary.range());
         let text = self.rope.to_string();
         let from_byte = self.rope.char_to_byte(primary.end());
-        let found = text[from_byte..]
-            .find(&needle)
-            .map(|i| i + from_byte)
-            .or_else(|| text.find(&needle));
+        let found = text[from_byte..].find(&needle).map(|i| i + from_byte).or_else(|| text.find(&needle));
         if let Some(byte) = found {
             let start = self.rope.byte_to_char(byte);
             let selection = Selection { anchor: start, head: start + needle.chars().count() };
@@ -1026,5 +1011,39 @@ mod tests {
         buffer.move_lines(true);
         assert_eq!(buffer.text(), "two\none\nthree");
         assert_eq!(buffer.primary().head, 5);
+    }
+}
+
+#[cfg(test)]
+mod delete_tests {
+    use super::*;
+
+    #[test]
+    fn delete_with_selection_everywhere() {
+        let text = "fn main() {\n    let x = 1;\n}\n";
+        let len = text.chars().count();
+        for start in 0..=len {
+            for end in start..=len {
+                for forward in [true, false] {
+                    let mut buffer = Buffer::new(text);
+                    buffer.set_selections(vec![Selection { anchor: start, head: end }]);
+                    if forward {
+                        buffer.delete_forward(false)
+                    } else {
+                        buffer.delete_backward(false)
+                    }
+                    let _ = buffer.take_char_edits();
+                    let _ = buffer.take_byte_edits();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn delete_reversed_selection() {
+        let mut buffer = Buffer::new("hello world");
+        buffer.set_selections(vec![Selection { anchor: 8, head: 2 }]);
+        buffer.delete_forward(false);
+        assert_eq!(buffer.text(), "herld");
     }
 }

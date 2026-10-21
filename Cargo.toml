@@ -6,22 +6,35 @@ resolver = "3"
 version = "0.2.0"
 edition = "2024"
 license = "MIT"
+authors = ["Анатолий Копейкин"]
+repository = "https://github.com/anatoliiii/lumen-edit"
+homepage = "https://github.com/anatoliiii/lumen-edit"
+rust-version = "1.95"
 
 [package]
-name = "codium-rs"
+name = "lumen-edit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Native Rust code editor with SSH remote, LSP, terminal and git"
+readme = "README.md"
+keywords = ["editor", "ide", "ssh", "lsp", "egui"]
+categories = ["development-tools", "text-editors"]
+rust-version.workspace = true
 
 [[bin]]
-name = "codium-rs"
+name = "lumen-edit"
 path = "src/main.rs"
 
 [dependencies]
-codium-shared = { path = "shared" }
+lumen-shared = { path = "shared" }
 eframe = "=0.36.2"
 rfd = "=0.17.2"
+egui_extras = { version = "=0.36.2", features = ["image", "svg_text", "gif", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
 ropey = "1.6"
 tree-sitter = "0.27"
 tree-sitter-highlight = "0.27"
@@ -38,6 +51,10 @@ tree-sitter-javascript = "0.25"
 tree-sitter-typescript = "0.23"
 tree-sitter-json = "0.24"
 tree-sitter-toml-ng = "0.7"
+tree-sitter-yaml = "0.7"
+tree-sitter-make = "1.1"
+tree-sitter-groovy = "0.1"
+tree-sitter-hcl = "1.1"
 vt100 = "0.16"
 portable-pty = "0.9"
 lsp-types = "0.97"
@@ -55,6 +72,11 @@ shell-words = "1"
 png = "0.18"
 pulldown-cmark = { version = "0.13", default-features = false }
 
+
+[target.'cfg(windows)'.dependencies]
+# AF_UNIX sockets (Windows 10 1803+) for the control socket.
+uds_windows = "1"
+
 [profile.release]
 lto = "thin"
 codegen-units = 4
@@ -62,3 +84,7 @@ strip = true
 
 [profile.dev.package."*"]
 opt-level = 2
+
+[dev-dependencies]
+# Reads font charmaps in the glyph test (already used by egui).
+skrifa = "0.44"

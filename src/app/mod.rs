@@ -1,5 +1,6 @@
 //! Application state and the main loop. Workers report back through `Msg`.
 
+mod about;
 mod agent;
 mod commands;
 mod control;
@@ -7,14 +8,18 @@ mod diffview;
 mod document;
 pub mod editor;
 mod explorer;
+mod icons;
 mod lsp_manager;
 mod markdown;
+mod media;
 mod palette;
 mod panel;
+mod pulse;
 mod run;
 mod scm;
 mod search;
 mod status;
+mod teleport;
 mod util;
 mod welcome;
 
@@ -24,9 +29,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use codium_shared::fsops::{DirEntry, SearchMatch};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use eframe::egui::{self, Key, RichText};
+use lumen_shared::fsops::{DirEntry, SearchMatch};
 
 use crate::{
     config::Config,
@@ -40,40 +45,108 @@ use crate::{
 };
 
 pub use commands::Command;
+
+/// Version line for `lumen-edit --version`.
+pub fn about_line() -> String {
+    t!("{n1} — {n2}\nAuthor: {n3}\n{n4}", n1 = about::version_line(), n2 = about::tagline(), n3 = about::author(), n4 = about::REPOSITORY)
+}
 use diffview::{DiffTab, LogTab};
 use document::Document;
 
 pub enum Msg {
-    Connected { target: String, result: Result<Arc<Remote>, String> },
-    DirLoaded { path: String, result: Result<Vec<DirEntry>, String> },
-    FileLoaded { path: String, result: Result<Vec<u8>, String>, goto: Option<(usize, usize)>, mtime: u64 },
-    FileSaved { doc_id: u64, revision: u64, result: Result<u64, String> },
-    FileReloaded { path: String, data: Vec<u8>, mtime: u64 },
+    Connected {
+        target: String,
+        result: Result<Arc<Remote>, String>,
+    },
+    DirLoaded {
+        path: String,
+        result: Result<Vec<DirEntry>, String>,
+    },
+    FileLoaded {
+        path: String,
+        result: Result<Vec<u8>, String>,
+        goto: Option<(usize, usize)>,
+        mtime: u64,
+    },
+    FileSaved {
+        doc_id: u64,
+        revision: u64,
+        result: Result<u64, String>,
+    },
+    FileReloaded {
+        path: String,
+        data: Vec<u8>,
+        mtime: u64,
+    },
     FsChanged(Vec<String>),
     Highlight(syntax::Done),
     Lsp(ServerEvent),
-    LspStarted { name: String, result: Result<Arc<crate::lsp::client::LspClient>, Option<String>> },
-    LspResult { doc_id: u64, version: u64, request: lsp_manager::Request, client: Arc<crate::lsp::client::LspClient>, result: Result<serde_json::Value, String> },
-    Shellcheck { doc_id: u64, version: u64, result: Result<Vec<(usize, usize, usize, usize, crate::lsp::Severity, String)>, String> },
+    LspStarted {
+        name: String,
+        result: Result<Arc<crate::lsp::client::LspClient>, Option<String>>,
+    },
+    LspResult {
+        doc_id: u64,
+        version: u64,
+        request: lsp_manager::Request,
+        client: Arc<crate::lsp::client::LspClient>,
+        result: Result<serde_json::Value, String>,
+    },
+    Shellcheck {
+        doc_id: u64,
+        version: u64,
+        result: Result<Vec<(usize, usize, usize, usize, crate::lsp::Severity, String)>, String>,
+    },
     GitRepo(Option<String>),
     GitStatus(Result<git::Status, String>),
-    GitRefs { branches: Vec<git::Branch>, stashes: Vec<git::StashEntry>, remotes: Vec<git::Remote> },
-    GitOpDone { label: String, result: Result<String, String> },
-    GitDiff { key: String, result: Result<String, String> },
+    GitRefs {
+        branches: Vec<git::Branch>,
+        stashes: Vec<git::StashEntry>,
+        remotes: Vec<git::Remote>,
+    },
+    GitOpDone {
+        label: String,
+        result: Result<String, String>,
+    },
+    GitDiff {
+        key: String,
+        result: Result<String, String>,
+    },
     GitLog(Result<Vec<git::LogEntry>, String>),
-    GitHead { path: String, content: Option<String> },
-    GitBlame { doc_id: u64, version: u64, result: Result<Vec<git::BlameLine>, String> },
+    GitHead {
+        path: String,
+        content: Option<String>,
+    },
+    GitBlame {
+        doc_id: u64,
+        version: u64,
+        result: Result<Vec<git::BlameLine>, String>,
+    },
     Tasks(Vec<Task>, Option<String>),
     FileIndex(Result<Vec<String>, String>),
-    SearchResults { generation: u64, result: Result<(Vec<SearchMatch>, bool), String> },
+    SearchResults {
+        generation: u64,
+        result: Result<(Vec<SearchMatch>, bool), String>,
+    },
     WorkspaceEditDone(Result<usize, String>),
-    FsOpDone { reload: Vec<String>, open: Option<String>, renamed: Option<(String, String)>, error: Option<String> },
-    RemoteDir { path: String, result: Result<Vec<DirEntry>, String> },
+    FsOpDone {
+        reload: Vec<String>,
+        open: Option<String>,
+        renamed: Option<(String, String)>,
+        error: Option<String>,
+    },
+    RemoteDir {
+        path: String,
+        result: Result<Vec<DirEntry>, String>,
+    },
     Notice(String, bool),
     /// Request from the CLI / MCP control socket.
     Control(crate::control::ControlRequest),
     /// A record from a pi agent process.
-    Agent { id: u64, event: serde_json::Value },
+    Agent {
+        id: u64,
+        event: serde_json::Value,
+    },
     /// Continuation from a worker thread.
     Run(Box<dyn FnOnce(&mut App) + Send>),
 }
@@ -108,7 +181,7 @@ pub struct Workspace {
     pub file_index: Option<Vec<String>>,
     pub file_index_loading: bool,
     pub search: search::SearchState,
-    _watcher: Option<notify::RecommendedWatcher>,
+    _watcher: Option<lumen_shared::watch::TreeWatcher>,
 }
 
 impl Workspace {
@@ -130,6 +203,8 @@ pub enum Tab {
     Diff(DiffTab),
     Log(LogTab),
     Agent(Box<agent::AgentTab>),
+    Teleport(Box<teleport::TeleportTab>),
+    Image(Box<media::ImageTab>),
 }
 
 impl Tab {
@@ -137,8 +212,18 @@ impl Tab {
         match self {
             Tab::Doc(doc) => doc.name().to_string(),
             Tab::Diff(diff) => diff.title.clone(),
-            Tab::Log(_) => "История git".into(),
+            Tab::Log(_) => t!("Git history").into(),
             Tab::Agent(agent) => agent.title.clone(),
+            Tab::Teleport(_) => t!("⇄ Teleport").into(),
+            Tab::Image(image) => host::file_name(&image.path).to_string(),
+        }
+    }
+    /// The file behind the tab, if any.
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            Tab::Doc(doc) => Some(&doc.path),
+            Tab::Image(image) => Some(&image.path),
+            _ => None,
         }
     }
     fn dirty(&self) -> bool {
@@ -160,6 +245,7 @@ pub enum PanelTab {
     Problems,
     Output,
     References,
+    Pulse,
 }
 
 pub enum Dialog {
@@ -211,13 +297,23 @@ pub struct App {
     doc_waiters: Vec<(String, control::DocAction)>,
     pending_screenshot: Option<(String, crate::control::Reply)>,
     pub settings_open: bool,
+    pub about_open: bool,
+    pub pulse: pulse::Pulse,
+    /// SSH hosts connected in this session (for Teleport), besides the project host.
+    pub known_hosts: Vec<Host>,
+    /// The agent docked beside the code (when not in a tab).
+    pub agent_dock: Option<Box<agent::AgentTab>>,
+    pub agent_dock_open: bool,
+    /// Images referenced from Markdown previews, by absolute path.
+    pub image_cache: std::collections::HashMap<String, media::ImageEntry>,
     /// This editor's control socket, passed to agents.
     pub control_socket: Option<std::path::PathBuf>,
     /// Last focused document (for "send selection" from the agent tab).
     pub last_doc_id: Option<u64>,
     debug_typing: Option<String>,
     debug_goto: Option<(usize, usize)>,
-    debug_clicks: Vec<egui::Pos2>,
+    debug_clicks: Vec<(egui::Pos2, egui::PointerButton)>,
+    debug_key: Option<egui::Key>,
     /// SSH master connections (kept alive while the editor runs).
     pub ssh_masters: Vec<Terminal>,
 }
@@ -227,6 +323,7 @@ impl App {
         let ctx = cc.egui_ctx.clone();
         let config = Config::load();
         install_fonts(&ctx, &config);
+        egui_extras::install_image_loaders(&ctx);
         theme::apply(&ctx, config.ui_font_size);
         let (tx, rx) = unbounded();
         let bus = Bus { tx, ctx: ctx.clone() };
@@ -268,21 +365,28 @@ impl App {
             doc_waiters: Vec::new(),
             pending_screenshot: None,
             settings_open: false,
+            about_open: false,
+            pulse: pulse::Pulse::default(),
+            known_hosts: Vec::new(),
+            agent_dock: None,
+            agent_dock_open: false,
+            image_cache: std::collections::HashMap::new(),
             control_socket: None,
             last_doc_id: None,
             debug_typing: None,
             debug_goto: None,
             debug_clicks: Vec::new(),
+            debug_key: None,
             ssh_masters: Vec::new(),
         };
 
         let control_bus = app.bus.clone();
         app.control_socket = crate::control::serve(move |request| control_bus.send(Msg::Control(request)));
         if app.control_socket.is_none() {
-            eprintln!("codium-rs: не удалось открыть управляющий сокет");
+            eprintln!("{}", t!("lumen-edit: could not open the control socket"));
         }
 
-        // `codium-rs [path]` or `codium-rs ssh://host/path`.
+        // `lumen-edit [path]` or `lumen-edit ssh://host/path`.
         if let Some(arg) = crate::gui_args().first().cloned() {
             if let Some(rest) = arg.strip_prefix("ssh://") {
                 let (target, path) = match rest.split_once('/') {
@@ -293,21 +397,21 @@ impl App {
             } else {
                 let path = std::fs::canonicalize(&arg).unwrap_or_else(|_| arg.clone().into());
                 if path.is_dir() {
-                    app.open_workspace(Host::Local, path.to_string_lossy().into_owned());
+                    app.open_workspace(Host::Local, crate::platform::host_path(&path));
                     if let Some(file) = crate::gui_args().get(1)
                         && let Ok(file) = std::fs::canonicalize(file)
                     {
-                        app.open_file(file.to_string_lossy().into_owned(), None);
+                        app.open_file(crate::platform::host_path(&file), None);
                     }
                 } else if path.is_file() {
-                    let parent = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into());
+                    let parent = path.parent().map(crate::platform::host_path).unwrap_or_else(|| "/".into());
                     app.open_workspace(Host::Local, parent);
-                    app.open_file(path.to_string_lossy().into_owned(), None);
+                    app.open_file(crate::platform::host_path(&path), None);
                 }
             }
         }
         // Debug aid for screenshots: open a view at start-up.
-        if let Ok(view) = std::env::var("CODIUM_DEBUG_VIEW") {
+        if let Ok(view) = std::env::var("LUMEN_DEBUG_VIEW") {
             for part in view.split(',') {
                 match part.split_once('=').unwrap_or((part, "")) {
                     ("git", _) => app.run_command(Command::ShowGit),
@@ -317,6 +421,8 @@ impl App {
                     ("commands", _) => app.run_command(Command::CommandPalette),
                     ("log", _) => app.open_log(true),
                     ("settings", _) => app.settings_open = true,
+                    ("teleport", _) => app.run_command(Command::Teleport),
+                    ("agent", _) => app.run_command(Command::Agent),
                     ("ssh", _) => app.run_command(Command::ConnectSsh),
                     ("search", query) => {
                         app.run_command(Command::ShowSearch);
@@ -326,9 +432,11 @@ impl App {
                         }
                     }
                     ("type", text) => app.debug_typing = Some(text.to_string()),
-                    ("click", at) => {
+                    ("key", name) => app.debug_key = egui::Key::from_name(name),
+                    (kind @ ("click" | "rclick"), at) => {
                         let mut parts = at.split(':').map(|n| n.parse::<f32>().unwrap_or(0.0));
-                        app.debug_clicks.push(egui::pos2(parts.next().unwrap_or(0.0), parts.next().unwrap_or(0.0)));
+                        let button = if kind == "rclick" { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
+                        app.debug_clicks.push((egui::pos2(parts.next().unwrap_or(0.0), parts.next().unwrap_or(0.0)), button));
                     }
                     ("goto", at) => {
                         let mut parts = at.split(':').map(|n| n.parse::<usize>().unwrap_or(1));
@@ -363,15 +471,16 @@ impl App {
 
     pub fn open_workspace(&mut self, host: Host, root: String) {
         if self.tabs.iter().any(Tab::dirty) {
-            self.dialog = Some(Dialog::CloseWorkspace {
-                then: Box::new(move |app: &mut App| app.open_workspace_now(host, root)),
-            });
+            self.dialog = Some(Dialog::CloseWorkspace { then: Box::new(move |app: &mut App| app.open_workspace_now(host, root)) });
             return;
         }
         self.open_workspace_now(host, root);
     }
 
     fn open_workspace_now(&mut self, host: Host, root: String) {
+        // The agent is bound to its project (cwd, local or remote tools), so a
+        // new project gets a new agent.
+        let reopen_agent = self.agent_dock.is_some() && self.agent_dock_open;
         self.close_workspace_now();
         let root = if root.len() > 1 { root.trim_end_matches('/').to_string() } else { root };
         self.config.add_recent(&host.key(), &root);
@@ -417,6 +526,9 @@ impl App {
         for path in session {
             self.open_file(path, None);
         }
+        if reopen_agent {
+            agent::open(self);
+        }
     }
 
     pub fn close_workspace(&mut self) {
@@ -432,6 +544,8 @@ impl App {
         self.lsp.shutdown_all();
         self.tabs.clear();
         self.active_tab = None;
+        self.agent_dock = None;
+        self.agent_dock_open = false;
         self.terminals.clear();
         self.references.clear();
         self.loading_files.clear();
@@ -477,6 +591,10 @@ impl App {
     }
 
     pub fn open_file(&mut self, path: String, goto: Option<(usize, usize)>) {
+        if let Some(index) = self.tabs.iter().position(|t| matches!(t, Tab::Image(i) if i.path == path)) {
+            self.activate_tab(index);
+            return;
+        }
         if let Some(index) = self.tabs.iter().position(|t| matches!(t, Tab::Doc(d) if d.path == path)) {
             self.activate_tab(index);
             if let (Some(goto), Tab::Doc(doc)) = (goto, &mut self.tabs[index]) {
@@ -500,13 +618,18 @@ impl App {
         let data = match result {
             Ok(data) => data,
             Err(error) => {
-                self.notify(format!("Не удалось открыть {}: {error}", host::file_name(&path)), true);
+                self.notify(t!("Could not open {n1}: {error}", n1 = host::file_name(&path), error = error), true);
                 self.run_doc_waiters(&path, Err(error));
                 return;
             }
         };
+        if media::kind(&path) == Some(media::Media::Raster) {
+            media::open_image_tab(self, path.clone(), data);
+            self.run_doc_waiters(&path, Err(t!("this is an image").into()));
+            return;
+        }
         if data.iter().take(8000).any(|b| *b == 0) {
-            self.notify(format!("{} — двоичный файл, не открываю", host::file_name(&path)), true);
+            self.notify(t!("{n1} is a binary file, not opening it", n1 = host::file_name(&path)), true);
             return;
         }
         let text = String::from_utf8(data).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
@@ -654,11 +777,13 @@ impl App {
                 self.run_shellcheck(doc_id);
                 self.request_blame(doc_id);
                 self.git_refresh();
-                if path.ends_with(crate::tasks::TASKS_FILE) || matches!(host::file_name(&path), "Cargo.toml" | "Makefile" | "package.json" | "go.mod") {
+                if path.ends_with(crate::tasks::TASKS_FILE)
+                    || matches!(host::file_name(&path), "Cargo.toml" | "Makefile" | "package.json" | "go.mod")
+                {
                     self.refresh_tasks();
                 }
             }
-            Err(error) => self.notify(format!("Не удалось сохранить: {error}"), true),
+            Err(error) => self.notify(t!("Could not save: {error}", error = error), true),
         }
     }
 
@@ -670,7 +795,8 @@ impl App {
             return;
         }
         doc.highlight_requested = doc.buffer.version;
-        let job = syntax::Job { doc_id, version: doc.buffer.version, lang: doc.lang, text: doc.buffer.rope.to_string() };
+        let job =
+            syntax::Job { doc_id, version: doc.buffer.version, lang: doc.lang, text: doc.buffer.rope.to_string(), path: doc.path.clone() };
         let _ = self.highlight_tx.send(job);
     }
 
@@ -722,7 +848,11 @@ impl App {
         let cwd = host::parent(&doc.path);
         let _ = root;
         self.bus.spawn(move || {
-            let result = if host.which("shellcheck") { crate::lsp::shellcheck::run(&host, &cwd, &text) } else { Err("shellcheck не найден".into()) };
+            let result = if host.which("shellcheck") {
+                crate::lsp::shellcheck::run(&host, &cwd, &text)
+            } else {
+                Err(t!("shellcheck not found").into())
+            };
             Msg::Shellcheck { doc_id, version, result }
         });
     }
@@ -829,7 +959,8 @@ impl App {
             return;
         }
         let short: String = hash.chars().take(8).collect();
-        let tab = DiffTab::new(format!("{short} {}", util::truncate_middle(&subject, 30)), key.clone(), None, diffview::DiffMode::Commit(hash));
+        let tab =
+            DiffTab::new(format!("{short} {}", util::truncate_middle(&subject, 30)), key.clone(), None, diffview::DiffMode::Commit(hash));
         self.tabs.push(Tab::Diff(tab));
         self.active_tab = Some(self.tabs.len() - 1);
         self.reload_diff(&key);
@@ -869,7 +1000,7 @@ impl App {
         match task {
             Some(task) => {
                 let cwd = match &task.cwd {
-                    Some(dir) if dir.starts_with('/') => dir.clone(),
+                    Some(dir) if host::is_absolute(dir) => dir.clone(),
                     Some(dir) => host::join(&root, dir),
                     None => root.clone(),
                 };
@@ -901,7 +1032,7 @@ impl App {
                 self.panel_tab = PanelTab::Terminal;
                 self.terminal_focus = true;
             }
-            Err(error) => self.notify(format!("Не удалось запустить терминал: {error}"), true),
+            Err(error) => self.notify(t!("Could not start the terminal: {error}", error = error), true),
         }
     }
 
@@ -960,7 +1091,9 @@ impl App {
             }
             Msg::Lsp(event) => lsp_manager::handle_event(self, event),
             Msg::LspStarted { name, result } => lsp_manager::on_started(self, name, result),
-            Msg::LspResult { doc_id, version, request, client, result } => lsp_manager::on_result(self, doc_id, version, request, client, result),
+            Msg::LspResult { doc_id, version, request, client, result } => {
+                lsp_manager::on_result(self, doc_id, version, request, client, result)
+            }
             Msg::Shellcheck { doc_id, version, result } => {
                 if let Some(doc) = self.doc_mut(doc_id)
                     && let Ok(raw) = result
@@ -976,7 +1109,8 @@ impl App {
                     workspace.git.checked = true;
                 }
                 self.git_refresh();
-                let paths: Vec<String> = self.tabs.iter().filter_map(|t| if let Tab::Doc(d) = t { Some(d.path.clone()) } else { None }).collect();
+                let paths: Vec<String> =
+                    self.tabs.iter().filter_map(|t| if let Tab::Doc(d) = t { Some(d.path.clone()) } else { None }).collect();
                 for path in paths {
                     self.load_git_base(&path);
                 }
@@ -1018,18 +1152,28 @@ impl App {
                     Ok(output) => {
                         let summary = output.lines().last().unwrap_or("").to_string();
                         self.output.push((format!("git {label}: {output}"), false));
-                        self.toasts.push(Toast { text: if summary.is_empty() { format!("git {label}: готово") } else { format!("git {label}: {summary}") }, error: false, at: Instant::now() });
+                        self.toasts.push(Toast {
+                            text: if summary.is_empty() {
+                                t!("git {label}: done", label = label)
+                            } else {
+                                format!("git {label}: {summary}")
+                            },
+                            error: false,
+                            at: Instant::now(),
+                        });
                     }
                     Err(error) => self.notify(format!("git {label}: {error}"), true),
                 }
                 self.git_refresh();
                 // The working tree may have changed (checkout, pull, stash).
                 self.reload_unmodified_docs();
-                let paths: Vec<String> = self.tabs.iter().filter_map(|t| if let Tab::Doc(d) = t { Some(d.path.clone()) } else { None }).collect();
+                let paths: Vec<String> =
+                    self.tabs.iter().filter_map(|t| if let Tab::Doc(d) = t { Some(d.path.clone()) } else { None }).collect();
                 for path in paths {
                     self.load_git_base(&path);
                 }
-                let keys: Vec<String> = self.tabs.iter().filter_map(|t| if let Tab::Diff(d) = t { Some(d.key.clone()) } else { None }).collect();
+                let keys: Vec<String> =
+                    self.tabs.iter().filter_map(|t| if let Tab::Diff(d) = t { Some(d.key.clone()) } else { None }).collect();
                 for key in keys {
                     self.reload_diff(&key);
                 }
@@ -1082,7 +1226,7 @@ impl App {
                         Ok(files) => workspace.file_index = Some(files),
                         Err(error) => {
                             workspace.file_index = Some(Vec::new());
-                            self.notify(format!("Не удалось получить список файлов: {error}"), true);
+                            self.notify(t!("Could not list files: {error}", error = error), true);
                         }
                     }
                 }
@@ -1093,7 +1237,7 @@ impl App {
                 }
             }
             Msg::WorkspaceEditDone(result) => match result {
-                Ok(count) if count > 0 => self.notify(format!("Изменено файлов на диске: {count}"), false),
+                Ok(count) if count > 0 => self.notify(t!("Files changed on disk: {count}", count = count), false),
                 Ok(_) => {}
                 Err(error) => self.notify(error, true),
             },
@@ -1136,6 +1280,73 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Loads image files for Markdown previews from the project host.
+    pub fn request_images(&mut self, paths: Vec<String>) {
+        let Some(host) = self.host() else { return };
+        for path in paths {
+            if self.image_cache.contains_key(&path) {
+                continue;
+            }
+            self.image_cache.insert(path.clone(), media::ImageEntry::Loading);
+            let host = host.clone();
+            self.bus.spawn(move || {
+                let entry = match host.read_file(&path) {
+                    Ok(data) => {
+                        let uri = media::bytes_uri(&path, &data);
+                        media::ImageEntry::Ready(data.into(), uri)
+                    }
+                    Err(error) => media::ImageEntry::Failed(error),
+                };
+                Msg::Run(Box::new(move |app: &mut App| {
+                    app.image_cache.insert(path, entry);
+                }))
+            });
+        }
+    }
+
+    /// Images changed on disk: open viewers reload, previews load again.
+    fn reload_changed_images(&mut self, paths: &BTreeSet<String>) {
+        for path in paths {
+            if let Some(media::ImageEntry::Ready(_, uri)) = self.image_cache.remove(path) {
+                self.ctx.forget_image(&uri);
+            }
+        }
+        let Some(host) = self.host() else { return };
+        let viewers: Vec<String> = self
+            .tabs
+            .iter()
+            .filter_map(|t| if let Tab::Image(i) = t { paths.contains(&i.path).then(|| i.path.clone()) } else { None })
+            .collect();
+        for path in viewers {
+            let host = host.clone();
+            self.bus.spawn(move || {
+                let data = host.read_file(&path);
+                Msg::Run(Box::new(move |app: &mut App| {
+                    let Ok(data) = data else { return };
+                    let ctx = app.ctx.clone();
+                    for tab in &mut app.tabs {
+                        if let Tab::Image(image) = tab
+                            && image.path == path
+                        {
+                            image.replace(&ctx, data.clone());
+                        }
+                    }
+                }))
+            });
+        }
+    }
+
+    /// Reloads every expanded directory of the file tree.
+    pub fn reload_explorer(&mut self) {
+        let Some(workspace) = &mut self.workspace else { return };
+        let dirs = workspace.explorer.loaded_dirs();
+        workspace.file_index = None;
+        for dir in dirs {
+            self.load_dir(dir);
+        }
+        self.git_refresh();
     }
 
     fn reload_unmodified_docs(&mut self) {
@@ -1198,6 +1409,7 @@ impl App {
         if open.iter().any(|p| paths.contains(p)) {
             self.reload_unmodified_docs();
         }
+        self.reload_changed_images(&paths);
         if git_changed {
             let open_paths = open.clone();
             for path in open_paths {
@@ -1237,7 +1449,10 @@ impl App {
                     highlight.push(doc.id);
                 }
                 doc.refresh_line_changes();
-                if doc.lang == syntax::Lang::Bash && doc.shellcheck_version != doc.buffer.version && doc.last_edit.elapsed() > Duration::from_millis(700) {
+                if doc.lang == syntax::Lang::Bash
+                    && doc.shellcheck_version != doc.buffer.version
+                    && doc.last_edit.elapsed() > Duration::from_millis(700)
+                {
                     shellcheck.push(doc.id);
                 }
             }
@@ -1256,6 +1471,7 @@ impl App {
             self.ctx.request_repaint_after(Duration::from_millis(720));
         }
         self.process_fs_changes();
+        pulse::tick(self);
 
         // Auto save after a pause.
         if self.config.auto_save {
@@ -1263,7 +1479,9 @@ impl App {
                 .tabs
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| matches!(t, Tab::Doc(d) if d.is_dirty() && !d.saving && d.last_edit.elapsed() > Duration::from_millis(1200)))
+                .filter(
+                    |(_, t)| matches!(t, Tab::Doc(d) if d.is_dirty() && !d.saving && d.last_edit.elapsed() > Duration::from_millis(1200)),
+                )
                 .map(|(i, _)| i)
                 .collect();
             for index in due {
@@ -1287,10 +1505,10 @@ impl App {
         let title = match (&self.workspace, self.active_tab.and_then(|i| self.tabs.get(i))) {
             (Some(workspace), Some(tab)) => {
                 let remote = if workspace.host.is_remote() { format!(" [{}]", workspace.host.label()) } else { String::new() };
-                format!("{}{} — {}{remote} — Codium RS", if tab.dirty() { "● " } else { "" }, tab.title(), workspace.name())
+                format!("{}{} — {}{remote} — Lumen Edit", if tab.dirty() { "● " } else { "" }, tab.title(), workspace.name())
             }
-            (Some(workspace), None) => format!("{} — Codium RS", workspace.name()),
-            _ => "Codium RS".into(),
+            (Some(workspace), None) => format!("{} — Lumen Edit", workspace.name()),
+            _ => "Lumen Edit".into(),
         };
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -1329,17 +1547,17 @@ impl App {
             Dialog::CloseTab { index } => {
                 let name = self.tabs.get(index).map(|t| t.title()).unwrap_or_default();
                 let mut choice = None;
-                modal(ctx, "Несохранённые изменения", &mut |ui| {
-                    ui.label(format!("Сохранить изменения в «{name}»?"));
+                modal(ctx, t!("Unsaved changes"), &mut |ui| {
+                    ui.label(t!("Save changes to “{name}”?", name = name));
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Сохранить").clicked() {
+                        if ui.button(t!("Save")).clicked() {
                             choice = Some(0);
                         }
-                        if ui.button("Не сохранять").clicked() {
+                        if ui.button(t!("Don't save")).clicked() {
                             choice = Some(1);
                         }
-                        if ui.button("Отмена").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button(t!("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             choice = Some(2);
                         }
                     });
@@ -1360,17 +1578,17 @@ impl App {
             }
             Dialog::CloseWorkspace { then } => {
                 let mut choice = None;
-                modal(ctx, "Несохранённые изменения", &mut |ui| {
-                    ui.label("Есть несохранённые файлы. Сохранить их?");
+                modal(ctx, t!("Unsaved changes"), &mut |ui| {
+                    ui.label(t!("There are unsaved files. Save them?"));
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Сохранить все").clicked() {
+                        if ui.button(t!("Save All")).clicked() {
                             choice = Some(0);
                         }
-                        if ui.button("Не сохранять").clicked() {
+                        if ui.button(t!("Don't save")).clicked() {
                             choice = Some(1);
                         }
-                        if ui.button("Отмена").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button(t!("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             choice = Some(2);
                         }
                     });
@@ -1396,17 +1614,17 @@ impl App {
             }
             Dialog::Quit => {
                 let mut choice = None;
-                modal(ctx, "Выход", &mut |ui| {
-                    ui.label("Есть несохранённые файлы.");
+                modal(ctx, t!("Quit"), &mut |ui| {
+                    ui.label(t!("There are unsaved files."));
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Сохранить и выйти").clicked() {
+                        if ui.button(t!("Save and quit")).clicked() {
                             choice = Some(0);
                         }
-                        if ui.button("Выйти без сохранения").clicked() {
+                        if ui.button(t!("Quit without saving")).clicked() {
                             choice = Some(1);
                         }
-                        if ui.button("Отмена").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button(t!("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             choice = Some(2);
                         }
                     });
@@ -1428,10 +1646,10 @@ impl App {
                     ui.label(&message);
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Да").color(theme::ERROR)).clicked() {
+                        if ui.button(RichText::new(t!("Yes")).color(theme::ERROR)).clicked() {
                             choice = Some(true);
                         }
-                        if ui.button("Отмена").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button(t!("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             choice = Some(false);
                         }
                     });
@@ -1458,7 +1676,7 @@ impl App {
                         if ui.button("OK").clicked() {
                             choice = Some(true);
                         }
-                        if ui.button("Отмена").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        if ui.button(t!("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
                             choice = Some(false);
                         }
                     });
@@ -1487,7 +1705,7 @@ impl App {
             {
                 match host.write_file(&doc.path, doc.buffer.text().as_bytes()) {
                     Ok(()) => doc.buffer.mark_saved(),
-                    Err(error) => eprintln!("codium-rs: save {}: {error}", doc.path),
+                    Err(error) => eprintln!("lumen-edit: save {}: {error}", doc.path),
                 }
             }
         }
@@ -1531,77 +1749,29 @@ fn goto_position(doc: &mut Document, (line, col): (usize, usize)) {
     doc.view.focus_request = true;
 }
 
-fn local_watcher(root: &str, bus: Bus) -> Option<notify::RecommendedWatcher> {
-    use notify::Watcher;
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if let Ok(event) = event {
-            if matches!(event.kind, notify::EventKind::Access(_)) {
-                return;
-            }
-            let paths: Vec<String> = event
-                .paths
-                .iter()
-                .map(|p| p.to_string_lossy().into_owned())
-                .filter(|p| !p.contains("/target/") && !p.contains("/.git/objects") && !p.contains("/node_modules/"))
-                .collect();
-            if !paths.is_empty() {
-                bus.send(Msg::FsChanged(paths));
-            }
-        }
-    })
-    .ok()?;
-    watcher.watch(std::path::Path::new(root), notify::RecursiveMode::Recursive).ok()?;
-    Some(watcher)
+fn local_watcher(root: &str, bus: Bus) -> Option<lumen_shared::watch::TreeWatcher> {
+    lumen_shared::watch::watch_tree(root, move |paths| bus.send(Msg::FsChanged(paths))).ok()
 }
 
 fn install_fonts(ctx: &egui::Context, config: &Config) {
     let mut fonts = egui::FontDefinitions::default();
-    let ui_candidates = [
-        "/usr/share/fonts/inter/Inter.ttc",
-        "/usr/share/fonts/TTF/Inter-Regular.ttf",
-        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/cantarell/Cantarell-VF.otf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ];
-    if let Some(data) = ui_candidates.iter().find_map(|p| std::fs::read(p).ok()) {
+    let candidates = crate::platform::FONTS;
+    if let Some(data) = candidates.ui.iter().find_map(|p| std::fs::read(p).ok()) {
         fonts.font_data.insert("ui".into(), egui::FontData::from_owned(data).into());
         fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "ui".into());
     }
-    let mono_candidates: Vec<String> = config
-        .editor_font
-        .iter()
-        .cloned()
-        .chain(
-            [
-                "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
-                "/usr/share/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf",
-                "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
-            ]
-            .iter()
-            .map(|s| s.to_string()),
-        )
-        .collect();
+    let mono_candidates: Vec<String> = config.editor_font.iter().cloned().chain(candidates.mono.iter().map(|s| s.to_string())).collect();
     if let Some(data) = mono_candidates.iter().find_map(|p| std::fs::read(p).ok()) {
         fonts.font_data.insert("code".into(), egui::FontData::from_owned(data).into());
         fonts.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "code".into());
     }
     // Powerline / Nerd Font glyphs used by shell prompts.
-    let nerd = ["/usr/share/fonts/TTF/SymbolsNerdFont-Regular.ttf", "/usr/share/fonts/TTF/SymbolsNerdFontMono-Regular.ttf"];
-    if let Some(data) = nerd.iter().find_map(|p| std::fs::read(p).ok()) {
+    if let Some(data) = candidates.nerd.iter().find_map(|p| std::fs::read(p).ok()) {
         fonts.font_data.insert("nerd".into(), egui::FontData::from_owned(data).into());
         fonts.families.entry(egui::FontFamily::Monospace).or_default().push("nerd".into());
     }
     // Symbols for icons that the UI font may lack.
-    let symbols = [
-        "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf",
-        "/usr/share/fonts/noto/NotoSansSymbols-Regular.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/noto/NotoSansMath-Regular.ttf",
-    ];
-    for (i, path) in symbols.iter().enumerate() {
+    for (i, path) in candidates.symbols.iter().enumerate() {
         if let Ok(data) = std::fs::read(path) {
             let name = format!("symbols{i}");
             fonts.font_data.insert(name.clone(), egui::FontData::from_owned(data).into());
@@ -1634,7 +1804,7 @@ impl eframe::App for App {
             goto_position(doc, at);
             self.debug_goto = None;
         }
-        let delay: u64 = std::env::var("CODIUM_DEBUG_TYPE_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(120);
+        let delay: u64 = std::env::var("LUMEN_DEBUG_TYPE_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(120);
         if let Some(text) = self.debug_typing.clone()
             && ctx.cumulative_frame_nr() > delay
             && self.active_doc().is_some()
@@ -1648,6 +1818,15 @@ impl eframe::App for App {
                     i.events.push(egui::Event::Text(c.replace("\\n", "\n")));
                 }
             });
+        }
+        // Files dropped from the desktop go to the selected project folder.
+        let dropped: Vec<std::path::PathBuf> =
+            ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| !p.as_os_str().is_empty()).collect());
+        if !dropped.is_empty()
+            && let Some(workspace) = &self.workspace
+        {
+            let dir = workspace.explorer.target_dir(&workspace.root);
+            teleport::upload_dropped(self, dropped, dir);
         }
         status::menu_bar(ui, self);
         status::status_bar(ui, self);
@@ -1666,6 +1845,15 @@ impl eframe::App for App {
                         SideView::Run => run::show(ui, self),
                     });
             }
+            if self.agent_dock.is_some() && self.agent_dock_open {
+                let width = (ctx.content_rect().width() * 0.38).clamp(340.0, 620.0);
+                egui::Panel::right("agent_dock")
+                    .resizable(true)
+                    .default_size(width)
+                    .size_range(320.0..=1000.0)
+                    .frame(egui::Frame::new().fill(theme::EDITOR_BACKGROUND).stroke(egui::Stroke::new(1.0, theme::BORDER)))
+                    .show(ui, |ui| agent::show(ui, self, agent::Loc::Dock));
+            }
             if self.panel_open {
                 egui::Panel::bottom("panel")
                     .resizable(true)
@@ -1676,15 +1864,13 @@ impl eframe::App for App {
             }
         }
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(theme::EDITOR_BACKGROUND))
-            .show(ui, |ui| {
-                if self.workspace.is_none() {
-                    welcome::show(ui, self);
-                } else {
-                    panel::editor_area(ui, self);
-                }
-            });
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::EDITOR_BACKGROUND)).show(ui, |ui| {
+            if self.workspace.is_none() {
+                welcome::show(ui, self);
+            } else {
+                panel::editor_area(ui, self);
+            }
+        });
 
         if self.connect.is_some() {
             welcome::connect_window(&ctx, self);
@@ -1695,6 +1881,9 @@ impl eframe::App for App {
         if self.settings_open {
             status::settings_window(&ctx, self);
         }
+        if self.about_open {
+            about::window(&ctx, self);
+        }
         self.show_dialogs(&ctx);
         self.show_toasts(&ctx);
         self.per_frame_upkeep();
@@ -1702,24 +1891,43 @@ impl eframe::App for App {
         if self.pending_screenshot.is_some() {
             control::take_screenshot(self, &ctx);
         }
-        if let Ok(path) = std::env::var("CODIUM_SCREENSHOT") {
+        if let Ok(path) = std::env::var("LUMEN_SCREENSHOT") {
             self.allow_close = true;
             screenshot_hook(&ctx, &path);
         }
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        // Debug aid: synthetic clicks (CODIUM_DEBUG_VIEW=click=x:y), one per 60 frames.
+        // Keep frames coming while synthetic input waits for its turn.
+        if self.debug_key.is_some() || !self.debug_clicks.is_empty() {
+            ctx.request_repaint();
+        }
+        // Debug aid: one synthetic key press once the delay passed.
+        if let Some(key) = self.debug_key
+            && ctx.cumulative_frame_nr() > std::env::var("LUMEN_DEBUG_TYPE_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(120)
+        {
+            self.debug_key = None;
+            for pressed in [true, false] {
+                raw_input.events.push(egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed,
+                    repeat: false,
+                    modifiers: Default::default(),
+                });
+            }
+        }
+        // Debug aid: synthetic clicks (LUMEN_DEBUG_VIEW=click=x:y), one per 60 frames.
         if self.debug_clicks.is_empty() {
             return;
         }
-        let delay: u64 = std::env::var("CODIUM_DEBUG_TYPE_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(120);
+        let delay: u64 = std::env::var("LUMEN_DEBUG_TYPE_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(120);
         let frame = ctx.cumulative_frame_nr();
         if frame <= delay {
             return;
         }
-        let pos = self.debug_clicks[0];
-        let pressed = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let (pos, button) = self.debug_clicks[0];
+        let pressed = |pressed| egui::Event::PointerButton { pos, button, pressed, modifiers: Default::default() };
         match (frame - delay) % 60 {
             0 => raw_input.events.push(egui::Event::PointerMoved(pos)),
             2 => raw_input.events.push(pressed(true)),
@@ -1739,16 +1947,15 @@ impl eframe::App for App {
     }
 }
 
-/// Debug aid: `CODIUM_SCREENSHOT=out.png` saves a frame after start-up and exits.
+/// Debug aid: `LUMEN_SCREENSHOT=out.png` saves a frame after start-up and exits.
 fn screenshot_hook(ctx: &egui::Context, path: &str) {
     let frame = ctx.cumulative_frame_nr();
-    let delay: u64 = std::env::var("CODIUM_SCREENSHOT_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(40);
+    let delay: u64 = std::env::var("LUMEN_SCREENSHOT_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(40);
     if frame == delay {
         ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
     }
-    let shot = ctx.input(|i| {
-        i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None })
-    });
+    let shot =
+        ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));
     if let Some(image) = shot {
         let [w, h] = image.size;
         let mut out = Vec::with_capacity(w * h * 3);
@@ -1801,6 +2008,17 @@ mod glyph_tests {
             });
         });
         output.textures_delta.clear();
+        // egui reports a glyph as missing when it lives in the font that also
+        // serves the replacement glyph; ask the font files themselves.
+        let candidates = crate::platform::FONTS;
+        let files: Vec<Vec<u8>> =
+            candidates.ui.iter().chain(candidates.symbols).chain(candidates.nerd).filter_map(|p| std::fs::read(p).ok()).collect();
+        missing.retain(|c| {
+            !files.iter().any(|data| {
+                use skrifa::MetadataProvider;
+                skrifa::FontRef::from_index(data, 0).is_ok_and(|font| font.charmap().map(c).is_some())
+            })
+        });
         assert!(missing.is_empty(), "glyphs missing from fonts: {missing}");
     }
 }

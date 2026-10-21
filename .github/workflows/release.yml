@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Agents for every host OS, so any editor can connect to any host.
+  agents:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            name: linux
+          - runner: macos-latest
+            name: macos
+          - runner: windows-latest
+            name: windows
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/build-agents.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agents-${{ matrix.name }}
+          path: target/agents/lumen-agent-${{ matrix.name }}-*
+
+  build:
+    needs: agents
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            platform: linux-aarch64
+          - runner: macos-latest
+            platform: macos-aarch64
+            target: aarch64-apple-darwin
+          - runner: macos-latest
+            platform: macos-x86_64
+            target: x86_64-apple-darwin
+          - runner: windows-latest
+            platform: windows-x86_64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: agents-*
+          path: target/agents
+          merge-multiple: true
+      - name: Build editor
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build --release --locked --target ${{ matrix.target }}
+            mkdir -p target/release && cp target/${{ matrix.target }}/release/lumen-edit target/release/
+          else
+            cargo build --release --locked
+          fi
+      - name: Package
+        run: |
+          name="lumen-edit-${GITHUB_REF_NAME}-${{ matrix.platform }}"
+          mkdir -p dist
+          chmod +x target/agents/*
+          case "${{ matrix.platform }}" in
+          macos-*)
+            mkdir -p "dist/$name"
+            ./scripts/bundle-macos.sh target/release/lumen-edit "dist/$name"
+            cp LICENSE README.md README.ru.md CHANGELOG.md "dist/$name/"
+            (cd dist && zip -qry "$name.zip" "$name" && shasum -a 256 "$name.zip" > "$name.zip.sha256")
+            ;;
+          windows-*)
+            mkdir -p "dist/$name/agents"
+            cp target/release/lumen-edit.exe "dist/$name/"
+            cp target/agents/lumen-agent-* "dist/$name/agents/"
+            cp LICENSE README.md README.ru.md CHANGELOG.md assets/lumen-edit.svg "dist/$name/"
+            (cd dist && 7z a -bd "$name.zip" "$name" >/dev/null && sha256sum "$name.zip" > "$name.zip.sha256")
+            ;;
+          *)
+            mkdir -p "dist/$name/agents"
+            cp target/release/lumen-edit "dist/$name/"
+            cp target/agents/lumen-agent-* "dist/$name/agents/"
+            cp LICENSE README.md README.ru.md CHANGELOG.md assets/lumen-edit.svg "dist/$name/"
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+            (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+            ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumen-edit-${{ matrix.platform }}
+          path: |
+            dist/*.tar.gz*
+            dist/*.zip*
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lumen-edit-*
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -74,18 +74,21 @@ pub struct TerminalOutput {
 }
 
 impl Terminal {
-    pub fn spawn(title: String, cwd: String, command: CommandBuilder, ctx: egui::Context, alive: Option<Arc<AtomicBool>>) -> Result<Self, String> {
+    pub fn spawn(
+        title: String,
+        cwd: String,
+        command: CommandBuilder,
+        ctx: egui::Context,
+        alive: Option<Arc<AtomicBool>>,
+    ) -> Result<Self, String> {
         let system = portable_pty::native_pty_system();
         let size = (24u16, 80u16);
-        let pair = system
-            .openpty(PtySize { rows: size.0, cols: size.1, pixel_width: 0, pixel_height: 0 })
-            .map_err(|e| e.to_string())?;
+        let pair = system.openpty(PtySize { rows: size.0, cols: size.1, pixel_width: 0, pixel_height: 0 }).map_err(|e| e.to_string())?;
         let mut child = pair.slave.spawn_command(command).map_err(|e| e.to_string())?;
         drop(pair.slave);
         let killer = child.clone_killer();
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer: Arc<Mutex<Box<dyn Write + Send>>> =
-            Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| e.to_string())?));
+        let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| e.to_string())?));
         let parser = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(size.0, size.1, 10_000, Callbacks::default())));
         let alive = alive.unwrap_or_else(|| Arc::new(AtomicBool::new(true)));
         alive.store(true, Ordering::Relaxed);
@@ -248,7 +251,9 @@ impl Terminal {
                 }
                 if response.drag_stopped() || response.clicked() {
                     self.send_mouse(0, cell, false, mouse_encoding);
-                } else if response.dragged() && matches!(mouse_mode, vt100::MouseProtocolMode::ButtonMotion | vt100::MouseProtocolMode::AnyMotion) {
+                } else if response.dragged()
+                    && matches!(mouse_mode, vt100::MouseProtocolMode::ButtonMotion | vt100::MouseProtocolMode::AnyMotion)
+                {
                     self.send_mouse(32, cell, true, mouse_encoding);
                 }
             }
@@ -381,8 +386,14 @@ impl Terminal {
             }
         }
         if self.scrollback > 0 {
-            let label = format!("↑ {} строк", self.scrollback);
-            painter.text(rect.right_top() + Vec2::new(-10.0, 6.0), egui::Align2::RIGHT_TOP, label, FontId::proportional(11.0), theme::MUTED_TEXT);
+            let label = t!("{n1} lines ↑", n1 = self.scrollback);
+            painter.text(
+                rect.right_top() + Vec2::new(-10.0, 6.0),
+                egui::Align2::RIGHT_TOP,
+                label,
+                FontId::proportional(11.0),
+                theme::MUTED_TEXT,
+            );
         }
         drop(parser);
 

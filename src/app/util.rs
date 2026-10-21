@@ -3,18 +3,23 @@ use eframe::egui::Color32;
 use crate::theme;
 
 pub fn time_ago(unix_seconds: i64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let delta = (now - unix_seconds).max(0);
     match delta {
-        0..=59 => "только что".into(),
-        60..=3599 => format!("{} мин назад", delta / 60),
-        3600..=86_399 => format!("{} ч назад", delta / 3600),
-        86_400..=2_591_999 => format!("{} дн назад", delta / 86_400),
-        2_592_000..=31_535_999 => format!("{} мес назад", delta / 2_592_000),
-        _ => format!("{} г назад", delta / 31_536_000),
+        0..=59 => t!("just now").into(),
+        60..=3599 => t!("{n1} min ago", n1 = delta / 60),
+        3600..=86_399 => t!("{n1} h ago", n1 = delta / 3600),
+        86_400..=2_591_999 => t!("{n1} d ago", n1 = delta / 86_400),
+        2_592_000..=31_535_999 => t!("{n1} mo ago", n1 = delta / 2_592_000),
+        _ => t!("{n1} y ago", n1 = delta / 31_536_000),
+    }
+}
+
+/// File icon by full path: CI/CD files get their platform's badge.
+pub fn path_icon(path: &str) -> (&'static str, Color32) {
+    match crate::ci::Ci::detect(path) {
+        Some(ci) => ci.icon(),
+        None => file_icon(crate::host::file_name(path)),
     }
 }
 
@@ -112,4 +117,18 @@ pub fn truncate_middle(text: &str, max: usize) -> String {
     let start: String = text.chars().take(keep).collect();
     let end: String = text.chars().skip(count - keep).collect();
     format!("{start}…{end}")
+}
+
+/// One-line text cut with "…" to fit `max_width`.
+pub fn elided(
+    painter: &eframe::egui::Painter,
+    text: &str,
+    font: eframe::egui::FontId,
+    color: Color32,
+    max_width: f32,
+) -> std::sync::Arc<eframe::egui::Galley> {
+    use eframe::egui::text::{LayoutJob, TextWrapping};
+    let mut job = LayoutJob::simple_singleline(text.to_string(), font, color);
+    job.wrap = TextWrapping { max_width, max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
+    painter.layout_job(job)
 }

@@ -6,38 +6,9 @@ use serde_json::{Value, json};
 
 use crate::control::{self, methods};
 
-const HELP: &str = "\
-Codium RS — нативный редактор кода
-
-Запуск:
-  codium-rs [ПАПКА [ФАЙЛ]]           открыть окно (если редактор уже запущен,
-  codium-rs ФАЙЛ[:СТРОКА[:СТОЛБЕЦ]]   путь откроется в нём)
-  codium-rs ssh://ХОСТ/ПУТЬ           открыть проект на SSH-хосте
-  codium-rs --new-window ...          всегда новое окно
-
-Управление запущенным редактором:
-  codium-rs open ФАЙЛ[:СТРОКА[:СТОЛБЕЦ]]
-  codium-rs cmd КОМАНДА               любая команда меню (список: codium-rs commands)
-  codium-rs МЕТОД [АРГУМЕНТЫ]         любой метод, например:
-      codium-rs state
-      codium-rs read_file src/main.rs start_line=1 end_line=40
-      codium-rs search 'fn main' --include .rs
-      codium-rs exec 'cargo build'
-      codium-rs git_commit 'fix: …' --all
-      codium-rs terminal_read --wait_ms 500
-  codium-rs call МЕТОД '{\"json\": \"параметры\"}'
-  codium-rs methods                   список методов
-  codium-rs help МЕТОД                параметры метода
-  codium-rs instances                 запущенные редакторы
-
-MCP:
-  codium-rs mcp                       MCP-сервер на stdio (запускает редактор при необходимости)
-  codium-rs mcp --granular            по инструменту на метод (для поиска инструментов по запросу)
-
-Аргументы: key=value, --key value, --flag, JSON-объект или значения обязательных
-параметров по порядку. --json — вывод в JSON. Переменная CODIUM_SOCKET выбирает
-конкретный редактор.
-";
+fn help() -> &'static str {
+    t_file!("cli-help.txt")
+}
 
 /// Returns `None` when the GUI should start.
 pub fn run(args: &[String]) -> Option<ExitCode> {
@@ -45,11 +16,11 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
     let rest = &args[1..];
     match first.as_str() {
         "-h" | "--help" => {
-            print!("{HELP}");
+            print!("{}", help());
             Some(ExitCode::SUCCESS)
         }
         "-V" | "--version" => {
-            println!("codium-rs {}", env!("CARGO_PKG_VERSION"));
+            println!("{}", crate::app::about_line());
             Some(ExitCode::SUCCESS)
         }
         "--new-window" | "gui" => None,
@@ -70,13 +41,13 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
             Some(method) => {
                 println!("{}\n\n{}", method.name, method.description);
                 for param in method.params {
-                    let required = if param.required { " (обязательный)" } else { "" };
+                    let required = if param.required { t!(" (required)") } else { "" };
                     println!("  {:<14}{required} {}", param.name, param.description);
                 }
                 Some(ExitCode::SUCCESS)
             }
             None => {
-                print!("{HELP}");
+                print!("{}", help());
                 Some(ExitCode::SUCCESS)
             }
         },
@@ -89,25 +60,25 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
         "commands" => Some(call_and_print("commands", json!({}), rest)),
         "cmd" | "command" => {
             let Some(id) = rest.first() else {
-                eprintln!("укажите команду: codium-rs commands");
+                eprintln!("{}", t!("name a command: lumen-edit commands"));
                 return Some(ExitCode::FAILURE);
             };
             Some(call_and_print("run_command", json!({ "command": id }), &rest[1..]))
         }
         "open" => {
             let Some(target) = rest.first() else {
-                eprintln!("укажите файл");
+                eprintln!("{}", t!("name a file"));
                 return Some(ExitCode::FAILURE);
             };
             Some(call_and_print("open_file", open_params(target), &rest[1..]))
         }
         "call" => {
             let Some(name) = rest.first() else {
-                eprintln!("укажите метод: codium-rs methods");
+                eprintln!("{}", t!("name a method: lumen-edit methods"));
                 return Some(ExitCode::FAILURE);
             };
             let Some(method) = methods::find(name) else {
-                eprintln!("неизвестный метод {name}");
+                eprintln!("{}", t!("unknown method {name}", name = name));
                 return Some(ExitCode::FAILURE);
             };
             Some(match parse_args(method, &rest[1..]) {
@@ -125,7 +96,13 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
         // A path: hand it to a running editor if there is one.
         path => {
             if path.starts_with('-') {
-                eprintln!("неизвестный параметр {path}\n\n{HELP}");
+                eprintln!("{}", t!("unknown option {path}\n\n{HELP}", path = path, HELP = help()));
+                return Some(ExitCode::FAILURE);
+            }
+            // A bare word that is not a file is a mistyped command, not a
+            // reason to open a window.
+            if !path.contains(['/', '.']) && !std::path::Path::new(path).exists() {
+                eprintln!("{}", t!("unknown command {path}; see: lumen-edit methods", path = path));
                 return Some(ExitCode::FAILURE);
             }
             if path.starts_with("ssh://") {
@@ -142,7 +119,7 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
             let (file, _, _) = split_location(path);
             let absolute = std::fs::canonicalize(&file).ok()?;
             if absolute.is_dir() {
-                Some(call_on(&socket, "open_folder", json!({ "path": absolute.to_string_lossy(), "host": "local" }), &[]))
+                Some(call_on(&socket, "open_folder", json!({ "path": crate::platform::host_path(&absolute), "host": "local" }), &[]))
             } else {
                 let mut params = open_params(path);
                 params["path"] = json!(absolute.to_string_lossy());
@@ -157,7 +134,7 @@ fn first_sentence(text: &str) -> &str {
 }
 
 fn fail(error: String) -> ExitCode {
-    eprintln!("ошибка: {error}");
+    eprintln!("{}", t!("error: {error}", error = error));
     ExitCode::FAILURE
 }
 
@@ -176,7 +153,7 @@ fn split_location(target: &str) -> (String, Option<i64>, Option<i64>) {
 
 fn open_params(target: &str) -> Value {
     let (file, line, column) = split_location(target);
-    let file = std::fs::canonicalize(&file).map(|p| p.to_string_lossy().into_owned()).unwrap_or(file);
+    let file = std::fs::canonicalize(&file).map(|p| crate::platform::host_path(&p)).unwrap_or(file);
     let mut params = json!({ "path": file });
     if let Some(line) = line {
         params["line"] = json!(line);
@@ -201,13 +178,19 @@ fn parse_args(method: &methods::Method, args: &[String]) -> Result<Value, String
                 normalized.push(format!("{name}={value}"));
                 continue;
             }
-            let param = method.params.iter().find(|p| p.name == name).ok_or_else(|| format!("у {} нет параметра --{name}", method.name))?;
+            let param = method
+                .params
+                .iter()
+                .find(|p| p.name == name)
+                .ok_or_else(|| t!("{n1} has no parameter --{name}", n1 = method.name, name = name))?;
             let is_bool = matches!(param.kind, methods::Kind::Bool);
             match iter.peek() {
                 Some(next) if !is_bool && !next.starts_with("--") => normalized.push(format!("{name}={}", iter.next().unwrap())),
-                Some(next) if is_bool && matches!(next.as_str(), "true" | "false") => normalized.push(format!("{name}={}", iter.next().unwrap())),
+                Some(next) if is_bool && matches!(next.as_str(), "true" | "false") => {
+                    normalized.push(format!("{name}={}", iter.next().unwrap()))
+                }
                 _ if is_bool => normalized.push(format!("{name}=true")),
-                _ => return Err(format!("--{name}: нужно значение")),
+                _ => return Err(t!("--{name}: value required", name = name)),
             }
             continue;
         }
@@ -247,7 +230,11 @@ fn print_result(method: &str, result: Result<Value, String>, args: &[String]) ->
         }
         Ok(value) => {
             let text = control::mcp::render(&value);
-            if text.ends_with('\n') { print!("{text}") } else { println!("{text}") }
+            if text.ends_with('\n') {
+                print!("{text}")
+            } else {
+                println!("{text}")
+            }
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),

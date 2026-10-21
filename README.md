@@ -1,94 +1,115 @@
-# Codium RS
+<div align="center">
 
-Нативный редактор кода на Rust + egui (wgpu) без Electron и без JS. Быстро открыть
-проект локально или на удалённой машине по SSH, править, запускать во встроенном
-терминале и работать с git.
+# ◆ Lumen Edit
 
-## Возможности
+**A native code editor in Rust — no Electron, no JavaScript.**
+Open a project locally or on a remote machine over SSH, edit with full language-server support, run it in the built-in terminal, and manage git — all in a single fast binary.
 
-- **Редактор**: свой виджет (рисуются только видимые строки, rope-буфер), несколько
-  курсоров (Alt+клик, Ctrl+D, Ctrl+Alt+↑/↓), автозакрытие скобок, умные отступы,
-  перемещение и дублирование строк, комментирование, поиск и замена (regex),
-  подсветка парных скобок и вхождений слова, направляющие отступов.
-- **Подсветка синтаксиса** (tree-sitter): Rust, Bash, Python, C, C++, C#, Go, HTML,
-  CSS, JavaScript, TypeScript/TSX, JSON, TOML.
-- **LSP**: автодополнение, hover, сигнатуры, переход к определению (F12, Ctrl+клик),
-  ссылки (Shift+F12), переименование (F2), быстрые исправления (Ctrl+.), форматирование,
-  диагностика с подчёркиванием и сообщением в конце строки.
-- **SSH**: используется системный OpenSSH (ваш `~/.ssh/config`, ключи, агент,
-  ProxyJump, пароли и 2FA вводятся в окне подключения). Одно мастер-соединение
-  (ControlMaster) на всё: файлы, терминал, git, языковые серверы запускаются на
-  удалённой машине.
-- **Агент** (`codium-agent`): маленький статический бинарник, который редактор сам
-  загружает на хост (`~/.cache/codium-rs/`). Даёт быстрый поиск и слежение за файлами.
-  Без него всё работает через обычные shell-команды.
-- **Терминал**: полноценный (vim, htop, mc), несколько вкладок, Ctrl+клик по
-  `файл:строка:столбец` открывает место в редакторе.
-- **Git**: статус в дереве и отдельная панель, stage/unstage/откат файлов и отдельных
-  фрагментов, коммит/amend, push/pull/fetch/sync, ветки (переключение, создание,
-  merge, rebase, удаление), stash, история с графом (cherry-pick, revert, reset),
-  blame текущей строки, отметки изменений у номеров строк, разрешение конфликтов
-  кнопками прямо в редакторе, продолжение/прерывание merge и rebase.
-- **Задачи**: автоопределение для Cargo, Go, CMake, Meson, Make, just, Python, .NET,
-  package.json и свои задачи в `.codium/tasks.toml`. F5 — запуск, Ctrl+Shift+B — сборка.
+[![CI](https://github.com/anatoliiii/lumen-edit/actions/workflows/ci.yml/badge.svg)](https://github.com/anatoliiii/lumen-edit/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Rust](https://img.shields.io/badge/rust-2024_edition-orange.svg)
+![Platforms](https://img.shields.io/badge/platform-Linux_x86__64_%7C_aarch64-lightgrey.svg)
 
-## CLI и MCP
+[Русская версия](README.ru.md)
 
-Запущенный редактор слушает управляющий сокет `$XDG_RUNTIME_DIR/codium-rs/ctl-<pid>.sock`.
-Через него доступны все команды GUI и не только: чтение и правка буферов,
-LSP-запросы, диагностика, поиск, git, терминалы, выполнение команд на хосте проекта
-(в том числе по SSH), скриншот окна.
+![Editor](docs/screenshots/editor.png)
 
-```sh
-codium-rs src/main.rs:42            # открыть в уже запущенном окне (как `code`)
-codium-rs state                     # что открыто, курсор, git, ошибки
-codium-rs methods                   # все методы; codium-rs help <метод> — параметры
-codium-rs commands                  # id всех команд меню
-codium-rs cmd git_sync              # любая команда меню
-codium-rs read_file src/lib.rs start_line=1 end_line=50 --line_numbers
-codium-rs edit src/lib.rs '[{"start_line":3,"start_column":1,"end_line":3,"end_column":1,"text":"// hi\n"}]' --save
-codium-rs hover src/lib.rs 10 5     # definition / references / completion так же
-codium-rs diagnostics
-codium-rs search 'TODO' --include .rs
-codium-rs exec 'cargo test'         # на хосте проекта, код выхода сохраняется
-codium-rs terminal_new --command 'cargo run'; codium-rs terminal_read --wait_ms 2000
-codium-rs git_commit 'fix: …' --all
-codium-rs screenshot path=shot.png
-```
+</div>
 
-Аргументы: `key=value`, `--key value`, `--flag`, JSON или значения по порядку; `--json`
-печатает сырой JSON. Несколько окон: `codium-rs instances`, выбор — `CODIUM_SOCKET=…`.
+## Features
 
-**MCP** (`codium-rs mcp`, stdio) — для Claude Code и других агентов:
+- **Editor** — custom widget that paints only visible lines over a rope buffer; multiple cursors (Alt+click, Ctrl+D), auto-closing brackets, smart indent, line move/duplicate, comment toggle, find & replace with regex, bracket and occurrence highlighting.
+- **Syntax highlighting** with tree-sitter: Rust, Bash, Python, C, C++, C#, Go, HTML, CSS, JavaScript, TypeScript/TSX, JSON, TOML, YAML, Makefile, Groovy (Jenkinsfile), HCL (Terraform), Dockerfile.
+- **Language servers (LSP)** — completion, hover, signature help, go to definition, references, rename, code actions, formatting, inline diagnostics. Only native servers by default (no Node.js).
+- **Remote development over SSH** — uses your system OpenSSH (`~/.ssh/config`, keys, agent, ProxyJump, password and 2FA prompts) with one multiplexed connection for files, terminals, git and language servers. An optional tiny static agent (`lumen-agent`) is uploaded automatically for fast search and file watching; without it everything works over plain shell commands.
+- **Integrated terminal** — real PTY (vim, htop, mc work), multiple tabs, Ctrl+click on `file:line:col` opens it in the editor.
+- **Git** — status in the tree, stage/unstage/revert per file or hunk, commit/amend, push/pull/fetch/sync, branches (switch, create, merge, rebase, delete), remotes, stash, history graph (cherry-pick, revert, reset), inline blame, gutter change markers, merge-conflict resolution buttons in the editor.
+- **Tasks** — auto-detected for Cargo, Go, CMake, Meson, Make, just, Python, .NET and package.json, plus your own in `.lumen/tasks.toml`. F5 runs, Ctrl+Shift+B builds.
+- **Server pulse** — live CPU, memory, disks and top processes of the project host (local or SSH) in the status bar and a panel with charts; warns before a build fills the disk; kill processes from the list.
+- **Teleport** — two-pane file transfer between this computer, the project host and any other connected SSH host (server to server too), streamed as `tar | tar` through the open connections with progress and cancel. Drop files from your desktop into the window to upload them into the project, even on a remote server.
+- **CI/CD aware** — GitLab CI, GitHub/Gitea/Forgejo Actions, Woodpecker, Drone, Bitbucket, Azure, CircleCI, Travis, Jenkinsfile, Dockerfile, Compose, Kubernetes, Ansible and Terraform are recognised by path: platform icons, pipeline keys, job names, `${{ }}` expressions and `$VARIABLES` highlighted on top of YAML.
+- **Markdown preview** — `.md` files open rendered (tables, task lists, highlighted code, local images); toggle with Ctrl+Alt+P.
+- **Images, SVG and tables** — PNG, JPEG, GIF, WebP, BMP and ICO open in a viewer with zoom; SVG shows a live preview next to its source; CSV/TSV open as a table (delimiter detected, quoted fields supported).
+- **pi agent tab** — the [pi coding agent](https://pi.dev) with your own configuration, rendered as a real chat (streaming Markdown, tool cards, model/mode/thinking pickers, sessions), sandboxed with bubblewrap.
+- **English and Russian interface** — follows the system locale; switch it in Settings → Language.
+- **CLI and MCP** — every GUI command and more (buffers, LSP, diagnostics, search, git, terminals, shell on the project host, screenshots) is scriptable from the command line and exposed to AI agents via MCP.
+
+<table>
+<tr>
+<td><img src="docs/screenshots/agent.png" alt="pi agent tab"/></td>
+<td><img src="docs/screenshots/git.png" alt="Git panel and diff"/></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/search.png" alt="Project search"/></td>
+<td><img src="docs/screenshots/terminal.png" alt="Terminal"/></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/table.png" alt="CSV as a table"/></td>
+<td><img src="docs/screenshots/about.png" alt="About"/></td>
+</tr>
+</table>
+
+## Installation
+
+Requirements: Linux or macOS (x86_64 or aarch64; Windows builds too), Rust 1.95 or newer, `git`, `ssh`. Optional: `bwrap` for the agent sandbox, `shellcheck`, language servers.
 
 ```sh
-claude mcp add codium -- /путь/к/codium-rs mcp
+git clone https://github.com/anatoliiii/lumen-edit.git
+cd lumen-edit
+./scripts/install.sh
 ```
 
-Инструменты сгруппированы по сущностям, чтобы не занимать контекст агента (10
-инструментов, ~2,7 тыс. токенов): `state`, `workspace`, `file`, `search`, `code`, `exec`,
-`terminal`, `task`, `git`, `command`; операция выбирается параметром `action`
-(`file` + `action: "edit"` и т.д.). Если редактор не запущен, MCP-сервер запускает его
-сам (отключить: `CODIUM_MCP_NO_LAUNCH=1`).
+The installer builds the editor and the remote agents, installs `~/.local/bin/lumen-edit`, a desktop entry and icon, and registers the MCP server in Claude Code if it is installed. No root needed.
+On macOS it installs `~/Applications/Lumen Edit.app` and links `~/.local/bin/lumen-edit` to it. Release archives for macOS hold an unsigned app: run `xattr -dr com.apple.quarantine "Lumen Edit.app"` once after unpacking.
 
-## Языковые серверы (только нативные, без Node.js)
+Any OS connects to any other over SSH: the agent is picked by the host's `uname` (`lumen-agent-<os>-<arch>`). `build-agents.sh` builds the Linux agents everywhere and the native ones on macOS and Windows; release archives carry agents for all of them. A Windows host needs OpenSSH with Git Bash as its shell (`DefaultShell` in the registry).
 
-| Язык | Сервер |
+Manual build:
+
+```sh
+cargo build --release
+./scripts/build-agents.sh   # lumen-agent for Linux x86_64/aarch64 (musl) and this OS
+./target/release/lumen-edit
+```
+
+## Usage
+
+```sh
+lumen-edit                         # open the window
+lumen-edit ~/project               # open a folder
+lumen-edit src/main.rs:42          # open a file in the running window, like `code`
+lumen-edit ssh://host/path         # open a project on an SSH host
+```
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+P / Ctrl+Shift+P | Go to file / command palette |
+| Ctrl+Shift+E / F / G / R | Explorer / search / git / tasks |
+| Ctrl+` | Terminal |
+| F5 / Ctrl+Shift+B | Run / build |
+| F12 / Shift+F12 / F2 / Ctrl+. | Definition / references / rename / quick fix |
+| Ctrl+Shift+A | pi agent |
+| Ctrl+Alt+T | Teleport (file transfer) |
+| Ctrl+Alt+P | Markdown preview / source |
+
+## Language servers
+
+All defaults are native binaries; missing ones are simply skipped.
+
+| Language | Server |
 |---|---|
 | Rust | `rust-analyzer` |
 | C / C++ | `clangd` |
 | Go | `gopls` |
-| Python | `ty server` + `ruff server` (запасной вариант — `pylsp`) |
-| C# | `csharp-ls` (запасной вариант — `OmniSharp -lsp`) |
-| TS / JS | `tsgo --lsp --stdio` + `biome lsp-proxy` |
+| Python | `ty server` + `ruff server` (fallback `pylsp`) |
+| C# | `csharp-ls` (fallback `OmniSharp`) |
+| TypeScript / JavaScript | `tsgo --lsp --stdio` + `biome lsp-proxy` |
 | CSS, JSON | `biome lsp-proxy` |
 | HTML | `superhtml lsp` |
 | TOML | `taplo lsp stdio` |
-| Bash | `shellcheck` (диагностика) |
+| Bash | `shellcheck` diagnostics |
 
-Сервер должен быть установлен там, где лежит проект (локально или на SSH-хосте).
-Отсутствующие просто не запускаются; список виден во вкладке «Вывод». Отключить
-сервер можно в настройках, добавить свой — в `~/.config/codium-rs/config.toml`:
+Add or replace servers in `~/.config/lumen-edit/config.toml`:
 
 ```toml
 [[lsp]]
@@ -97,75 +118,61 @@ command = "zls"
 languages = ["zig"]
 ```
 
-## Сборка и запуск
+## CLI and MCP
+
+A running editor listens on `$XDG_RUNTIME_DIR/lumen-edit/ctl-<pid>.sock`.
 
 ```sh
-cargo build --release
-./scripts/build-agents.sh          # агенты для x86_64 и aarch64 (musl, статические)
-./target/release/codium-rs [папка [файл]]
-./target/release/codium-rs ssh://host/путь/к/проекту
+lumen-edit methods                   # all methods; `lumen-edit help <method>` for parameters
+lumen-edit state                     # project, open files, cursor, git, problems
+lumen-edit cmd git_sync              # any menu command (`lumen-edit commands`)
+lumen-edit read_file src/lib.rs --line_numbers
+lumen-edit hover src/lib.rs 10 5
+lumen-edit exec 'cargo test'         # runs on the project host, keeps the exit code
+lumen-edit agent prompt "fix the failing test"
 ```
 
-Для агентов нужны цели `rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl`;
-C-тулчейн для кросс-сборки не нужен (линкуется встроенным `rust-lld`). Редактор ищет
-агентов в `agents/` рядом с бинарником, в `target/agents/`,
-`~/.local/share/codium-rs/agents/` и `/usr/lib/codium-rs/agents/`.
+MCP server over stdio:
 
-На aarch64-машине сам редактор собирается нативно той же командой `cargo build --release`.
+```sh
+claude mcp add lumen -- lumen-edit mcp
+```
 
-## Горячие клавиши
+Tools are grouped by entity (`state`, `workspace`, `file`, `search`, `code`, `exec`, `terminal`, `task`, `git`, `command`, `agent`, `pulse`, `transfer`) to keep the catalog small (~3k tokens). `lumen-edit mcp --granular` exposes one tool per method for clients that search tools on demand.
 
-| | |
-|---|---|
-| Ctrl+P / Ctrl+Shift+P | перейти к файлу / палитра команд |
-| Ctrl+G | перейти к строке |
-| Ctrl+O / Ctrl+Alt+O | открыть папку / подключиться по SSH |
-| Ctrl+Shift+E / F / G / R | проводник / поиск / git / задачи |
-| Ctrl+` / Ctrl+Shift+` | терминал / новый терминал |
-| F5 / Ctrl+F5 / Shift+F5 | запуск / повторить / остановить |
-| Ctrl+Shift+B | сборка |
-| Ctrl+Space | автодополнение |
-| F12, Shift+F12, F2, Ctrl+. | определение, ссылки, переименование, исправления |
-| Ctrl+Shift+I | форматирование |
-| Ctrl+D, Alt+клик | следующее вхождение / ещё курсор |
-| Alt+↑/↓, Shift+Alt+↑/↓ | переместить / дублировать строки |
-| Ctrl+/ | комментарий |
-| Ctrl+Enter (в панели git) | коммит |
+## Configuration
 
-## Настройки
+`~/.config/lumen-edit/config.toml`, or the Settings window (Ctrl+,): interface language, fonts, indentation, format on save, auto save, blame, SSH agent, `pull --rebase`, language servers, pi command/model/mode and sandbox.
 
-`~/.config/codium-rs/config.toml` (или окно «Настройки», Ctrl+,): размеры шрифтов, свой
-моноширинный шрифт (`editor_font = "/путь/к/шрифту.ttf"`), табуляция, форматирование
-при сохранении, автосохранение, blame, агент, `pull --rebase`, языковые серверы.
-Открытые файлы запоминаются для каждого проекта.
-
-## Структура
+## Architecture
 
 ```text
-shared/     протокол агента, операции с файлами и поиск (общие для агента и редактора)
-agent/      codium-agent — помощник на удалённой машине
+shared/   agent protocol, filesystem and search operations shared by editor and agent
+agent/    lumen-agent — helper uploaded to SSH hosts
 src/
-  host/     локальный хост и SSH: мастер-соединение, агент, запасной shell-режим
-  text.rs   буфер: rope, курсоры, undo/redo, правки
-  syntax.rs tree-sitter, подсветка в фоне
-  lsp/      LSP-клиент, shellcheck
-  terminal.rs  PTY + vt100
-  git.rs    git через командную строку
-  tasks.rs  задачи
-  app/      интерфейс: редактор, проводник, поиск, git, панели, палитра, SSH
-            app/control.rs — выполнение CLI/MCP-запросов
-  control/  управляющий сокет, реестр методов, MCP-сервер
-  cli.rs    командная строка
+  host/       local host and SSH: ControlMaster, agent client, shell fallback
+  text.rs     rope buffer, selections, undo/redo
+  syntax.rs   tree-sitter highlighting on a background thread
+  lsp/        LSP client and shellcheck
+  terminal.rs PTY + vt100
+  git.rs      git through the command line (same locally and over SSH)
+  control/    control socket, method registry, MCP server
+  app/        UI: editor, explorer, search, git, panels, palette, agent, SSH flow
+  i18n.rs     interface language, t!() and t_file!()
+locales/      translations (ru.toml) and long texts per language
 ```
 
-## Разработка
+## Development
 
 ```sh
-cargo test                                   # тесты, включая SSH-режим через поддельный ssh
-cargo test -- --ignored                      # тест с настоящим rust-analyzer
-PATH=$PWD/scripts/fake-ssh-dir:$PATH cargo run -- ssh://fake$PWD   # удалённый режим без sshd
-CODIUM_LOG=1 cargo run                       # журнал LSP-обмена
+cargo test --workspace                 # unit and integration tests (SSH mode via a fake ssh)
+cargo test -- --ignored                # tests that need rust-analyzer
+PATH=$PWD/scripts/fake-ssh-dir:$PATH cargo run -- ssh://fake$PWD   # try remote mode without sshd
+LUMEN_LOG=1 cargo run                 # log LSP and control traffic
 ```
 
-Для скриншотов: `CODIUM_SCREENSHOT=out.ppm`, `CODIUM_SCREENSHOT_FRAME=N`,
-`CODIUM_DEBUG_VIEW=git,terminal,palette,search=текст,goto=3:5,type=v|.,click=x:y`.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE) © Анатолий Копейкин (Anatolii Kopeikin)

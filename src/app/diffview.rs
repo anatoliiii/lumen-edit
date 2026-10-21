@@ -17,10 +17,10 @@ pub enum DiffMode {
 impl DiffMode {
     pub fn label(&self) -> &str {
         match self {
-            DiffMode::Unstaged => "изменения",
-            DiffMode::Staged => "в индексе",
-            DiffMode::Untracked => "новый",
-            DiffMode::Commit(_) => "коммит",
+            DiffMode::Unstaged => t!("changes"),
+            DiffMode::Staged => t!("staged"),
+            DiffMode::Untracked => t!("new"),
+            DiffMode::Commit(_) => t!("commit"),
         }
     }
 }
@@ -78,7 +78,7 @@ pub fn show_diff(ui: &mut egui::Ui, app: &mut App, index: usize) {
                 ui.spinner();
             }
             if let Some(path) = &tab.path
-                && ui.small_button("Открыть файл").clicked()
+                && ui.small_button(t!("Open File")).clicked()
             {
                 action = Some(HunkAction::Open(path.clone(), 0));
             }
@@ -95,7 +95,7 @@ pub fn show_diff(ui: &mut egui::Ui, app: &mut App, index: usize) {
             ui.label(RichText::new(line).font(mono.clone()).color(theme::MUTED_TEXT));
         }
         if tab.files.is_empty() && !tab.loading && tab.error.is_none() {
-            ui.label(RichText::new("Нет изменений").color(theme::MUTED_TEXT));
+            ui.label(RichText::new(t!("No changes")).color(theme::MUTED_TEXT));
         }
         for (file_index, file) in tab.files.iter().enumerate() {
             ui.add_space(8.0);
@@ -103,7 +103,7 @@ pub fn show_diff(ui: &mut egui::Ui, app: &mut App, index: usize) {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(&file.path).strong());
-                    if matches!(mode, DiffMode::Commit(_)) && ui.small_button("Открыть").clicked() {
+                    if matches!(mode, DiffMode::Commit(_)) && ui.small_button(t!("Open")).clicked() {
                         action = Some(HunkAction::Open(file.path.clone(), 0));
                     }
                 });
@@ -115,20 +115,19 @@ pub fn show_diff(ui: &mut egui::Ui, app: &mut App, index: usize) {
                     ui.painter().text(rect.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, &hunk.header, mono.clone(), theme::INFO);
                     match mode {
                         DiffMode::Unstaged => {
-                            if ui.small_button("+ В индекс").clicked() {
+                            if ui.small_button(t!("+ Stage")).clicked() {
                                 action = Some(HunkAction::Stage(file_index, hunk_index));
                             }
-                            if ui.small_button("↺ Откатить").clicked() {
+                            if ui.small_button(t!("↺ Discard")).clicked() {
                                 action = Some(HunkAction::Revert(file_index, hunk_index));
                             }
                         }
-                        DiffMode::Staged
-                            if ui.small_button("− Из индекса").clicked() => {
-                                action = Some(HunkAction::Unstage(file_index, hunk_index));
-                            }
+                        DiffMode::Staged if ui.small_button(t!("− Unstage")).clicked() => {
+                            action = Some(HunkAction::Unstage(file_index, hunk_index));
+                        }
                         _ => {}
                     }
-                    if ui.small_button("→").on_hover_text("Перейти к месту в файле").clicked() {
+                    if ui.small_button("→").on_hover_text(t!("Go to this place in the file")).clicked() {
                         action = Some(HunkAction::Open(file.path.clone(), hunk.new_start.saturating_sub(1)));
                     }
                 });
@@ -180,8 +179,8 @@ pub fn show_diff(ui: &mut egui::Ui, app: &mut App, index: usize) {
         HunkAction::Revert(f, h) => {
             let patch = patch_for(f, h);
             app.dialog = Some(super::Dialog::Confirm {
-                title: "Откатить фрагмент".into(),
-                message: "Изменения в этом фрагменте будут потеряны.".into(),
+                title: t!("Discard hunk").into(),
+                message: t!("Changes in this hunk will be lost.").into(),
                 action: Box::new(move |app: &mut App| {
                     app.git_op("revert hunk", move |host, repo| git::apply_patch(host, repo, &patch, true, false).map(|_| String::new()));
                 }),
@@ -222,12 +221,12 @@ pub fn show_log(ui: &mut egui::Ui, app: &mut App, index: usize) {
 
     egui::Frame::new().inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("История").strong());
-            if ui.checkbox(&mut log.all, "Все ветки").changed() {
+            ui.label(RichText::new(t!("History")).strong());
+            if ui.checkbox(&mut log.all, t!("All branches")).changed() {
                 reload = true;
             }
-            ui.add(egui::TextEdit::singleline(&mut log.filter).hint_text("Фильтр (текст, автор, хеш)").desired_width(260.0));
-            if ui.small_button("⟳").on_hover_text("Обновить").clicked() {
+            ui.add(egui::TextEdit::singleline(&mut log.filter).hint_text(t!("Filter (text, author, hash)")).desired_width(260.0));
+            if ui.small_button("⟳").on_hover_text(t!("Refresh")).clicked() {
                 reload = true;
             }
             if log.loading {
@@ -243,10 +242,17 @@ pub fn show_log(ui: &mut egui::Ui, app: &mut App, index: usize) {
     let rows: Vec<&git::LogEntry> = log
         .entries
         .iter()
-        .filter(|e| filter.is_empty() || e.subject.to_lowercase().contains(&filter) || e.author.to_lowercase().contains(&filter) || e.hash.starts_with(&filter) || e.refs.to_lowercase().contains(&filter))
+        .filter(|e| {
+            filter.is_empty()
+                || e.subject.to_lowercase().contains(&filter)
+                || e.author.to_lowercase().contains(&filter)
+                || e.hash.starts_with(&filter)
+                || e.refs.to_lowercase().contains(&filter)
+        })
         .collect();
     let row_h = 22.0;
-    let graph_w = rows.iter().map(|r| r.graph.chars().count()).max().unwrap_or(2) as f32 * ui.fonts_mut(|f| f.glyph_width(&mono, 'M')) + 12.0;
+    let graph_w =
+        rows.iter().map(|r| r.graph.chars().count()).max().unwrap_or(2) as f32 * ui.fonts_mut(|f| f.glyph_width(&mono, 'M')) + 12.0;
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, row_h, rows.len(), |ui, range| {
         for entry in &rows[range] {
@@ -299,28 +305,28 @@ pub fn show_log(ui: &mut egui::Ui, app: &mut App, index: usize) {
                 open = Some((entry.hash.clone(), entry.subject.clone()));
             }
             response.context_menu(|ui| {
-                if ui.button("Показать изменения").clicked() {
+                if ui.button(t!("Show changes")).clicked() {
                     open = Some((entry.hash.clone(), entry.subject.clone()));
                     ui.close();
                 }
-                if ui.button("Скопировать хеш").clicked() {
+                if ui.button(t!("Copy hash")).clicked() {
                     ui.ctx().copy_text(entry.hash.clone());
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Переключиться на коммит (detached)").clicked() {
+                if ui.button(t!("Check out this commit (detached)")).clicked() {
                     checkout = Some(entry.hash.clone());
                     ui.close();
                 }
-                if ui.button("Cherry-pick в текущую ветку").clicked() {
+                if ui.button(t!("Cherry-pick onto current branch")).clicked() {
                     cherry_pick = Some(entry.hash.clone());
                     ui.close();
                 }
-                if ui.button("Revert (обратный коммит)").clicked() {
+                if ui.button(t!("Revert (inverse commit)")).clicked() {
                     revert = Some(entry.hash.clone());
                     ui.close();
                 }
-                if ui.button(RichText::new("Reset --hard на этот коммит").color(theme::ERROR)).clicked() {
+                if ui.button(RichText::new(t!("Reset --hard to this commit")).color(theme::ERROR)).clicked() {
                     reset = Some(entry.hash.clone());
                     ui.close();
                 }
@@ -346,7 +352,7 @@ pub fn show_log(ui: &mut egui::Ui, app: &mut App, index: usize) {
     if let Some(hash) = reset {
         app.dialog = Some(super::Dialog::Confirm {
             title: "git reset --hard".into(),
-            message: format!("Все незакоммиченные изменения будут потеряны, ветка переместится на {}.", util::truncate_middle(&hash, 12)),
+            message: t!("All uncommitted changes will be lost and the branch will move to {n1}.", n1 = util::truncate_middle(&hash, 12)),
             action: Box::new(move |app: &mut App| app.git_op("reset", move |h, r| git::git_verbose(h, r, &["reset", "--hard", &hash]))),
         });
     }

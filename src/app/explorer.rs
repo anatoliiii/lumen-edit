@@ -2,8 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use codium_shared::fsops::DirEntry;
 use eframe::egui::{self, Align2, Color32, FontId, RichText, Sense, pos2, vec2};
+use lumen_shared::fsops::DirEntry;
 
 use super::{App, Dialog, Msg, Tab, util};
 use crate::{git, host, theme};
@@ -47,6 +47,11 @@ impl ExplorerState {
             Err(error) => DirState::Error(error),
         };
         self.dirs.insert(path, state);
+    }
+
+    /// Loaded directories that are visible (root or expanded).
+    pub fn loaded_dirs(&self) -> Vec<String> {
+        self.dirs.keys().filter(|d| self.expanded.contains(*d)).cloned().collect()
     }
 
     pub fn is_loaded(&self, path: &str) -> bool {
@@ -126,11 +131,23 @@ struct Row {
 
 fn collect_rows(state: &ExplorerState, dir: &str, depth: usize, rows: &mut Vec<Row>, filter: &str) {
     match state.dirs.get(dir) {
-        None | Some(DirState::Loading) => rows.push(Row { path: format!("{dir}/…"), name: String::new(), depth, is_dir: false, placeholder: Some("загрузка…".into()) }),
-        Some(DirState::Error(error)) => rows.push(Row { path: format!("{dir}/!"), name: String::new(), depth, is_dir: false, placeholder: Some(error.clone()) }),
+        None | Some(DirState::Loading) => {
+            rows.push(Row {
+                path: format!("{dir}/…"), name: String::new(), depth, is_dir: false, placeholder: Some(t!("loading…").into())
+            })
+        }
+        Some(DirState::Error(error)) => {
+            rows.push(Row { path: format!("{dir}/!"), name: String::new(), depth, is_dir: false, placeholder: Some(error.clone()) })
+        }
         Some(DirState::Loaded(entries)) => {
             if entries.is_empty() && depth > 0 {
-                rows.push(Row { path: format!("{dir}/∅"), name: String::new(), depth, is_dir: false, placeholder: Some("пусто".into()) });
+                rows.push(Row {
+                    path: format!("{dir}/∅"),
+                    name: String::new(),
+                    depth,
+                    is_dir: false,
+                    placeholder: Some(t!("empty").into()),
+                });
             }
             for entry in entries {
                 let path = host::join(dir, &entry.name);
@@ -159,6 +176,7 @@ enum Action {
     Terminal(String),
     Refresh,
     CollapseAll,
+    SendToAgent(String),
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut App) {
@@ -173,23 +191,27 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             .on_hover_text(format!("{} — {root}", workspace.host.label()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(6.0);
-            if ui.small_button("⊟").on_hover_text("Свернуть все").clicked() {
+            if ui.small_button("⊟").on_hover_text(t!("Collapse all")).clicked() {
                 actions.push(Action::CollapseAll);
             }
-            if ui.small_button("⟳").on_hover_text("Обновить").clicked() {
+            if ui.small_button("⟳").on_hover_text(t!("Refresh")).clicked() {
                 actions.push(Action::Refresh);
             }
-            if ui.small_button("🗀").on_hover_text("Новая папка").clicked() {
+            if ui.small_button("🗀").on_hover_text(t!("New folder")).clicked() {
                 actions.push(Action::NewFolder(workspace.explorer.target_dir(&root)));
             }
-            if ui.small_button("🗋").on_hover_text("Новый файл").clicked() {
+            if ui.small_button("🗋").on_hover_text(t!("New file")).clicked() {
                 actions.push(Action::NewFile(workspace.explorer.target_dir(&root)));
             }
         });
     });
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        ui.add(egui::TextEdit::singleline(&mut workspace.explorer.filter).hint_text("Фильтр файлов").desired_width(ui.available_width() - 8.0));
+        ui.add(
+            egui::TextEdit::singleline(&mut workspace.explorer.filter)
+                .hint_text(t!("Filter files"))
+                .desired_width(ui.available_width() - 8.0),
+        );
     });
     ui.add_space(4.0);
 
@@ -201,7 +223,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         Some(Tab::Doc(doc)) => Some(doc.path.clone()),
         _ => None,
     });
-    let dirty: HashSet<String> = app.tabs.iter().filter_map(|t| if let Tab::Doc(d) = t { d.is_dirty().then(|| d.path.clone()) } else { None }).collect();
+    let dirty: HashSet<String> =
+        app.tabs.iter().filter_map(|t| if let Tab::Doc(d) = t { d.is_dirty().then(|| d.path.clone()) } else { None }).collect();
     let explorer = &mut workspace.explorer;
     let scroll_index = explorer.scroll_to.take().and_then(|target| rows.iter().position(|r| r.path == target));
 
@@ -221,22 +244,34 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             let indent = 10.0 + row.depth as f32 * 14.0;
             let painter = ui.painter_at(rect);
             if let Some(text) = &row.placeholder {
-                painter.text(pos2(rect.left() + indent + 18.0, rect.center().y), Align2::LEFT_CENTER, text, FontId::proportional(12.0), theme::FAINT_TEXT);
+                painter.text(
+                    pos2(rect.left() + indent + 18.0, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    text,
+                    FontId::proportional(12.0),
+                    theme::FAINT_TEXT,
+                );
                 continue;
             }
             let selected = explorer.selected.as_deref() == Some(row.path.as_str());
             let active = active_path.as_deref() == Some(row.path.as_str());
-            if selected || active {
-                painter.rect_filled(rect, 0.0, if selected { theme::ACCENT_DIM } else { theme::SURFACE });
+            let highlight = rect.shrink2(vec2(4.0, 1.0));
+            if selected {
+                painter.rect_filled(highlight, egui::CornerRadius::same(4), theme::ACCENT_DIM);
             } else if response.hovered() {
-                painter.rect_filled(rect, 0.0, theme::SURFACE);
+                painter.rect_filled(highlight, egui::CornerRadius::same(4), theme::SURFACE);
+            } else if active {
+                painter.rect_filled(highlight, egui::CornerRadius::same(4), theme::SURFACE.gamma_multiply(0.6));
             }
-            // Indent guides.
+            // Indent guides, faint.
             for level in 0..row.depth {
-                let x = rect.left() + 16.0 + level as f32 * 14.0;
-                painter.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], egui::Stroke::new(1.0, theme::INDENT_GUIDE));
+                let x = rect.left() + 14.0 + level as f32 * 14.0;
+                painter.line_segment(
+                    [pos2(x, rect.top()), pos2(x, rect.bottom())],
+                    egui::Stroke::new(1.0, theme::INDENT_GUIDE.gamma_multiply(0.8)),
+                );
             }
-            let x = rect.left() + indent;
+            let x = rect.left() + 8.0 + row.depth as f32 * 14.0;
             let (name_color, badge) = if row.is_dir {
                 (explorer.dir_git.get(&row.path).copied().unwrap_or(theme::TEXT), None)
             } else {
@@ -245,23 +280,27 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     None => (theme::TEXT, None),
                 }
             };
+            let center_y = rect.center().y;
             if row.is_dir {
                 let open = explorer.expanded.contains(&row.path);
-                painter.text(pos2(x + 6.0, rect.center().y), Align2::CENTER_CENTER, if open { "⏷" } else { "⏵" }, FontId::proportional(10.0), theme::MUTED_TEXT);
-                painter.text(pos2(x + 20.0, rect.center().y), Align2::LEFT_CENTER, &row.name, FontId::proportional(13.0), name_color);
+                super::icons::chevron(&painter, pos2(x + 6.0, center_y), open, theme::MUTED_TEXT);
+                super::icons::folder(&painter, pos2(x + 21.0, center_y), open);
             } else {
-                let (icon, color) = util::file_icon(&row.name);
-                painter.text(pos2(x + 12.0, rect.center().y), Align2::CENTER_CENTER, icon, FontId::monospace(11.5), color);
-                painter.text(pos2(x + 24.0, rect.center().y), Align2::LEFT_CENTER, &row.name, FontId::proportional(13.0), name_color);
+                super::icons::file(&painter, pos2(x + 21.0, center_y), &row.path);
             }
-            let mut right = rect.right() - 10.0;
+            // Right side: git letter and unsaved dot.
+            let mut right = rect.right() - 12.0;
             if let Some((letter, color)) = badge {
-                painter.text(pos2(right, rect.center().y), Align2::RIGHT_CENTER, letter.to_string(), FontId::monospace(11.5), color);
+                painter.text(pos2(right, center_y), Align2::RIGHT_CENTER, letter.to_string(), FontId::monospace(11.0), color);
                 right -= 14.0;
             }
             if dirty.contains(&row.path) {
-                painter.text(pos2(right, rect.center().y), Align2::RIGHT_CENTER, "●", FontId::proportional(10.0), theme::TEXT);
+                painter.circle_filled(pos2(right - 3.0, center_y), 3.5, theme::TEXT);
+                right -= 12.0;
             }
+            let name_x = x + 33.0;
+            let galley = util::elided(&painter, &row.name, FontId::proportional(13.0), name_color, (right - name_x - 4.0).max(20.0));
+            painter.galley(pos2(name_x, center_y - galley.size().y / 2.0), galley, name_color);
 
             if response.clicked() {
                 actions.push(Action::Select(row.path.clone()));
@@ -269,34 +308,39 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             }
             response.context_menu(|ui| {
                 let dir = if row.is_dir { row.path.clone() } else { host::parent(&row.path) };
-                if ui.button("Новый файл…").clicked() {
+                if ui.button(t!("New File…")).clicked() {
                     actions.push(Action::NewFile(dir.clone()));
                     ui.close();
                 }
-                if ui.button("Новая папка…").clicked() {
+                if ui.button(t!("New Folder…")).clicked() {
                     actions.push(Action::NewFolder(dir.clone()));
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Переименовать…").clicked() {
+                if ui.button(t!("Rename…")).clicked() {
                     actions.push(Action::Rename(row.path.clone()));
                     ui.close();
                 }
-                if ui.button(RichText::new("Удалить").color(theme::ERROR)).clicked() {
+                if ui.button(RichText::new(t!("Delete")).color(theme::ERROR)).clicked() {
                     actions.push(Action::Delete(row.path.clone()));
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Копировать путь").clicked() {
+                if ui.button(t!("Copy path")).clicked() {
                     actions.push(Action::CopyPath(row.path.clone()));
                     ui.close();
                 }
-                if ui.button("Копировать относительный путь").clicked() {
+                if ui.button(t!("Copy relative path")).clicked() {
                     actions.push(Action::CopyRelative(row.path.clone()));
                     ui.close();
                 }
-                if ui.button("Открыть в терминале").clicked() {
+                if ui.button(t!("Open in terminal")).clicked() {
                     actions.push(Action::Terminal(dir));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(RichText::new(t!("π  Send to the agent")).color(theme::ACCENT)).clicked() {
+                    actions.push(Action::SendToAgent(row.path.clone()));
                     ui.close();
                 }
             });
@@ -304,11 +348,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     });
     // Right-click on empty space.
     background.context_menu(|ui| {
-        if ui.button("Новый файл…").clicked() {
+        if ui.button(t!("New File…")).clicked() {
             actions.push(Action::NewFile(root.clone()));
             ui.close();
         }
-        if ui.button("Новая папка…").clicked() {
+        if ui.button(t!("New Folder…")).clicked() {
             actions.push(Action::NewFolder(root.clone()));
             ui.close();
         }
@@ -341,7 +385,7 @@ fn apply(app: &mut App, action: Action, root: &str) {
         Action::Rename(path) => {
             let name = host::file_name(&path).to_string();
             app.dialog = Some(Dialog::Input {
-                title: format!("Переименовать «{name}»"),
+                title: t!("Rename “{name}”", name = name),
                 value: name,
                 focus: true,
                 action: Box::new(move |app: &mut App, new_name: String| {
@@ -350,7 +394,12 @@ fn apply(app: &mut App, action: Action, root: &str) {
                     let from = path.clone();
                     app.bus.spawn(move || {
                         let result = host.rename(&from, &target);
-                        Msg::FsOpDone { reload: vec![host::parent(&from)], open: None, renamed: result.is_ok().then(|| (from.clone(), target.clone())), error: result.err() }
+                        Msg::FsOpDone {
+                            reload: vec![host::parent(&from)],
+                            open: None,
+                            renamed: result.is_ok().then(|| (from.clone(), target.clone())),
+                            error: result.err(),
+                        }
                     });
                 }),
             });
@@ -358,8 +407,8 @@ fn apply(app: &mut App, action: Action, root: &str) {
         Action::Delete(path) => {
             let name = host::file_name(&path).to_string();
             app.dialog = Some(Dialog::Confirm {
-                title: "Удаление".into(),
-                message: format!("Удалить «{name}»? Это действие нельзя отменить."),
+                title: t!("Delete").into(),
+                message: t!("Delete “{name}”? This cannot be undone.", name = name),
                 action: Box::new(move |app: &mut App| {
                     let Some(host) = app.host() else { return };
                     // Close tabs for the deleted path.
@@ -396,13 +445,8 @@ fn apply(app: &mut App, action: Action, root: &str) {
         }
         Action::Refresh => {
             let Some(workspace) = &mut app.workspace else { return };
-            let loaded: Vec<String> = workspace
-                .explorer
-                .dirs
-                .keys()
-                .filter(|dir| *dir == root || workspace.explorer.expanded.contains(*dir))
-                .cloned()
-                .collect();
+            let loaded: Vec<String> =
+                workspace.explorer.dirs.keys().filter(|dir| *dir == root || workspace.explorer.expanded.contains(*dir)).cloned().collect();
             workspace.explorer.dirs.clear();
             workspace.file_index = None;
             for dir in loaded {
@@ -410,6 +454,7 @@ fn apply(app: &mut App, action: Action, root: &str) {
             }
             app.git_refresh();
         }
+        Action::SendToAgent(path) => super::agent::attach_file(app, &path),
         Action::CollapseAll => {
             if let Some(workspace) = &mut app.workspace {
                 workspace.explorer.expanded.retain(|p| p == root);
@@ -420,7 +465,7 @@ fn apply(app: &mut App, action: Action, root: &str) {
 
 pub fn prompt_create(app: &mut App, dir: String, folder: bool) {
     app.dialog = Some(Dialog::Input {
-        title: if folder { "Новая папка".into() } else { "Новый файл (можно с подпапками: src/mod.rs)".into() },
+        title: if folder { t!("New folder").into() } else { t!("New file (subfolders allowed: src/mod.rs)").into() },
         value: String::new(),
         focus: true,
         action: Box::new(move |app: &mut App, name: String| {
@@ -432,7 +477,7 @@ pub fn prompt_create(app: &mut App, dir: String, folder: bool) {
                     host.create_dir(&path)
                 } else {
                     host.create_dir(&parent).and_then(|_| match host.stat(&path) {
-                        Ok(_) => Err("файл уже существует".into()),
+                        Ok(_) => Err(t!("the file already exists").into()),
                         Err(_) => host.write_file(&path, b""),
                     })
                 };

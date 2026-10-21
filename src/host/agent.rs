@@ -1,4 +1,4 @@
-//! Uploads (when needed) and talks to `codium-agent` on the remote host.
+//! Uploads (when needed) and talks to `lumen-agent` on the remote host.
 
 use std::{
     collections::HashMap,
@@ -12,8 +12,8 @@ use std::{
     time::Duration,
 };
 
-use codium_shared::proto::{self, Message, Op, Reply, Request};
 use crossbeam_channel::{Sender, bounded};
+use lumen_shared::proto::{self, Message, Op, Reply, Request};
 
 use super::{Remote, run_with_input, shell_quote};
 
@@ -68,49 +68,57 @@ impl Drop for AgentClient {
     }
 }
 
-/// Finds an agent binary built for `arch` next to the editor.
-fn local_agent_binary(arch: &str) -> Option<PathBuf> {
+/// Agent file name for a platform: `lumen-agent-<os>-<arch>[.exe]`.
+pub fn agent_name(os: &str, arch: &str) -> String {
+    let exe = if os == "windows" { ".exe" } else { "" };
+    format!("lumen-agent-{os}-{arch}{exe}")
+}
+
+/// Finds an agent binary built for the remote platform next to the editor.
+fn local_agent_binary(os: &str, arch: &str) -> Option<PathBuf> {
+    // Resolved, so a symlink in ~/.local/bin still finds the app bundle.
     let exe = std::env::current_exe().ok()?;
+    let exe = exe.canonicalize().unwrap_or(exe);
     let exe_dir = exe.parent()?.to_path_buf();
-    let name = format!("codium-agent-{arch}");
+    let name = agent_name(os, arch);
     let mut candidates = vec![
         exe_dir.join("agents").join(&name),
         exe_dir.join(&name),
         exe_dir.join("../agents").join(&name),
         exe_dir.join("../../agents").join(&name),
+        // Inside a macOS app bundle.
+        exe_dir.join("../Resources/agents").join(&name),
     ];
     if let Some(data) = dirs::data_dir() {
-        candidates.push(data.join("codium-rs/agents").join(&name));
+        candidates.push(data.join("lumen-edit/agents").join(&name));
     }
-    candidates.push(PathBuf::from("/usr/lib/codium-rs/agents").join(&name));
-    // A native build may work if the remote has the same arch and libc.
-    if arch == std::env::consts::ARCH {
-        candidates.push(exe_dir.join("codium-agent"));
+    candidates.push(PathBuf::from("/usr/lib/lumen-edit/agents").join(&name));
+    // A native build works on the same OS and arch (and libc on Linux).
+    if os == std::env::consts::OS && arch == std::env::consts::ARCH {
+        let native = format!("lumen-agent{}", std::env::consts::EXE_SUFFIX);
+        candidates.push(exe_dir.join(&native));
         // `cargo test` binaries live in target/<profile>/deps.
-        candidates.push(exe_dir.join("../codium-agent"));
+        candidates.push(exe_dir.join("..").join(&native));
     }
     candidates.into_iter().find(|path| path.is_file())
 }
 
 pub fn install_and_start(remote: &Arc<Remote>) -> Result<AgentClient, String> {
-    let binary = local_agent_binary(&remote.arch)
-        .ok_or_else(|| format!("нет сборки агента для {}", remote.arch))?;
+    let binary = local_agent_binary(&remote.os, &remote.arch).ok_or_else(|| t!("no agent build for {n1}", n1 = remote.platform()))?;
     let data = std::fs::read(&binary).map_err(|e| e.to_string())?;
     let hash = data.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
-    let remote_path = format!("{}/.cache/codium-rs/agent-{hash:016x}", remote.home);
+    let exe = if remote.os == "windows" { ".exe" } else { "" };
+    let remote_path = format!("{}/.cache/lumen-edit/agent-{hash:016x}{exe}", remote.home);
     let quoted = shell_quote(&remote_path);
 
     let check = format!("[ -x {quoted} ] && {quoted} --version");
     if run_with_input(&mut remote.ssh_command(&check, false), None).is_err() {
         let upload = format!(
-            "mkdir -p \"$HOME/.cache/codium-rs\" && cat > {quoted}.tmp && chmod +x {quoted}.tmp && mv -f {quoted}.tmp {quoted} && {quoted} --version"
+            "mkdir -p \"$HOME/.cache/lumen-edit\" && cat > {quoted}.tmp && chmod +x {quoted}.tmp && mv -f {quoted}.tmp {quoted} && {quoted} --version"
         );
-        run_with_input(&mut remote.ssh_command(&upload, false), Some(&data))
-            .map_err(|e| format!("не удалось запустить агент: {e}"))?;
+        run_with_input(&mut remote.ssh_command(&upload, false), Some(&data)).map_err(|e| t!("could not start the agent: {e}", e = e))?;
         // Remove agents left over from older builds.
-        let cleanup = format!(
-            "for f in \"$HOME\"/.cache/codium-rs/agent-*; do [ \"$f\" = {quoted} ] || rm -f \"$f\"; done"
-        );
+        let cleanup = format!("for f in \"$HOME\"/.cache/lumen-edit/agent-*; do [ \"$f\" = {quoted} ] || rm -f \"$f\"; done");
         let _ = run_with_input(&mut remote.ssh_command(&cleanup, false), None);
     }
     spawn(remote, &remote_path)
@@ -156,16 +164,11 @@ fn spawn(remote: &Arc<Remote>, path: &str) -> Result<AgentClient, String> {
         });
     }
 
-    let client = AgentClient {
-        writer: Mutex::new(BufWriter::new(stdin)),
-        pending,
-        next_id: AtomicU64::new(1),
-        alive,
-        child: Mutex::new(child),
-    };
+    let client =
+        AgentClient { writer: Mutex::new(BufWriter::new(stdin)), pending, next_id: AtomicU64::new(1), alive, child: Mutex::new(child) };
     match client.call(Op::Hello, &[]) {
         Ok((Reply::Hello { .. }, _)) => Ok(client),
-        Ok(_) => Err("агент ответил неожиданно".into()),
+        Ok(_) => Err(t!("unexpected answer from the agent").into()),
         Err(error) => Err(error),
     }
 }

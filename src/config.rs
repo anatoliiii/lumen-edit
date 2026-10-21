@@ -1,4 +1,4 @@
-//! User settings and recent projects in `~/.config/codium-rs/config.toml`.
+//! User settings and recent projects in `~/.config/lumen-edit/config.toml`.
 
 use std::{collections::HashMap, path::PathBuf};
 
@@ -16,6 +16,8 @@ pub struct RecentProject {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Interface language: `auto` (system locale), `en` or `ru`.
+    pub language: String,
     pub ui_font_size: f32,
     pub editor_font_size: f32,
     pub terminal_font_size: f32,
@@ -38,6 +40,10 @@ pub struct Config {
     pub agent_model: String,
     /// pi-modes mode applied at start (e.g. build); empty = pi's default.
     pub agent_mode: String,
+    /// Show the agent beside the code instead of in a tab.
+    pub agent_docked: bool,
+    /// Live CPU/memory/disk of the project host in the status bar.
+    pub pulse: bool,
     /// Extra or replacement language servers (matched by `name`).
     pub lsp: Vec<ServerSpec>,
     pub disabled_servers: Vec<String>,
@@ -50,6 +56,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            language: "auto".into(),
             ui_font_size: 13.5,
             editor_font_size: 14.0,
             terminal_font_size: 13.5,
@@ -67,6 +74,8 @@ impl Default for Config {
             agent_sandbox: true,
             agent_model: "openrouter/openai/gpt-6-luna".into(),
             agent_mode: "build".into(),
+            pulse: true,
+            agent_docked: true,
             lsp: Vec::new(),
             disabled_servers: Vec::new(),
             recent: Vec::new(),
@@ -77,14 +86,22 @@ impl Default for Config {
 }
 
 pub fn config_path() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("codium-rs").join("config.toml")
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("lumen-edit").join("config.toml")
 }
 
 impl Config {
     pub fn load() -> Self {
+        // Settings of the editor's former name (Codium RS).
+        let legacy = dirs::config_dir().unwrap_or_default().join("codium-rs").join("config.toml");
+        if !config_path().exists() && legacy.exists() {
+            if let Some(dir) = config_path().parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::copy(&legacy, config_path());
+        }
         match std::fs::read_to_string(config_path()) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|error| {
-                eprintln!("codium-rs: {}: {error}", config_path().display());
+                eprintln!("lumen-edit: {}: {error}", config_path().display());
                 Config::default()
             }),
             Err(_) => Config::default(),

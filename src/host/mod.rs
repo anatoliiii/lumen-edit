@@ -13,22 +13,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use codium_shared::fsops::{self, DirEntry, SearchMatch, SearchQuery, Stat};
+use lumen_shared::fsops::{self, DirEntry, SearchMatch, SearchQuery, Stat};
 
 pub use ssh::Remote;
 
 /// Extra directories where developer tools usually live; GUI sessions and
 /// non-login SSH commands often miss them.
-pub const EXTRA_PATH: &[&str] = &[
-    ".cargo/bin",
-    "go/bin",
-    ".local/bin",
-    ".dotnet/tools",
-    ".bun/bin",
-    ".pi/agent/bin",
-    ".npm-global/bin",
-    "bin",
-];
+pub const EXTRA_PATH: &[&str] =
+    &[".cargo/bin", "go/bin", ".local/bin", ".dotnet/tools", ".bun/bin", ".pi/agent/bin", ".npm-global/bin", "bin"];
 
 #[derive(Clone)]
 pub enum Host {
@@ -47,7 +39,7 @@ impl Host {
 
     pub fn label(&self) -> String {
         match self {
-            Host::Local => "Локально".into(),
+            Host::Local => t!("Local").into(),
             Host::Remote(remote) => format!("SSH: {}", remote.target),
         }
     }
@@ -62,7 +54,7 @@ impl Host {
 
     pub fn home(&self) -> String {
         match self {
-            Host::Local => dirs::home_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into()),
+            Host::Local => dirs::home_dir().map(|p| crate::platform::host_path(&p)).unwrap_or_else(|| "/".into()),
             Host::Remote(remote) => remote.home.clone(),
         }
     }
@@ -157,8 +149,8 @@ impl Host {
     pub fn shell(&self, cwd: &str, script: &str) -> Command {
         match self {
             Host::Local => {
-                let mut command = Command::new("sh");
-                command.arg("-c").arg(script).env("PATH", local_path());
+                let mut command = crate::platform::shell_command(script);
+                command.env("PATH", local_path());
                 if Path::new(cwd).is_dir() {
                     command.current_dir(cwd);
                 }
@@ -199,19 +191,10 @@ impl Host {
 
     /// Command for an interactive terminal (or a task) in a local PTY.
     pub fn pty_command(&self, cwd: &str, task: Option<&str>) -> portable_pty::CommandBuilder {
-        let finish = "printf '\\n\\033[2m[процесс завершён с кодом %s]\\033[0m\\n' $?";
+        let finish = t!("printf '\\n\\033[2m[process exited with code %s]\\033[0m\\n' $?");
         match self {
             Host::Local => {
-                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-                let mut command = match task {
-                    None => portable_pty::CommandBuilder::new(&shell),
-                    Some(script) => {
-                        let mut command = portable_pty::CommandBuilder::new("sh");
-                        command.arg("-c");
-                        command.arg(format!("{script}\n{finish}\nexec {}", shell_quote(&shell)));
-                        command
-                    }
-                };
+                let mut command = crate::platform::terminal_command(task, finish);
                 command.env("PATH", local_path());
                 command.env("TERM", "xterm-256color");
                 command.env("COLORTERM", "truecolor");
@@ -237,10 +220,7 @@ impl Host {
 
 pub fn run_with_input(command: &mut Command, stdin: Option<&[u8]>) -> Result<Vec<u8>, String> {
     use std::io::Write;
-    command
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    command.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     if let Some(data) = stdin {
         let mut pipe = child.stdin.take().unwrap();
@@ -292,36 +272,12 @@ pub fn init_shell_path() {
 }
 
 fn read_shell_path() -> Option<String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-    let mut child = Command::new(&shell)
-        .args(["-l", "-i", "-c", "printf '__CODIUM_PATH__%s__END__' \"$PATH\""])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .env("CODIUM_SHELL_PROBE", "1")
-        .spawn()
-        .ok()?;
-    let started = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() < std::time::Duration::from_secs(5) => std::thread::sleep(std::time::Duration::from_millis(20)),
-            _ => {
-                let _ = child.kill();
-                return None;
-            }
-        }
-    }
-    let mut output = String::new();
-    use std::io::Read;
-    child.stdout.take()?.read_to_string(&mut output).ok()?;
-    let start = output.find("__CODIUM_PATH__")? + "__CODIUM_PATH__".len();
-    let end = output[start..].find("__END__")? + start;
-    Some(output[start..end].to_string()).filter(|p| !p.is_empty())
+    crate::platform::login_shell_path()
 }
 
 pub fn local_path() -> String {
-    let inherited = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".into());
+    let inherited = std::env::var("PATH").unwrap_or_else(|_| crate::platform::DEFAULT_PATH.into());
+    let separator = crate::platform::PATH_SEPARATOR;
     let shell = SHELL_PATH.get().cloned().flatten();
     let home = dirs::home_dir().unwrap_or_default();
     let mut parts: Vec<String> = Vec::new();
@@ -330,26 +286,28 @@ pub fn local_path() -> String {
             parts.push(dir);
         }
     };
-    for dir in shell.iter().flat_map(|p| p.split(':')) {
+    for dir in shell.iter().flat_map(|p| p.split(separator)) {
         push(dir.to_string());
     }
     for dir in EXTRA_PATH {
         push(home.join(dir).to_string_lossy().into_owned());
     }
-    for dir in inherited.split(':') {
+    for dir in inherited.split(separator) {
         push(dir.to_string());
     }
-    parts.join(":")
+    parts.join(&separator.to_string())
 }
 
 fn which_local(program: &str) -> bool {
     if program.contains('/') {
         return Path::new(program).exists();
     }
-    local_path().split(':').any(|dir| {
-        let candidate = Path::new(dir).join(program);
-        candidate.is_file()
-    })
+    local_path().split(crate::platform::PATH_SEPARATOR).any(|dir| crate::platform::program_in(Path::new(dir), program))
+}
+
+/// Whether a host path is absolute (`/…`, or `C:/…` on Windows).
+pub fn is_absolute(path: &str) -> bool {
+    path.starts_with('/') || crate::platform::is_drive_path(path)
 }
 
 /// Joins a child name onto a host path (always `/`-separated on Linux).
@@ -360,7 +318,7 @@ pub fn join(dir: &str, name: &str) -> String {
 pub fn parent(path: &str) -> String {
     match path.trim_end_matches('/').rsplit_once('/') {
         Some(("", _)) => "/".into(),
-        Some((parent, _)) => parent.into(),
+        Some((parent, _)) => crate::platform::drive_root(parent).unwrap_or_else(|| parent.into()),
         None => ".".into(),
     }
 }
@@ -373,6 +331,7 @@ pub fn file_name(path: &str) -> &str {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     fn use_fake_ssh() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/fake-ssh-dir");
         let path = std::env::var("PATH").unwrap_or_default();
@@ -390,7 +349,7 @@ mod tests {
         let entries = host.read_dir(dir).unwrap();
         assert_eq!(entries.iter().map(|e| (e.name.as_str(), e.is_dir)).collect::<Vec<_>>(), vec![("sub", true), ("hello.txt", false)]);
         assert!(!host.stat(&file).unwrap().is_dir);
-        let query = codium_shared::fsops::SearchQuery { pattern: "wor".into(), max_results: 10, ..Default::default() };
+        let query = lumen_shared::fsops::SearchQuery { pattern: "wor".into(), max_results: 10, ..Default::default() };
         let (matches, _) = host.search(dir, &query).unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!((matches[0].line, matches[0].start, matches[0].end), (1, 0, 3));
@@ -399,14 +358,21 @@ mod tests {
         host.rename(&file, &renamed).unwrap();
         host.remove(&renamed).unwrap();
         assert!(host.stat(&renamed).is_err());
-        let out = host.output(dir, "echo", &["a b".to_string()], None).unwrap();
+        // `echo` is a program on Unix but a cmd built-in on Windows.
+        let out = if cfg!(windows) {
+            host.output(dir, "cmd", &["/C".to_string(), "echo a b".to_string()], None).unwrap()
+        } else {
+            host.output(dir, "echo", &["a b".to_string()], None).unwrap()
+        };
         assert_eq!(String::from_utf8_lossy(&out).trim(), "a b");
     }
 
+    /// The fake ssh is a POSIX script and relies on ControlMaster.
     #[test]
+    #[cfg(unix)]
     fn remote_over_fake_ssh() {
         use_fake_ssh();
-        let base = std::env::temp_dir().join(format!("codium-remote-test-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("lumen-remote-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         for (use_agent, name) in [(true, "agent"), (false, "shell")] {
             let dir = base.join(name);
@@ -416,17 +382,18 @@ mod tests {
             let mut master = std::process::Command::new("ssh").args(ssh::master_args(&target)).stdout(Stdio::null()).spawn().unwrap();
             let remote = ssh::wait_and_establish(target, ssh::alive_flag(), use_agent).unwrap();
             assert_eq!(remote.has_agent(), use_agent, "{}", remote.agent_status.lock().unwrap());
-            assert_eq!(remote.arch, std::env::consts::ARCH);
+            assert_eq!((remote.os.as_str(), remote.arch.as_str()), (std::env::consts::OS, std::env::consts::ARCH));
             exercise(&Host::Remote(remote.clone()), &dir.to_string_lossy());
             remote.disconnect();
             let _ = master.kill();
+            let _ = master.wait();
         }
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
     fn local_host() {
-        let dir = std::env::temp_dir().join(format!("codium-local-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("lumen-local-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         exercise(&Host::Local, &dir.to_string_lossy());
         let _ = std::fs::remove_dir_all(&dir);

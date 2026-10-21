@@ -111,12 +111,8 @@ impl LspManager {
     }
 
     pub fn unavailable(&self) -> Vec<String> {
-        let mut list: Vec<String> = self
-            .servers
-            .iter()
-            .filter(|(_, s)| matches!(s, ServerState::Unavailable))
-            .map(|(n, _)| n.clone())
-            .collect();
+        let mut list: Vec<String> =
+            self.servers.iter().filter(|(_, s)| matches!(s, ServerState::Unavailable)).map(|(n, _)| n.clone()).collect();
         list.sort();
         list
     }
@@ -137,7 +133,8 @@ impl LspManager {
         if let Some(client) = self.clients_for(doc).into_iter().find(|c| c.has_capability(capability)) {
             return Ok(client);
         }
-        let starting = lsp::servers_for(doc.lang, &self.specs).iter().any(|s| matches!(self.servers.get(&s.name), Some(ServerState::Starting) | None));
+        let starting =
+            lsp::servers_for(doc.lang, &self.specs).iter().any(|s| matches!(self.servers.get(&s.name), Some(ServerState::Starting) | None));
         Err(starting)
     }
 
@@ -452,9 +449,9 @@ pub fn handle_event(app: &mut App, event: ServerEvent) {
         }
         ServerEvent::Exited { server, .. } => {
             if let Some(ServerState::Ready(_)) = app.lsp.servers.get(&server) {
-                app.lsp.servers.insert(server.clone(), ServerState::Failed("процесс завершился".into()));
+                app.lsp.servers.insert(server.clone(), ServerState::Failed(t!("the process exited").into()));
                 app.lsp.progress.remove(&server);
-                app.notify(format!("Языковой сервер {server} остановился. Перезапуск — через палитру команд."), true);
+                app.notify(t!("Language server {server} stopped. Restart it from the command palette.", server = server), true);
             }
         }
     }
@@ -487,10 +484,13 @@ fn guess_source(manager: &LspManager, doc: &Document, diagnostics: &[lsp_types::
 
 pub fn run_actions(app: &mut App, tab_index: usize, actions: Vec<EditorAction>) {
     for action in actions {
-        crate::debug_log!("editor action {}", match &action {
-            EditorAction::Completion { trigger } => format!("completion {trigger:?}"),
-            _ => "other".into(),
-        });
+        crate::debug_log!(
+            "editor action {}",
+            match &action {
+                EditorAction::Completion { trigger } => format!("completion {trigger:?}"),
+                _ => "other".into(),
+            }
+        );
         let Some(Tab::Doc(doc)) = app.tabs.get_mut(tab_index) else { return };
         match action {
             EditorAction::Completion { trigger } => {
@@ -523,6 +523,10 @@ pub fn run_actions(app: &mut App, tab_index: usize, actions: Vec<EditorAction>) 
                 apply_code_action(app, client, item);
             }
             EditorAction::Format => app.lsp.request(doc, Request::Format { then_save: false }, None),
+            EditorAction::AskAgent(instruction) => {
+                let doc_id = doc.id;
+                super::agent::ask(app, doc_id, instruction.as_deref());
+            }
         }
     }
 }
@@ -675,7 +679,7 @@ pub fn on_result(app: &mut App, doc_id: u64, version: u64, request: Request, cli
                     let utf8 = client.utf8;
                     open_location(app, path, range, utf8);
                 }
-                None => app.notify("Определение не найдено", false),
+                None => app.notify(t!("Definition not found"), false),
             }
         }
         Request::References => {
@@ -691,7 +695,7 @@ pub fn on_result(app: &mut App, doc_id: u64, version: u64, request: Request, cli
             app.panel_open = true;
             app.panel_tab = super::PanelTab::References;
             if app.references.is_empty() {
-                app.notify("Ссылки не найдены", false);
+                app.notify(t!("No references found"), false);
             }
         }
         Request::Rename => {

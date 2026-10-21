@@ -1,4 +1,4 @@
-//! MCP server on stdio (`codium-rs mcp`). Every control method is exposed as
+//! MCP server on stdio (`lumen-edit mcp`). Every control method is exposed as
 //! a tool; calls are forwarded to the running editor, which is started on
 //! demand.
 
@@ -38,8 +38,8 @@ pub fn run(granular: bool) -> Result<(), String> {
                 Ok(json!({
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": { "name": "codium-rs", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "Controls the running Codium RS editor (local or SSH projects). Start with `state`. Paths may be relative to the project root. Lines and columns are 1-based. File edits go through the editor buffers and are undoable; call `save` to write them.",
+                    "serverInfo": { "name": "lumen-edit", "version": env!("CARGO_PKG_VERSION") },
+                    "instructions": "Controls the running Lumen Edit editor (local or SSH projects). Start with `state`. Paths may be relative to the project root. Lines and columns are 1-based. File edits go through the editor buffers and are undoable; call `save` to write them.",
                 }))
             }
             "ping" => Ok(json!({})),
@@ -65,11 +65,23 @@ fn write_message(stdout: &mut std::io::Stdout, message: &Value) {
 /// MCP tools group control methods by entity, selected with `action`, so
 /// the catalog stays small for the agent's context.
 pub const GROUPS: &[(&str, &str, &[(&str, &str)])] = &[
-    ("state", "Editor state: project/host, open files, cursor, git summary, terminals, language servers, problem counts. Call first.", &[("", "state")]),
+    (
+        "state",
+        "Editor state: project/host, open files, cursor, git summary, terminals, language servers, problem counts. Call first.",
+        &[("", "state")],
+    ),
     (
         "workspace",
         "Project and window.",
-        &[("open_folder", "open_folder"), ("connect_ssh", "connect_ssh"), ("close", "close_workspace"), ("notify", "notify"), ("screenshot", "screenshot"), ("quit", "quit")],
+        &[
+            ("open_folder", "open_folder"),
+            ("connect_ssh", "connect_ssh"),
+            ("close", "close_workspace"),
+            ("notify", "notify"),
+            ("screenshot", "screenshot"),
+            ("quit", "quit"),
+            ("pulse", "pulse"),
+        ],
     ),
     (
         "file",
@@ -90,18 +102,41 @@ pub const GROUPS: &[(&str, &str, &[(&str, &str)])] = &[
             ("delete", "delete_path"),
             ("list_dir", "list_dir"),
             ("list_files", "list_files"),
+            ("transfer", "transfer"),
         ],
     ),
     ("search", "Text search across the project.", &[("", "search")]),
     (
         "code",
         "Language intelligence (LSP) and diagnostics.",
-        &[("diagnostics", "diagnostics"), ("hover", "hover"), ("definition", "definition"), ("references", "references"), ("completion", "completion"), ("format", "format"), ("lsp", "lsp")],
+        &[
+            ("diagnostics", "diagnostics"),
+            ("hover", "hover"),
+            ("definition", "definition"),
+            ("references", "references"),
+            ("completion", "completion"),
+            ("format", "format"),
+            ("lsp", "lsp"),
+        ],
     ),
     ("exec", "Run a shell command on the project host (local or SSH) and get stdout/stderr/exit code.", &[("", "exec")]),
-    ("terminal", "Integrated terminals (visible in the GUI).", &[("list", "terminal_list"), ("new", "terminal_new"), ("write", "terminal_write"), ("read", "terminal_read"), ("kill", "terminal_kill")]),
+    (
+        "terminal",
+        "Integrated terminals (visible in the GUI).",
+        &[
+            ("list", "terminal_list"),
+            ("new", "terminal_new"),
+            ("write", "terminal_write"),
+            ("read", "terminal_read"),
+            ("kill", "terminal_kill"),
+        ],
+    ),
     ("task", "Project tasks (run/build/test).", &[("list", "tasks"), ("run", "run_task")]),
-    ("git", "Git in the project repository.", &[("status", "git_status"), ("diff", "git_diff"), ("log", "git_log"), ("commit", "git_commit"), ("run", "git")]),
+    (
+        "git",
+        "Git in the project repository.",
+        &[("status", "git_status"), ("diff", "git_diff"), ("log", "git_log"), ("commit", "git_commit"), ("run", "git")],
+    ),
     ("command", "Any GUI menu/shortcut command by id.", &[("list", "commands"), ("run", "run_command")]),
     ("agent", "The pi coding agent tab in the editor.", &[("", "agent")]),
 ];
@@ -129,7 +164,8 @@ pub fn tools() -> Vec<Value> {
                 if single {
                     required.extend(method.params.iter().filter(|p| p.required).map(|p| p.name));
                 } else {
-                    let args: Vec<String> = method.params.iter().map(|p| if p.required { p.name.to_string() } else { format!("{}?", p.name) }).collect();
+                    let args: Vec<String> =
+                        method.params.iter().map(|p| if p.required { p.name.to_string() } else { format!("{}?", p.name) }).collect();
                     lines.push(format!("{action}({}): {}", args.join(", "), first_sentence(method.description)));
                 }
             }
@@ -169,13 +205,20 @@ pub fn resolve(tool: &str, arguments: &Value) -> Result<&'static str, String> {
 }
 
 pub fn granular_tools() -> Vec<Value> {
-    methods::METHODS.iter().map(|m| json!({ "name": m.name, "description": m.description, "inputSchema": methods::input_schema(m) })).collect()
+    methods::METHODS
+        .iter()
+        .map(|m| json!({ "name": m.name, "description": m.description, "inputSchema": methods::input_schema(m) }))
+        .collect()
 }
 
 fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let mut arguments = params.get("arguments").cloned().unwrap_or(json!({}));
-    let resolved = if granular { methods::find(name).map(|m| m.name).ok_or_else(|| format!("unknown tool: {name}")) } else { resolve(name, &arguments) };
+    let resolved = if granular {
+        methods::find(name).map(|m| m.name).ok_or_else(|| format!("unknown tool: {name}"))
+    } else {
+        resolve(name, &arguments)
+    };
     let method = match resolved {
         Ok(method) => method,
         Err(error) => return tool_error(error),
@@ -187,13 +230,13 @@ fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Val
     // Reconnect once if the editor was restarted.
     for _ in 0..2 {
         if client.is_none() {
-            match super::connect_or_launch(std::env::var_os("CODIUM_MCP_NO_LAUNCH").is_none()) {
+            match super::connect_or_launch(std::env::var_os("LUMEN_MCP_NO_LAUNCH").is_none()) {
                 Ok(c) => *client = Some(c),
                 Err(error) => return tool_error(error),
             }
         }
         match client.as_mut().unwrap().call(method, arguments.clone()) {
-            Err(error) if error.contains("закрыто") || error.contains("Broken pipe") => *client = None,
+            Err(error) if error.contains(t!("closed")) || error.contains("Broken pipe") => *client = None,
             other => {
                 result = Some(other);
                 break;
@@ -212,7 +255,7 @@ fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Val
             json!({ "content": content })
         }
         Some(Err(error)) => tool_error(error),
-        None => tool_error("редактор недоступен".into()),
+        None => tool_error(t!("the editor is not available").into()),
     }
 }
 
@@ -259,7 +302,11 @@ mod tests {
             if method.name == "methods" {
                 continue;
             }
-            assert!(super::GROUPS.iter().any(|(_, _, actions)| actions.iter().any(|(_, m)| *m == method.name)), "{} is not exposed over MCP", method.name);
+            assert!(
+                super::GROUPS.iter().any(|(_, _, actions)| actions.iter().any(|(_, m)| *m == method.name)),
+                "{} is not exposed over MCP",
+                method.name
+            );
         }
         let json = serde_json::to_string(&tools).unwrap();
         // Keep the tool catalog well under ~10k tokens.

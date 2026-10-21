@@ -71,7 +71,14 @@ fn read_message(reader: &mut impl BufRead) -> std::io::Result<Value> {
 
 impl LspClient {
     /// Spawns the server and performs the `initialize` handshake.
-    pub fn start(host: &Host, root: &str, name: &str, command: &str, args: &[String], events: Sender<ServerEvent>) -> Result<Arc<Self>, String> {
+    pub fn start(
+        host: &Host,
+        root: &str,
+        name: &str,
+        command: &str,
+        args: &[String],
+        events: Sender<ServerEvent>,
+    ) -> Result<Arc<Self>, String> {
         let mut child = host
             .command(root, command, args)
             .stdin(Stdio::piped())
@@ -133,7 +140,7 @@ impl LspClient {
         let root_uri = super::path_to_uri(root);
         let params = json!({
             "processId": std::process::id(),
-            "clientInfo": { "name": "codium-rs", "version": env!("CARGO_PKG_VERSION") },
+            "clientInfo": { "name": "lumen-edit", "version": env!("CARGO_PKG_VERSION") },
             "rootUri": root_uri,
             "rootPath": root,
             "workspaceFolders": [{ "uri": root_uri, "name": crate::host::file_name(root) }],
@@ -167,7 +174,7 @@ impl LspClient {
 
     pub fn request_timeout(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
         if !self.is_alive() {
-            return Err(format!("{} не запущен", self.name));
+            return Err(t!("{n1} is not running", n1 = self.name));
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = bounded(1);
@@ -182,7 +189,7 @@ impl LspClient {
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
                 self.notify("$/cancelRequest", json!({ "id": id }));
-                Err(format!("{}: нет ответа на {method}", self.name))
+                Err(t!("{n1}: no answer to {method}", n1 = self.name, method = method))
             }
         }
     }
@@ -258,10 +265,7 @@ fn handle_incoming(message: Value, pending: &Pending, writer: &Mutex<BufWriter<C
             match method.as_str() {
                 "textDocument/publishDiagnostics" => {
                     let uri = params.get("uri").and_then(Value::as_str).unwrap_or("").to_string();
-                    let diagnostics = params
-                        .get("diagnostics")
-                        .and_then(|d| serde_json::from_value(d.clone()).ok())
-                        .unwrap_or_default();
+                    let diagnostics = params.get("diagnostics").and_then(|d| serde_json::from_value(d.clone()).ok()).unwrap_or_default();
                     let _ = events.send(ServerEvent::Diagnostics { uri, diagnostics });
                 }
                 "$/progress" => {
@@ -355,7 +359,7 @@ mod tests {
     #[test]
     #[ignore]
     fn lsp_completion_with_rust_analyzer() {
-        let dir = std::env::temp_dir().join(format!("codium-lsp-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("lumen-lsp-test-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
         let text = "fn main() {\n    let v: Vec<i32> = Vec::new();\n    v.\n}\n";
@@ -368,7 +372,8 @@ mod tests {
         client.notify("textDocument/didOpen", json!({ "textDocument": { "uri": uri, "languageId": "rust", "version": 1, "text": text } }));
         let mut labels = Vec::new();
         for _ in 0..60 {
-            let result = client.request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 6 } }));
+            let result = client
+                .request("textDocument/completion", json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 6 } }));
             labels = crate::lsp::parse_completions(result.unwrap_or(Value::Null), "ra").into_iter().map(|i| i.label).collect();
             if labels.iter().any(|l| l.starts_with("push")) {
                 break;
@@ -378,6 +383,10 @@ mod tests {
         let events: Vec<_> = rx.try_iter().map(|e| format!("{e:?}").chars().take(80).collect::<String>()).collect();
         client.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(labels.iter().any(|l| l.starts_with("push")), "labels: {:?}\nevents: {events:?}", labels.iter().take(10).collect::<Vec<_>>());
+        assert!(
+            labels.iter().any(|l| l.starts_with("push")),
+            "labels: {:?}\nevents: {events:?}",
+            labels.iter().take(10).collect::<Vec<_>>()
+        );
     }
 }

@@ -1,5 +1,5 @@
 //! Remote control of a running editor: a Unix socket speaking JSON lines,
-//! used by the CLI (`codium-rs call ...`) and the MCP server (`codium-rs mcp`).
+//! used by the CLI (`lumen-edit call ...`) and the MCP server (`lumen-edit mcp`).
 //!
 //! Request:  `{"id": 1, "method": "open_file", "params": {"path": "src/main.rs"}}`
 //! Response: `{"id": 1, "result": ...}` or `{"id": 1, "error": "..."}`
@@ -9,13 +9,14 @@ pub mod methods;
 
 use std::{
     io::{BufRead, BufReader, Write},
-    os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
     time::Duration,
 };
 
 use crossbeam_channel::{Sender, bounded};
 use serde_json::{Value, json};
+
+use crate::platform::{ControlListener as UnixListener, ControlStream as UnixStream};
 
 pub type Reply = Sender<Result<Value, String>>;
 
@@ -26,7 +27,7 @@ pub struct ControlRequest {
 }
 
 pub fn socket_dir() -> PathBuf {
-    dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("codium-rs")
+    dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("lumen-edit")
 }
 
 fn current_link() -> PathBuf {
@@ -42,8 +43,7 @@ pub fn serve(dispatch: impl Fn(ControlRequest) + Send + Sync + 'static) -> Optio
     let listener = UnixListener::bind(&path).ok()?;
     // The most recently started editor is the default target.
     let link = current_link();
-    let _ = std::fs::remove_file(&link);
-    let _ = std::os::unix::fs::symlink(&path, &link);
+    crate::platform::mark_current(&path, &link);
 
     let dispatch = std::sync::Arc::new(dispatch);
     std::thread::Builder::new()
@@ -75,7 +75,7 @@ fn handle_connection(stream: UnixStream, dispatch: &(dyn Fn(ControlRequest) + Se
                 match rx.recv_timeout(Duration::from_secs(600)) {
                     Ok(Ok(result)) => json!({ "id": id, "result": result }),
                     Ok(Err(error)) => json!({ "id": id, "error": error }),
-                    Err(_) => json!({ "id": id, "error": "редактор не ответил" }),
+                    Err(_) => json!({ "id": id, "error": t!("the editor did not answer") }),
                 }
             }
             Err(error) => json!({ "id": null, "error": format!("bad request: {error}") }),
@@ -90,20 +90,21 @@ fn handle_connection(stream: UnixStream, dispatch: &(dyn Fn(ControlRequest) + Se
 pub fn cleanup() {
     let path = socket_dir().join(format!("ctl-{}.sock", std::process::id()));
     let _ = std::fs::remove_file(&path);
-    if std::fs::read_link(current_link()).ok().as_ref() == Some(&path) {
+    if crate::platform::current_target(&current_link()).as_ref() == Some(&path) {
         let _ = std::fs::remove_file(current_link());
     }
 }
 
-/// Finds a running editor: `$CODIUM_SOCKET`, the current one, or any live one.
+/// Finds a running editor: `$LUMEN_SOCKET`, the current one, or any live one.
 pub fn find_socket() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("CODIUM_SOCKET").filter(|p| !p.is_empty()) {
+    if let Some(path) = std::env::var_os("LUMEN_SOCKET").filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(path));
     }
     let alive = |path: &PathBuf| UnixStream::connect(path).is_ok();
-    let link = current_link();
-    if alive(&link) {
-        return Some(link);
+    if let Some(current) = crate::platform::current_socket(&current_link())
+        && alive(&current)
+    {
+        return Some(current);
     }
     instances().into_iter().find(alive)
 }
@@ -148,7 +149,7 @@ impl Client {
         let mut line = String::new();
         self.reader.read_line(&mut line).map_err(|e| e.to_string())?;
         if line.is_empty() {
-            return Err("соединение с редактором закрыто".into());
+            return Err(t!("the connection to the editor closed").into());
         }
         let response: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
         match response.get("error") {
@@ -164,11 +165,11 @@ pub fn connect_or_launch(launch: bool) -> Result<Client, String> {
         return Client::connect(&path);
     }
     if !launch {
-        return Err("редактор не запущен (запустите codium-rs или используйте --launch)".into());
+        return Err(t!("the editor is not running (start lumen-edit or use --launch)").into());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::process::Command::new(exe)
-        .env_remove("CODIUM_SOCKET")
+        .env_remove("LUMEN_SOCKET")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -180,5 +181,5 @@ pub fn connect_or_launch(launch: bool) -> Result<Client, String> {
             return Client::connect(&path);
         }
     }
-    Err("редактор не запустился".into())
+    Err(t!("the editor did not start").into())
 }

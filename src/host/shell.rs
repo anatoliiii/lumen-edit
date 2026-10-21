@@ -1,7 +1,7 @@
 //! Filesystem operations over plain SSH commands, used when the agent is not
 //! available on the remote host.
 
-use codium_shared::fsops::{self, DirEntry, SearchMatch, SearchQuery, Stat};
+use lumen_shared::fsops::{self, DirEntry, SearchMatch, SearchQuery, Stat};
 
 use super::{Remote, run_with_input, shell_quote};
 
@@ -14,17 +14,19 @@ pub fn simple(remote: &Remote, script: &str) -> Result<(), String> {
 }
 
 pub fn stat(remote: &Remote, path: &str) -> Result<Stat, String> {
-    let out = run(remote, &format!("stat -L -c '%F|%s|%Y' -- {}", shell_quote(path)), None)?;
+    // GNU stat, then BSD stat (macOS): "directory" / "Directory".
+    let quoted = shell_quote(path);
+    let out = run(remote, &format!("stat -L -c '%F|%s|%Y' -- {quoted} 2>/dev/null || stat -L -f '%HT|%z|%m' -- {quoted}"), None)?;
     let out = String::from_utf8_lossy(&out);
     let mut parts = out.trim().split('|');
     let kind = parts.next().unwrap_or("");
     let size = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
     let mtime: u64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    Ok(Stat { is_dir: kind == "directory", size, mtime: mtime * 1000 })
+    Ok(Stat { is_dir: kind.eq_ignore_ascii_case("directory"), size, mtime: mtime * 1000 })
 }
 
 pub fn read_dir(remote: &Remote, path: &str) -> Result<Vec<DirEntry>, String> {
-    let out = run(remote, &format!("ls -1ApL --color=never -- {}", shell_quote(path)), None)?;
+    let out = run(remote, &format!("ls -1ApL -- {}", shell_quote(path)), None)?;
     let mut entries: Vec<DirEntry> = String::from_utf8_lossy(&out)
         .lines()
         .filter(|line| !line.is_empty())

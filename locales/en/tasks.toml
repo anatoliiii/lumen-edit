@@ -1,0 +1,13 @@
+# Project tasks. Run: F5 (the task with default = true), Ctrl+Shift+B builds.
+# group: run | build | test | other
+
+[[task]]
+label = "run"
+command = "echo 'replace with your command'"
+group = "run"
+default = true
+
+# [[task]]
+# label = "deploy"
+# command = "./deploy.sh"
+# cwd = "scripts"

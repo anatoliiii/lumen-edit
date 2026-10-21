@@ -5,3 +5,8 @@ linker = "rust-lld"
 
 [target.x86_64-unknown-linux-musl]
 linker = "rust-lld"
+
+# Static C runtime, so the editor and the agent run on Windows hosts
+# without the Visual C++ redistributable.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

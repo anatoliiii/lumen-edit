@@ -7,7 +7,7 @@ use std::{
 };
 
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, Event, FontId, Id, Key, Modifiers, Pos2, Rect, Sense, Shape, Stroke, TextFormat, Vec2,
+    self, Align2, Color32, CornerRadius, Event, FontId, Id, Key, Modifiers, Pos2, Rect, RichText, Sense, Shape, Stroke, TextFormat, Vec2,
     pos2, text::LayoutJob, vec2,
 };
 
@@ -22,7 +22,9 @@ use crate::{
 const TEXT_PAD: f32 = 10.0;
 
 pub enum EditorAction {
-    Completion { trigger: Option<String> },
+    Completion {
+        trigger: Option<String>,
+    },
     Hover(usize),
     SignatureHelp,
     GotoDefinition,
@@ -31,6 +33,8 @@ pub enum EditorAction {
     CodeActions,
     ApplyCodeAction(usize),
     Format,
+    /// Quote the selection to the pi agent, optionally with an instruction.
+    AskAgent(Option<String>),
 }
 
 pub struct Completion {
@@ -133,7 +137,15 @@ pub struct ViewState {
 impl ViewState {
     pub fn shift_positions(&mut self, start: usize, old_end: usize, new_end: usize) {
         let delta = new_end as isize - old_end as isize;
-        let shift = |p: usize| if p >= old_end { (p as isize + delta) as usize } else if p > start { start } else { p };
+        let shift = |p: usize| {
+            if p >= old_end {
+                (p as isize + delta) as usize
+            } else if p > start {
+                start
+            } else {
+                p
+            }
+        };
         if let Some(c) = &mut self.completion {
             c.anchor = shift(c.anchor);
         }
@@ -203,6 +215,8 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
         handle_keyboard(ui, doc, settings, actions, visible_lines);
     }
     doc.absorb_edits();
+    // Edits above may have removed lines; everything below uses the new count.
+    let line_count = doc.buffer.line_count();
 
     // --------------------------------------------------------------- mouse
     let tab = doc.buffer.tab_size;
@@ -218,7 +232,8 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
         doc.buffer.char_at(line, col)
     };
 
-    if response.hovered() && pointer.primary_pressed()
+    if response.hovered()
+        && pointer.primary_pressed()
         && let Some(pos) = pointer.interact_pos()
         && !scrollbar_rect.contains(pos)
     {
@@ -381,7 +396,11 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
 
     if single_cursor && cursor_line >= first_line && cursor_line < last_line {
         let y = y_of(cursor_line, scroll.y);
-        painter.rect_filled(Rect::from_min_size(pos2(rect.left(), y), vec2(text_rect.right() - rect.left(), line_h)), 0.0, theme::CURRENT_LINE);
+        painter.rect_filled(
+            Rect::from_min_size(pos2(rect.left(), y), vec2(text_rect.right() - rect.left(), line_h)),
+            0.0,
+            theme::CURRENT_LINE,
+        );
     }
 
     // Merge conflict regions.
@@ -426,7 +445,11 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
                 let x0 = x_of_display(display_col(text, start_col, tab));
                 let x1 = x_of_display(display_col(text, end_col, tab));
                 let y = y_of(*line, scroll.y);
-                text_painter.rect_filled(Rect::from_min_max(pos2(x0, y + 1.0), pos2(x1, y + line_h - 1.0)), CornerRadius::same(2), Color32::from_rgba_unmultiplied(120, 130, 150, 40));
+                text_painter.rect_filled(
+                    Rect::from_min_max(pos2(x0, y + 1.0), pos2(x1, y + line_h - 1.0)),
+                    CornerRadius::same(2),
+                    Color32::from_rgba_unmultiplied(120, 130, 150, 40),
+                );
             }
         }
     }
@@ -448,7 +471,19 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     let selection_color = if focused { theme::SELECTION } else { theme::SELECTION_INACTIVE };
     for selection in &doc.buffer.selections {
         if !selection.is_empty() {
-            paint_range(&text_painter, doc, selection.range(), selection_color, &lines, first_line, &y_of, &x_of_display, line_h, char_w, scroll.y);
+            paint_range(
+                &text_painter,
+                doc,
+                selection.range(),
+                selection_color,
+                &lines,
+                first_line,
+                &y_of,
+                &x_of_display,
+                line_h,
+                char_w,
+                scroll.y,
+            );
         }
     }
 
@@ -490,7 +525,8 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     let first_char = doc.buffer.char_at(first_line, 0);
     let last_char = doc.buffer.char_at(last_line.saturating_sub(1), usize::MAX);
     let mut line_messages: std::collections::BTreeMap<usize, (Severity, String)> = Default::default();
-    let mut diagnostics: Vec<&lsp::Diagnostic> = doc.all_diagnostics().filter(|d| d.range.end >= first_char && d.range.start <= last_char).collect();
+    let mut diagnostics: Vec<&lsp::Diagnostic> =
+        doc.all_diagnostics().filter(|d| d.range.end >= first_char && d.range.start <= last_char).collect();
     diagnostics.sort_by_key(|d| std::cmp::Reverse(d.severity));
     for d in &diagnostics {
         let color = severity_color(d.severity);
@@ -542,11 +578,11 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     {
         let changed = doc.line_changes.iter().any(|(l, c)| *l == cursor_line && *c != LineChange::DeletedAbove);
         let label = if changed {
-            Some("Вы • не закоммичено".to_string())
+            Some(t!("You • not committed").to_string())
         } else {
             doc.blame.as_ref().and_then(|blame| blame.get(cursor_line)).map(|b| {
                 if b.hash.starts_with("0000000") {
-                    "Вы • не закоммичено".to_string()
+                    t!("You • not committed").to_string()
                 } else {
                     format!("{}, {} • {}", b.author, util::time_ago(b.time), b.summary)
                 }
@@ -556,7 +592,13 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
             let end = display_col(text, text.chars().count(), tab);
             let x = x_of_display(end) + char_w * 4.0;
             let y = y_of(cursor_line, scroll.y) + line_h / 2.0;
-            text_painter.text(pos2(x, y), Align2::LEFT_CENTER, util::truncate_middle(&label, 120), FontId::proportional(settings.font_size - 1.5), theme::FAINT_TEXT);
+            text_painter.text(
+                pos2(x, y),
+                Align2::LEFT_CENTER,
+                util::truncate_middle(&label, 120),
+                FontId::proportional(settings.font_size - 1.5),
+                theme::FAINT_TEXT,
+            );
         }
     }
 
@@ -627,7 +669,13 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
             _ if *line == cursor_line => theme::LINE_NUMBER_ACTIVE,
             _ => theme::LINE_NUMBER,
         };
-        gutter_painter.text(pos2(gutter_rect.right() - 14.0, y + line_h / 2.0), Align2::RIGHT_CENTER, (line + 1).to_string(), number_font.clone(), color);
+        gutter_painter.text(
+            pos2(gutter_rect.right() - 14.0, y + line_h / 2.0),
+            Align2::RIGHT_CENTER,
+            (line + 1).to_string(),
+            number_font.clone(),
+            color,
+        );
     }
     let marker_x = gutter_rect.right() - 6.0;
     for &(line, change) in &doc.line_changes {
@@ -663,13 +711,21 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     if let Some(find) = &doc.view.find {
         for m in find.matches.iter().take(2000) {
             let (line, _) = doc.buffer.line_col(m.start);
-            painter.rect_filled(Rect::from_min_size(pos2(scrollbar_rect.left() + 5.0, ruler_y(line)), vec2(4.0, 2.0)), 0.0, Color32::from_rgb(200, 170, 70));
+            painter.rect_filled(
+                Rect::from_min_size(pos2(scrollbar_rect.left() + 5.0, ruler_y(line)), vec2(4.0, 2.0)),
+                0.0,
+                Color32::from_rgb(200, 170, 70),
+            );
         }
     }
     for d in doc.all_diagnostics() {
         if d.severity <= Severity::Warning {
             let (line, _) = doc.buffer.line_col(d.range.start);
-            painter.rect_filled(Rect::from_min_size(pos2(scrollbar_rect.right() - 4.0, ruler_y(line)), vec2(3.0, 2.0)), 0.0, severity_color(d.severity));
+            painter.rect_filled(
+                Rect::from_min_size(pos2(scrollbar_rect.right() - 4.0, ruler_y(line)), vec2(3.0, 2.0)),
+                0.0,
+                severity_color(d.severity),
+            );
         }
     }
     if max_scroll_y > 0.0 {
@@ -683,7 +739,10 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
         );
     }
     let cursor_y = ruler_y(cursor_line);
-    painter.line_segment([pos2(scrollbar_rect.left(), cursor_y), pos2(scrollbar_rect.right(), cursor_y)], Stroke::new(1.0, Color32::from_white_alpha(60)));
+    painter.line_segment(
+        [pos2(scrollbar_rect.left(), cursor_y), pos2(scrollbar_rect.right(), cursor_y)],
+        Stroke::new(1.0, Color32::from_white_alpha(60)),
+    );
 
     // Conflict buttons.
     let conflicts = doc.view.conflicts.clone();
@@ -694,7 +753,7 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
         let y = y_of(conflict.start, scroll.y);
         let mut x = text_rect.right() - 12.0;
         let mut choice = None;
-        for (label, which) in [("Оба", 2), ("Принять входящее", 1), ("Принять текущее", 0)] {
+        for (label, which) in [(t!("Both"), 2), (t!("Accept incoming"), 1), (t!("Accept current"), 0)] {
             let galley = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(12.0), theme::ACCENT);
             let w = galley.size().x + 12.0;
             x -= w + 6.0;
@@ -713,35 +772,108 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     }
 
     // Hover detection.
-    if response.hovered() && doc.view.drag_mode.is_none() && !pointer.any_down()
-        && let Some(pos) = pointer.hover_pos().filter(|p| text_rect.contains(*p)) {
-            let at = char_at_pos(doc, pos);
-            let on_text = doc.buffer.char(at).is_some_and(|c| !c.is_whitespace()) || at > 0 && doc.buffer.char(at - 1).is_some_and(is_word);
-            match doc.view.hover_candidate {
-                Some((candidate, since, fired)) if doc.buffer.word_at(candidate) == doc.buffer.word_at(at) && candidate.abs_diff(at) < 40 => {
-                    if !fired && since.elapsed() > Duration::from_millis(450) && on_text {
-                        doc.view.hover_candidate = Some((candidate, since, true));
-                        let diagnostics_here: Vec<String> = doc
-                            .all_diagnostics()
-                            .filter(|d| d.range.start <= at && at <= d.range.end.max(d.range.start + 1))
-                            .map(|d| format!("{}: {}", d.source, d.message))
-                            .collect();
-                        doc.view.hover = Some(HoverPopup { text: diagnostics_here.join("\n\n"), anchor: at, pos });
-                        if settings.has_lsp {
-                            actions.push(EditorAction::Hover(at));
-                        }
-                    } else if !fired {
-                        ui.ctx().request_repaint_after(Duration::from_millis(120));
+    if response.hovered()
+        && doc.view.drag_mode.is_none()
+        && !pointer.any_down()
+        && let Some(pos) = pointer.hover_pos().filter(|p| text_rect.contains(*p))
+    {
+        let at = char_at_pos(doc, pos);
+        let on_text = doc.buffer.char(at).is_some_and(|c| !c.is_whitespace()) || at > 0 && doc.buffer.char(at - 1).is_some_and(is_word);
+        match doc.view.hover_candidate {
+            Some((candidate, since, fired)) if doc.buffer.word_at(candidate) == doc.buffer.word_at(at) && candidate.abs_diff(at) < 40 => {
+                if !fired && since.elapsed() > Duration::from_millis(450) && on_text {
+                    doc.view.hover_candidate = Some((candidate, since, true));
+                    let diagnostics_here: Vec<String> = doc
+                        .all_diagnostics()
+                        .filter(|d| d.range.start <= at && at <= d.range.end.max(d.range.start + 1))
+                        .map(|d| format!("{}: {}", d.source, d.message))
+                        .collect();
+                    doc.view.hover = Some(HoverPopup { text: diagnostics_here.join("\n\n"), anchor: at, pos });
+                    if settings.has_lsp {
+                        actions.push(EditorAction::Hover(at));
                     }
-                }
-                _ => {
-                    doc.view.hover_candidate = Some((at, Instant::now(), false));
-                    ui.ctx().request_repaint_after(Duration::from_millis(500));
+                } else if !fired {
+                    ui.ctx().request_repaint_after(Duration::from_millis(120));
                 }
             }
+            _ => {
+                doc.view.hover_candidate = Some((at, Instant::now(), false));
+                ui.ctx().request_repaint_after(Duration::from_millis(500));
+            }
         }
+    }
 
     response.clone().on_hover_cursor(egui::CursorIcon::Text);
+
+    // Right click outside the selection moves the cursor there first.
+    if response.secondary_clicked()
+        && let Some(pos) = pointer.interact_pos()
+    {
+        let at = char_at_pos(doc, pos);
+        if !doc.buffer.selections.iter().any(|s| s.range().contains(&at)) {
+            doc.buffer.set_cursor(at, false);
+        }
+        response.request_focus();
+    }
+    response.context_menu(|ui| {
+        ui.set_min_width(250.0);
+        let has_selection = !doc.buffer.primary().is_empty();
+        let shortcut = |text: &str| RichText::new(text.to_string()).color(theme::FAINT_TEXT);
+        if ui.add_enabled(has_selection, egui::Button::new(t!("Cut")).shortcut_text(shortcut("Ctrl+X"))).clicked() {
+            ui.ctx().copy_text(doc.buffer.selected_text());
+            doc.buffer.delete_backward(false);
+            ui.close();
+        }
+        if ui.add_enabled(has_selection, egui::Button::new(t!("Copy")).shortcut_text(shortcut("Ctrl+C"))).clicked() {
+            ui.ctx().copy_text(doc.buffer.selected_text());
+            ui.close();
+        }
+        if settings.has_lsp {
+            ui.separator();
+            if ui.add(egui::Button::new(t!("Go to Definition")).shortcut_text(shortcut("F12"))).clicked() {
+                actions.push(EditorAction::GotoDefinition);
+                ui.close();
+            }
+            if ui.add(egui::Button::new(t!("Find All References")).shortcut_text(shortcut("Shift+F12"))).clicked() {
+                actions.push(EditorAction::References);
+                ui.close();
+            }
+            if ui.add(egui::Button::new(t!("Rename Symbol")).shortcut_text(shortcut("F2"))).clicked() {
+                let word = doc.buffer.word_at(doc.buffer.primary().head);
+                doc.view.rename = Some(RenamePopup { text: doc.buffer.slice(word), focus: true });
+                ui.close();
+            }
+            if ui.add(egui::Button::new(t!("Quick fixes")).shortcut_text(shortcut("Ctrl+."))).clicked() {
+                actions.push(EditorAction::CodeActions);
+                ui.close();
+            }
+            if ui.add(egui::Button::new(t!("Format Document")).shortcut_text(shortcut("Ctrl+Shift+I"))).clicked() {
+                actions.push(EditorAction::Format);
+                ui.close();
+            }
+        }
+        ui.separator();
+        let what = if has_selection { t!("the selected fragment") } else { t!("the current line") };
+        ui.menu_button(RichText::new(t!("π  Ask the agent")).color(theme::ACCENT), |ui| {
+            ui.set_min_width(260.0);
+            ui.label(RichText::new(t!("Sends {what}", what = what)).small().color(theme::FAINT_TEXT));
+            let asks: [(&str, Option<&str>); 5] = [
+                (t!("Add to chat (your own question)"), None),
+                (t!("Explain"), Some(t!("Explain what this fragment does and why."))),
+                (t!("Find bugs"), Some(t!("Find bugs and potential problems in this fragment. Do not change files, only describe them."))),
+                (t!("Fix / improve"), Some(t!("Fix the problems and improve this fragment, then briefly describe the changes."))),
+                (t!("Write tests"), Some(t!("Write tests for this fragment in the style of the project."))),
+            ];
+            for (label, instruction) in asks {
+                if ui.button(label).clicked() {
+                    actions.push(EditorAction::AskAgent(instruction.map(str::to_string)));
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text(t!("Ctrl+Alt+A — add the selection to the chat"));
+    });
 
     // ------------------------------------------------------------- popups
     show_popups(ui, doc, settings, actions, primary_cursor_rect, text_rect, line_h);
@@ -813,7 +945,16 @@ fn paint_range(
 /// Builds the syntax-colored layout for the visible columns of one line.
 /// Returns the job and the line's display width.
 #[allow(clippy::too_many_arguments)]
-fn layout_line(doc: &Document, line: usize, text: &str, font: &FontId, tab: usize, first_display: usize, last_display: usize, show_whitespace: bool) -> (LayoutJob, usize) {
+fn layout_line(
+    doc: &Document,
+    line: usize,
+    text: &str,
+    font: &FontId,
+    tab: usize,
+    first_display: usize,
+    last_display: usize,
+    show_whitespace: bool,
+) -> (LayoutJob, usize) {
     let mut job = LayoutJob::default();
     let line_start_byte = doc.buffer.rope.line_to_byte(line);
     let spans = &doc.spans;
@@ -907,9 +1048,7 @@ fn update_conflicts(doc: &mut Document) {
 /// 0 = keep current (ours), 1 = incoming (theirs), 2 = both.
 fn resolve_conflict(doc: &mut Document, conflict: Conflict, which: u8) {
     let buffer = &doc.buffer;
-    let line_range = |from: usize, to: usize| -> String {
-        (from..to).map(|l| format!("{}\n", buffer.line_text(l))).collect()
-    };
+    let line_range = |from: usize, to: usize| -> String { (from..to).map(|l| format!("{}\n", buffer.line_text(l))).collect() };
     // diff3 style has a `|||||||` base section inside "ours".
     let mut ours_end = conflict.middle;
     for line in conflict.start + 1..conflict.middle {
@@ -979,14 +1118,14 @@ fn update_find(doc: &mut Document) {
     if find.query.is_empty() {
         return;
     }
-    let query = codium_shared::fsops::SearchQuery {
+    let query = lumen_shared::fsops::SearchQuery {
         pattern: find.query.clone(),
         regex: find.regex,
         case_sensitive: find.case_sensitive,
         whole_word: find.whole_word,
         max_results: 0,
     };
-    match codium_shared::fsops::build_regex(&query) {
+    match lumen_shared::fsops::build_regex(&query) {
         Ok(regex) => {
             let text = doc.buffer.rope.to_string();
             for m in regex.find_iter(&text).take(20_000) {
@@ -1027,7 +1166,8 @@ fn replace_current(doc: &mut Document) {
     let Some(find) = &doc.view.find else { return };
     let Some(m) = find.matches.get(find.current).cloned() else { return };
     let replacement = replacement_for(find, &doc.buffer.slice(m.clone()));
-    doc.buffer.apply_edits_with_selection(vec![(m.clone(), replacement.clone())], vec![Selection::cursor(m.start + replacement.chars().count())]);
+    doc.buffer
+        .apply_edits_with_selection(vec![(m.clone(), replacement.clone())], vec![Selection::cursor(m.start + replacement.chars().count())]);
     doc.absorb_edits();
     find_step(doc, true);
 }
@@ -1035,7 +1175,8 @@ fn replace_current(doc: &mut Document) {
 fn replace_all(doc: &mut Document) {
     update_find(doc);
     let Some(find) = &doc.view.find else { return };
-    let edits: Vec<(Range<usize>, String)> = find.matches.iter().map(|m| (m.clone(), replacement_for(find, &doc.buffer.slice(m.clone())))).collect();
+    let edits: Vec<(Range<usize>, String)> =
+        find.matches.iter().map(|m| (m.clone(), replacement_for(find, &doc.buffer.slice(m.clone())))).collect();
     doc.buffer.apply_edits(edits);
 }
 
@@ -1043,14 +1184,14 @@ fn replacement_for(find: &FindState, matched: &str) -> String {
     if !find.regex {
         return find.replace.clone();
     }
-    let query = codium_shared::fsops::SearchQuery {
+    let query = lumen_shared::fsops::SearchQuery {
         pattern: find.query.clone(),
         regex: true,
         case_sensitive: find.case_sensitive,
         whole_word: find.whole_word,
         max_results: 0,
     };
-    match codium_shared::fsops::build_regex(&query) {
+    match lumen_shared::fsops::build_regex(&query) {
         Ok(regex) => regex.replace(matched, find.replace.as_str()).into_owned(),
         Err(_) => find.replace.clone(),
     }
@@ -1071,10 +1212,10 @@ fn show_find_bar(ui: &mut egui::Ui, doc: &mut Document, text_rect: Rect) {
                 ui.set_width(width);
                 ui.horizontal(|ui| {
                     let toggle = if find.show_replace { "▾" } else { "▸" };
-                    if ui.small_button(toggle).on_hover_text("Замена").clicked() {
+                    if ui.small_button(toggle).on_hover_text(t!("Toggle replace")).clicked() {
                         find.show_replace = !find.show_replace;
                     }
-                    let input = ui.add(egui::TextEdit::singleline(&mut find.query).hint_text("Найти").desired_width(200.0));
+                    let input = ui.add(egui::TextEdit::singleline(&mut find.query).hint_text(t!("Find")).desired_width(200.0));
                     if find.focus_query {
                         input.request_focus();
                         find.focus_query = false;
@@ -1086,13 +1227,13 @@ fn show_find_bar(ui: &mut egui::Ui, doc: &mut Document, text_rect: Rect) {
                     if input.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
                         close = true;
                     }
-                    ui.toggle_value(&mut find.case_sensitive, "Aa").on_hover_text("Учитывать регистр");
-                    ui.toggle_value(&mut find.whole_word, "ab").on_hover_text("Слово целиком");
-                    ui.toggle_value(&mut find.regex, ".*").on_hover_text("Регулярное выражение");
+                    ui.toggle_value(&mut find.case_sensitive, "Aa").on_hover_text(t!("Match case"));
+                    ui.toggle_value(&mut find.whole_word, "ab").on_hover_text(t!("Whole word"));
+                    ui.toggle_value(&mut find.regex, ".*").on_hover_text(t!("Regular expression"));
                     let status = if find.error.is_some() {
-                        egui::RichText::new("ошибка").color(theme::ERROR).small()
+                        egui::RichText::new(t!("error")).color(theme::ERROR).small()
                     } else if find.matches.is_empty() {
-                        egui::RichText::new("нет").color(theme::MUTED_TEXT).small()
+                        egui::RichText::new(t!("none")).color(theme::MUTED_TEXT).small()
                     } else {
                         egui::RichText::new(format!("{}/{}", find.current + 1, find.matches.len())).color(theme::MUTED_TEXT).small()
                     };
@@ -1110,15 +1251,15 @@ fn show_find_bar(ui: &mut egui::Ui, doc: &mut Document, text_rect: Rect) {
                 if find.show_replace {
                     ui.horizontal(|ui| {
                         ui.add_space(22.0);
-                        let input = ui.add(egui::TextEdit::singleline(&mut find.replace).hint_text("Заменить").desired_width(200.0));
+                        let input = ui.add(egui::TextEdit::singleline(&mut find.replace).hint_text(t!("Replace")).desired_width(200.0));
                         if input.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                             do_replace = true;
                             input.request_focus();
                         }
-                        if ui.button("Заменить").clicked() {
+                        if ui.button(t!("Replace")).clicked() {
                             do_replace = true;
                         }
-                        if ui.button("Все").clicked() {
+                        if ui.button(t!("All")).clicked() {
                             do_replace_all = true;
                         }
                     });
@@ -1179,7 +1320,13 @@ fn show_popups(
                                 ui.painter().rect_filled(rect, CornerRadius::same(3), theme::SURFACE_HOVER);
                             }
                             let (icon, color) = lsp::kind_icon(item.kind);
-                            ui.painter().text(rect.left_center() + vec2(12.0, 0.0), Align2::CENTER_CENTER, icon, FontId::proportional(13.0), color);
+                            ui.painter().text(
+                                rect.left_center() + vec2(12.0, 0.0),
+                                Align2::CENTER_CENTER,
+                                icon,
+                                FontId::proportional(13.0),
+                                color,
+                            );
                             let job = util::highlighted_label(&item.label, matches, theme::TEXT, theme::ACCENT, 13.5);
                             let galley = ui.painter().layout_job(job);
                             let label_w = galley.size().x;
@@ -1188,7 +1335,13 @@ fn show_popups(
                                 let available = rect.width() - label_w - 40.0;
                                 if available > 40.0 {
                                     let detail = util::truncate_middle(&item.detail, (available / 7.0) as usize);
-                                    ui.painter().text(rect.right_center() - vec2(6.0, 0.0), Align2::RIGHT_CENTER, detail, FontId::proportional(12.0), theme::MUTED_TEXT);
+                                    ui.painter().text(
+                                        rect.right_center() - vec2(6.0, 0.0),
+                                        Align2::RIGHT_CENTER,
+                                        detail,
+                                        FontId::proportional(12.0),
+                                        theme::MUTED_TEXT,
+                                    );
                                 }
                             }
                             if response.clicked() {
@@ -1247,7 +1400,7 @@ fn show_popups(
                     egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
                         ui.set_max_width(640.0);
                         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                            render_markdown(ui, &hover.text, settings.font_size);
+                            let _ = render_markdown(ui, &hover.text, settings.font_size);
                         });
                     });
                 });
@@ -1275,7 +1428,7 @@ fn show_popups(
                 egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
                     ui.set_min_width(260.0);
                     if popup.titles.is_empty() {
-                        ui.label(egui::RichText::new("Нет доступных действий").color(theme::MUTED_TEXT));
+                        ui.label(egui::RichText::new(t!("No actions available")).color(theme::MUTED_TEXT));
                     }
                     for (i, title) in popup.titles.iter().enumerate() {
                         if ui.selectable_label(i == popup.selected, title).clicked() {
@@ -1311,12 +1464,11 @@ fn show_popups(
     // Rename input.
     if let (Some(rename), Some(cursor)) = (&mut doc.view.rename, cursor_rect) {
         let mut done = None;
-        egui::Area::new(Id::new(("rename", doc.id)))
-            .order(egui::Order::Foreground)
-            .fixed_pos(cursor.left_bottom() + vec2(0.0, 2.0))
-            .show(&ctx, |ui| {
+        egui::Area::new(Id::new(("rename", doc.id))).order(egui::Order::Foreground).fixed_pos(cursor.left_bottom() + vec2(0.0, 2.0)).show(
+            &ctx,
+            |ui| {
                 egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-                    ui.label(egui::RichText::new("Переименовать (Enter — применить)").small().color(theme::MUTED_TEXT));
+                    ui.label(egui::RichText::new(t!("Rename (Enter to apply)")).small().color(theme::MUTED_TEXT));
                     let input = ui.add(egui::TextEdit::singleline(&mut rename.text).desired_width(260.0));
                     if rename.focus {
                         input.request_focus();
@@ -1326,7 +1478,8 @@ fn show_popups(
                         done = Some(ui.input(|i| i.key_pressed(Key::Enter)));
                     }
                 });
-            });
+            },
+        );
         if let Some(apply) = done {
             if apply && !rename.text.trim().is_empty() {
                 actions.push(EditorAction::Rename(rename.text.trim().to_string()));
@@ -1342,8 +1495,8 @@ pub fn strip_markdown(text: &str) -> String {
 }
 
 /// Markdown for hovers and agent replies.
-pub fn render_markdown(ui: &mut egui::Ui, text: &str, size: f32) {
-    super::markdown::render(ui, text, size);
+pub fn render_markdown(ui: &mut egui::Ui, text: &str, size: f32) -> Option<String> {
+    super::markdown::render(ui, text, size)
 }
 
 pub fn accept_completion(doc: &mut Document) {
@@ -1374,7 +1527,13 @@ pub fn accept_completion(doc: &mut Document) {
     doc.view.reveal = true;
 }
 
-fn handle_keyboard(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, actions: &mut Vec<EditorAction>, visible_lines: usize) {
+fn handle_keyboard(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    settings: &EditorSettings,
+    actions: &mut Vec<EditorAction>,
+    visible_lines: usize,
+) {
     let events = ui.input(|i| i.events.clone());
     let tab = doc.buffer.tab_size;
     let mut typed: Option<String> = None;
@@ -1412,10 +1571,9 @@ fn handle_keyboard(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSetti
                 }
                 doc.view.reveal = true;
             }
-            Event::Key { key, pressed: true, modifiers, .. }
-                if handle_key(doc, key, modifiers, actions, visible_lines, tab, settings) => {
-                    moved = true;
-                }
+            Event::Key { key, pressed: true, modifiers, .. } if handle_key(doc, key, modifiers, actions, visible_lines, tab, settings) => {
+                moved = true;
+            }
             _ => {}
         }
     }
@@ -1470,7 +1628,15 @@ fn handle_keyboard(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSetti
 }
 
 /// Returns true when the cursor moved without editing.
-fn handle_key(doc: &mut Document, key: Key, m: Modifiers, actions: &mut Vec<EditorAction>, visible_lines: usize, tab: usize, settings: &EditorSettings) -> bool {
+fn handle_key(
+    doc: &mut Document,
+    key: Key,
+    m: Modifiers,
+    actions: &mut Vec<EditorAction>,
+    visible_lines: usize,
+    tab: usize,
+    settings: &EditorSettings,
+) -> bool {
     let ctrl = m.command;
 
     // Completion navigation takes precedence.
@@ -1612,7 +1778,11 @@ fn handle_key(doc: &mut Document, key: Key, m: Modifiers, actions: &mut Vec<Edit
             doc.view.reveal = false;
         }
         Key::Z if ctrl => {
-            if m.shift { doc.buffer.redo() } else { doc.buffer.undo() }
+            if m.shift {
+                doc.buffer.redo()
+            } else {
+                doc.buffer.undo()
+            }
             doc.view.completion = None;
         }
         Key::Y if ctrl => doc.buffer.redo(),
@@ -1668,4 +1838,45 @@ fn handle_key(doc: &mut Document, key: Key, m: Modifiers, actions: &mut Vec<Edit
 
 pub fn refilter_completion(completion: &mut Completion, prefix: &str) {
     completion.refilter(prefix);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: deleting a multi-line selection crashed the frame that
+    /// handled the key, because the line count was taken before the edit.
+    #[test]
+    fn deleting_lines_in_the_same_frame_does_not_panic() {
+        let ctx = egui::Context::default();
+        let mut doc = Document::new(1, "/tmp/t.sh".into(), "a\nbb\nccc\ndddd\neeee\n", 4, true);
+        doc.view.focus_request = true;
+        let settings = EditorSettings {
+            font_size: 14.0,
+            show_whitespace: false,
+            inline_blame: false,
+            completion_triggers: &[],
+            signature_triggers: &[],
+            has_lsp: false,
+        };
+        let mut actions = Vec::new();
+        for frame in 0..3 {
+            let mut input = egui::RawInput::default();
+            if frame == 1 {
+                // Select from line 2 to the end and delete it.
+                let start = doc.buffer.char_at(1, 0);
+                doc.buffer.set_selections(vec![Selection { anchor: start, head: doc.buffer.len_chars() }]);
+                input.events.push(egui::Event::Key {
+                    key: Key::Delete,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+            let mut output = ctx.run_ui(input, |ui| show(ui, &mut doc, &settings, &mut actions));
+            output.textures_delta.clear();
+        }
+        assert_eq!(doc.buffer.text(), "a\n");
+    }
 }

@@ -1,0 +1,13 @@
+# Задачи проекта. Запуск: F5 (задача с default = true), Ctrl+Shift+B — сборка.
+# group: run | build | test | other
+
+[[task]]
+label = "run"
+command = "echo 'замените на свою команду'"
+group = "run"
+default = true
+
+# [[task]]
+# label = "deploy"
+# command = "./deploy.sh"
+# cwd = "scripts"

@@ -43,12 +43,8 @@ pub fn git(host: &Host, cwd: &str, args: &[&str]) -> Result<String, String> {
 pub fn git_verbose(host: &Host, cwd: &str, args: &[&str]) -> Result<String, String> {
     let mut full: Vec<String> = vec!["-c".into(), "color.ui=never".into()];
     full.extend(args.iter().map(|s| s.to_string()));
-    let output = host
-        .command(cwd, "git", &full)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output =
+        host.command(cwd, "git", &full).env("GIT_TERMINAL_PROMPT", "0").stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
     let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)).trim().to_string();
     if output.status.success() { Ok(text) } else { Err(text) }
 }
@@ -296,7 +292,7 @@ pub fn fetch(host: &Host, root: &str) -> Result<String, String> {
     git_verbose(host, root, &["fetch", "--all", "--prune"])
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Branch {
     pub name: String,
     pub remote: bool,
@@ -306,6 +302,8 @@ pub struct Branch {
     pub commit: String,
     pub date: String,
     pub subject: String,
+    /// Root of the worktree that has this branch checked out, if any.
+    pub worktree: String,
 }
 
 pub fn branches(host: &Host, root: &str) -> Result<Vec<Branch>, String> {
@@ -315,7 +313,7 @@ pub fn branches(host: &Host, root: &str) -> Result<Vec<Branch>, String> {
         &[
             "for-each-ref",
             "--sort=-committerdate",
-            "--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(objectname:short)%00%(committerdate:relative)%00%(subject)",
+            "--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(objectname:short)%00%(committerdate:relative)%00%(subject)%00%(worktreepath)",
             "refs/heads",
             "refs/remotes",
         ],
@@ -324,7 +322,7 @@ pub fn branches(host: &Host, root: &str) -> Result<Vec<Branch>, String> {
         .lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('\0').collect();
-            if parts.len() < 7 || parts[0].ends_with("/HEAD") {
+            if parts.len() < 8 || parts[0].ends_with("/HEAD") {
                 return None;
             }
             Some(Branch {
@@ -335,6 +333,7 @@ pub fn branches(host: &Host, root: &str) -> Result<Vec<Branch>, String> {
                 commit: parts[4].to_string(),
                 date: parts[5].to_string(),
                 subject: parts[6].to_string(),
+                worktree: parts[7].to_string(),
             })
         })
         .collect())
@@ -343,8 +342,7 @@ pub fn branches(host: &Host, root: &str) -> Result<Vec<Branch>, String> {
 pub fn checkout(host: &Host, root: &str, branch: &Branch) -> Result<String, String> {
     if branch.remote {
         let local = branch.name.split_once('/').map(|(_, rest)| rest).unwrap_or(&branch.name);
-        git_verbose(host, root, &["switch", "--track", "-c", local, &branch.name])
-            .or_else(|_| git_verbose(host, root, &["switch", local]))
+        git_verbose(host, root, &["switch", "--track", "-c", local, &branch.name]).or_else(|_| git_verbose(host, root, &["switch", local]))
     } else {
         git_verbose(host, root, &["switch", &branch.name])
     }
@@ -518,7 +516,12 @@ pub fn blame(host: &Host, root: &str, path: &str, contents: &str) -> Result<Vec<
     for line in out.lines() {
         if let Some(_content) = line.strip_prefix('\t') {
             if let Some(hash) = current.take() {
-                let info = commits.get(&hash).cloned().unwrap_or(BlameLine { hash: hash.clone(), author: String::new(), time: 0, summary: String::new() });
+                let info = commits.get(&hash).cloned().unwrap_or(BlameLine {
+                    hash: hash.clone(),
+                    author: String::new(),
+                    time: 0,
+                    summary: String::new(),
+                });
                 lines.push(info);
             }
             continue;
@@ -528,7 +531,12 @@ pub fn blame(host: &Host, root: &str, path: &str, contents: &str) -> Result<Vec<
         let rest = parts.next().unwrap_or("");
         if first.len() == 40 && first.chars().all(|c| c.is_ascii_hexdigit()) {
             current = Some(first.to_string());
-            commits.entry(first.to_string()).or_insert_with(|| BlameLine { hash: first.to_string(), author: String::new(), time: 0, summary: String::new() });
+            commits.entry(first.to_string()).or_insert_with(|| BlameLine {
+                hash: first.to_string(),
+                author: String::new(),
+                time: 0,
+                summary: String::new(),
+            });
         } else if let Some(hash) = &current
             && let Some(entry) = commits.get_mut(hash)
         {
@@ -572,12 +580,7 @@ pub fn parse_diff(text: &str) -> Vec<DiffFile> {
         }
         let Some(file) = files.last_mut() else { continue };
         if line.starts_with("@@") {
-            let new_start = line
-                .split('+')
-                .nth(1)
-                .and_then(|s| s.split([',', ' ']).next())
-                .and_then(|n| n.parse().ok())
-                .unwrap_or(1);
+            let new_start = line.split('+').nth(1).and_then(|s| s.split([',', ' ']).next()).and_then(|n| n.parse().ok()).unwrap_or(1);
             file.hunks.push(Hunk { header: line.to_string(), lines: Vec::new(), new_start });
         } else if let Some(hunk) = file.hunks.last_mut() {
             hunk.lines.push(line.to_string());
@@ -647,7 +650,8 @@ mod tests {
 
     #[test]
     fn parses_hunks() {
-        let diff = "diff --git a/x.rs b/x.rs\nindex 1..2 100644\n--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n-a\n+b\n c\n@@ -10 +10 @@\n-x\n+y\n";
+        let diff =
+            "diff --git a/x.rs b/x.rs\nindex 1..2 100644\n--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n-a\n+b\n c\n@@ -10 +10 @@\n-x\n+y\n";
         let files = parse_diff(diff);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "x.rs");
@@ -660,7 +664,7 @@ mod tests {
     #[test]
     fn manages_remotes() {
         let host = Host::Local;
-        let dir = std::env::temp_dir().join(format!("codium-git-remote-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("lumen-git-remote-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let root = dir.to_string_lossy().into_owned();
         init(&host, &root).unwrap();
@@ -670,6 +674,26 @@ mod tests {
         assert_eq!(remotes(&host, &root).unwrap(), vec![Remote { name: "origin".into(), url: "https://example.com/me/repo.git".into() }]);
         remove_remote(&host, &root, "origin").unwrap();
         assert!(remotes(&host, &root).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn finds_branches_in_other_worktrees() {
+        let host = Host::Local;
+        let dir = std::env::temp_dir().join(format!("lumen-git-worktree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.join("main").to_string_lossy().into_owned();
+        let other = dir.join("other").to_string_lossy().into_owned();
+        std::fs::create_dir_all(&root).unwrap();
+        init(&host, &root).unwrap();
+        git(&host, &root, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "init"]).unwrap();
+        git(&host, &root, &["worktree", "add", "-b", "side", &other]).unwrap();
+        let branches = branches(&host, &root).unwrap();
+        let side = branches.iter().find(|b| b.name == "side").unwrap();
+        assert!(!side.current);
+        assert_eq!(std::path::Path::new(&side.worktree).canonicalize().unwrap(), std::path::Path::new(&other).canonicalize().unwrap());
+        assert!(checkout(&host, &root, side).unwrap_err().contains("already used by worktree"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
