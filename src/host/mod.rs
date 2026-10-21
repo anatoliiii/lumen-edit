@@ -382,7 +382,7 @@ mod tests {
             let mut master = std::process::Command::new("ssh").args(ssh::master_args(&target)).stdout(Stdio::null()).spawn().unwrap();
             let remote = ssh::wait_and_establish(target, ssh::alive_flag(), use_agent).unwrap();
             assert_eq!(remote.has_agent(), use_agent, "{}", remote.agent_status.lock().unwrap());
-            assert_eq!(remote.arch, std::env::consts::ARCH);
+            assert_eq!((remote.os.as_str(), remote.arch.as_str()), (std::env::consts::OS, std::env::consts::ARCH));
             exercise(&Host::Remote(remote.clone()), &dir.to_string_lossy());
             remote.disconnect();
             let _ = master.kill();

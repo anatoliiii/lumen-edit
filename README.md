@@ -51,7 +51,7 @@ Open a project locally or on a remote machine over SSH, edit with full language-
 
 ## Installation
 
-Requirements: Linux (x86_64 or aarch64), Rust 1.95 or newer, `git`, `ssh`. Optional: `bwrap` for the agent sandbox, `shellcheck`, language servers.
+Requirements: Linux or macOS (x86_64 or aarch64; Windows builds too), Rust 1.95 or newer, `git`, `ssh`. Optional: `bwrap` for the agent sandbox, `shellcheck`, language servers.
 
 ```sh
 git clone https://github.com/anatoliiii/lumen-edit-rs.git
@@ -60,12 +60,15 @@ cd lumen-edit-rs
 ```
 
 The installer builds the editor and the remote agents, installs `~/.local/bin/lumen-edit`, a desktop entry and icon, and registers the MCP server in Claude Code if it is installed. No root needed.
+On macOS it installs `~/Applications/Lumen Edit.app` and links `~/.local/bin/lumen-edit` to it. Release archives for macOS hold an unsigned app: run `xattr -dr com.apple.quarantine "Lumen Edit.app"` once after unpacking.
+
+Any OS connects to any other over SSH: the agent is picked by the host's `uname` (`lumen-agent-<os>-<arch>`). `build-agents.sh` builds the Linux agents everywhere and the native ones on macOS and Windows; release archives carry agents for all of them. A Windows host needs OpenSSH with Git Bash as its shell (`DefaultShell` in the registry).
 
 Manual build:
 
 ```sh
 cargo build --release
-./scripts/build-agents.sh   # static lumen-agent for x86_64 and aarch64 (needs the musl targets)
+./scripts/build-agents.sh   # lumen-agent for Linux x86_64/aarch64 (musl) and this OS
 ./target/release/lumen-edit
 ```
 

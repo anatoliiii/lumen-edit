@@ -469,6 +469,7 @@
 "the editor did not answer" = "редактор не ответил"
 "the editor did not start" = "редактор не запустился"
 "the editor is not available" = "редактор недоступен"
+"the host did not answer to uname (on Windows set Git Bash as the OpenSSH shell): {e}" = "хост не ответил на uname (на Windows укажите Git Bash как оболочку OpenSSH): {e}"
 "the editor is not running (start lumen-edit or use --launch)" = "редактор не запущен (запустите lumen-edit или используйте --launch)"
 "the file already exists" = "файл уже существует"
 "the host does not look like Linux: no /proc" = "хост не похож на Linux: нет /proc"

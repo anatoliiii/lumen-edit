@@ -1,5 +1,6 @@
 //! Server pulse: live CPU, memory, disks and top processes of the project
-//! host (local or SSH), sampled from /proc with one small shell script.
+//! host (local or SSH), sampled from /proc (sysctl on macOS) with one small
+//! shell script.
 
 use std::{
     collections::VecDeque,
@@ -16,6 +17,20 @@ const INTERVAL: Duration = Duration::from_secs(3);
 const HISTORY: usize = 60;
 
 const SCRIPT: &str = r#"LC_ALL=C
+if [ "$(uname -s)" = Darwin ]; then
+# macOS has no /proc: the same sections from sysctl, vm_stat and top.
+top -l 2 -n 0 -s 1 | awk '/^CPU usage/ { idle = $7 } END { sub("%", "", idle); print "cpu% " 100 - idle }'; echo ---
+pages=$(vm_stat | awk '/page size of/ { size = $8 } /^Pages (free|inactive|speculative|purgeable)/ { gsub("\\.", "", $NF); free += $NF } END { print free * size / 1024 }')
+echo "MemTotal: $(($(sysctl -n hw.memsize) / 1024)) kB"; echo "MemAvailable: ${pages%.*} kB"
+sysctl -n vm.swapusage | awk '{ sub("M", "", $3); sub("M", "", $9); printf "SwapTotal: %d kB\nSwapFree: %d kB\n", $3 * 1024, $9 * 1024 }'; echo ---
+sysctl -n vm.loadavg | tr -d '{}'; echo ---
+echo $(($(date +%s) - $(sysctl -n kern.boottime | sed 's/^{ sec = \([0-9]*\).*/\1/'))); echo ---
+sysctl -n hw.ncpu; echo ---
+df -P -k -l 2>/dev/null | tail -n +2 | grep -v -e '^devfs' -e '^map ' -e ' /System/Volumes/[^D]' -e ' /Library/Developer/'; echo ---
+df -P -k . 2>/dev/null | tail -n 1; echo ---
+ps -Aro pid=,pcpu=,pmem=,rss=,comm= 2>/dev/null | head -n 8 | awk '{ name = $5; for (i = 6; i <= NF; i++) name = name " " $i; sub(".*/", "", name); print $1, $2, $3, $4, name }'; echo ---
+uname -n
+else
 head -n1 /proc/stat; echo ---
 grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo; echo ---
 cat /proc/loadavg; echo ---
@@ -25,6 +40,7 @@ df -P -k -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs 2>/dev/null | t
 df -P -k . 2>/dev/null | tail -n 1; echo ---
 ps -eo pid=,pcpu=,pmem=,rss=,comm= --sort=-pcpu 2>/dev/null | head -n 8; echo ---
 cat /proc/sys/kernel/hostname 2>/dev/null || uname -n
+fi
 true"#;
 
 #[derive(Clone, Default)]
@@ -57,6 +73,8 @@ struct Sample {
     mem_available_kb: u64,
     swap_total_kb: u64,
     swap_free_kb: u64,
+    /// Busy percent measured by the host itself (macOS has no counters).
+    cpu_busy: Option<f32>,
     load: [f32; 3],
     uptime_s: u64,
     cores: u32,
@@ -71,6 +89,9 @@ fn parse(output: &str) -> Sample {
     let section = |i: usize| sections.get(i).copied().unwrap_or("");
     let mut sample = Sample::default();
 
+    if let Some(busy) = section(0).trim().strip_prefix("cpu% ") {
+        sample.cpu_busy = busy.trim().parse().ok();
+    }
     let cpu: Vec<u64> = section(0).split_whitespace().skip(1).filter_map(|v| v.parse().ok()).collect();
     if cpu.len() >= 4 {
         // user nice system idle iowait irq softirq steal
@@ -153,7 +174,9 @@ impl Pulse {
     }
 
     fn update(&mut self, sample: Sample) {
-        if let Some(previous) = &self.sample {
+        if let Some(busy) = sample.cpu_busy {
+            push(&mut self.cpu, busy);
+        } else if let Some(previous) = &self.sample {
             let total = sample.cpu_total.saturating_sub(previous.cpu_total);
             let idle = sample.cpu_idle.saturating_sub(previous.cpu_idle);
             if total > 0 {
@@ -493,7 +516,22 @@ mod tests {
         assert_eq!(sample.hostname, "box");
     }
 
-    /// The script reads Linux `/proc`.
+    #[test]
+    fn parses_macos_sample() {
+        let output = "cpu% 13.5\n---\nMemTotal: 16777216 kB\nMemAvailable: 4194304 kB\nSwapTotal: 2097152 kB\nSwapFree: 1048576 kB\n---\n 1.52 1.81 1.90 \n---\n86400\n---\n10\n---\n/dev/disk3s1s1 482797652 10303580 230047404 5% /\n/dev/disk3s5 482797652 220000000 230047404 49% /System/Volumes/Data\n---\n/dev/disk3s5 482797652 220000000 230047404 49% /System/Volumes/Data\n---\n  612  25.0  1.2 200000 WindowServer\n---\nmac.local\n";
+        let sample = parse(output);
+        assert_eq!(sample.cpu_busy, Some(13.5));
+        assert_eq!(sample.mem_total_kb, 16_777_216);
+        assert_eq!(sample.swap_free_kb, 1_048_576);
+        assert_eq!(sample.load, [1.52, 1.81, 1.9]);
+        assert_eq!(sample.uptime_s, 86400);
+        assert_eq!(sample.cores, 10);
+        assert_eq!(sample.disks.len(), 2);
+        assert_eq!(sample.processes[0].name, "WindowServer");
+        assert_eq!(sample.hostname, "mac.local");
+    }
+
+    /// The script reads Linux `/proc` (or sysctl on macOS).
     #[test]
     #[cfg(unix)]
     fn parses_real_host() {
@@ -501,7 +539,7 @@ mod tests {
         // The editor treats a failing script as an error, so it must succeed.
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         let sample = parse(&String::from_utf8_lossy(&output.stdout));
-        assert!(sample.cpu_total > 0 && sample.mem_total_kb > 0 && sample.cores >= 1);
+        assert!((sample.cpu_total > 0 || sample.cpu_busy.is_some()) && sample.mem_total_kb > 0 && sample.cores >= 1);
         assert!(sample.project_disk.is_some());
         assert!(!sample.hostname.is_empty());
     }

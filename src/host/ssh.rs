@@ -24,6 +24,9 @@ pub struct Remote {
     pub target: String,
     pub control_path: PathBuf,
     pub home: String,
+    /// `linux`, `macos` or `windows` (Rust's names), from `uname -s`.
+    pub os: String,
+    /// `x86_64` or `aarch64` (Rust's names), from `uname -m`.
     pub arch: String,
     agent: Mutex<Option<Arc<AgentClient>>>,
     pub agent_status: Mutex<String>,
@@ -94,6 +97,7 @@ pub fn wait_and_establish(target: String, master_alive: Arc<AtomicBool>, use_age
         control_path: control_path(&target),
         target,
         home: String::new(),
+        os: String::new(),
         arch: String::new(),
         agent: Mutex::new(None),
         agent_status: Mutex::new(t!("agent not used").into()),
@@ -103,10 +107,18 @@ pub fn wait_and_establish(target: String, master_alive: Arc<AtomicBool>, use_age
         watch_root: Mutex::new(None),
     };
 
-    let probe = super::run_with_input(&mut remote.ssh_command("uname -m; printf '%s\\n' \"$HOME\"", false), None)?;
+    // On Windows the SSH shell must be a POSIX one (Git Bash); its home is
+    // turned into C:/... so native programs understand the paths.
+    let probe = super::run_with_input(
+        &mut remote.ssh_command("uname -s; uname -m; cygpath -m \"$HOME\" 2>/dev/null || printf '%s\\n' \"$HOME\"", false),
+        None,
+    )
+    .map_err(|e| t!("the host did not answer to uname (on Windows set Git Bash as the OpenSSH shell): {e}", e = e))?;
     let probe = String::from_utf8_lossy(&probe);
     let mut lines = probe.lines();
-    remote.arch = lines.next().unwrap_or("").trim().to_string();
+    let (os, arch) = platform(lines.next().unwrap_or(""), lines.next().unwrap_or(""));
+    remote.os = os;
+    remote.arch = arch;
     remote.home = lines.next().unwrap_or("/").trim().to_string();
 
     let remote = Arc::new(remote);
@@ -115,6 +127,31 @@ pub fn wait_and_establish(target: String, master_alive: Arc<AtomicBool>, use_age
     }
     spawn_health_check(Arc::downgrade(&remote));
     Ok(remote)
+}
+
+/// Rust's OS and arch names for `uname -s` and `uname -m`.
+pub fn platform(system: &str, machine: &str) -> (String, String) {
+    let system = system.trim();
+    let os = match system {
+        "Linux" => "linux",
+        "Darwin" => "macos",
+        "FreeBSD" => "freebsd",
+        _ if ["MINGW", "MSYS", "CYGWIN"].iter().any(|p| system.starts_with(p)) => "windows",
+        _ => system,
+    };
+    let arch = match machine.trim() {
+        "arm64" | "aarch64" | "armv8l" => "aarch64",
+        "amd64" | "x86_64" | "x64" => "x86_64",
+        other => other,
+    };
+    (os.to_lowercase(), arch.to_string())
+}
+
+impl Remote {
+    /// `<os>-<arch>`, as in agent file names.
+    pub fn platform(&self) -> String {
+        format!("{}-{}", self.os, self.arch)
+    }
 }
 
 /// Every few seconds: notes whether the connection is up and brings back an
@@ -310,4 +347,19 @@ fn log_error(error: &str) {
 #[cfg_attr(not(all(test, unix)), allow(dead_code))]
 pub fn alive_flag() -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(true))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_platforms() {
+        let p = |s, m| platform(s, m);
+        assert_eq!(p("Linux\n", "x86_64\n"), ("linux".into(), "x86_64".into()));
+        assert_eq!(p("Darwin", "arm64"), ("macos".into(), "aarch64".into()));
+        assert_eq!(p("MINGW64_NT-10.0-26100", "x86_64"), ("windows".into(), "x86_64".into()));
+        assert_eq!(super::super::agent::agent_name("windows", "x86_64"), "lumen-agent-windows-x86_64.exe");
+        assert_eq!(super::super::agent::agent_name("macos", "aarch64"), "lumen-agent-macos-aarch64");
+    }
 }

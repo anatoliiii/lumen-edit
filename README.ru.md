@@ -25,7 +25,9 @@
   удалённой машине.
 - **Агент** (`lumen-agent`): маленький статический бинарник, который редактор сам
   загружает на хост (`~/.cache/lumen-edit/`). Даёт быстрый поиск и слежение за файлами.
-  Без него всё работает через обычные shell-команды.
+  Без него всё работает через обычные shell-команды. Подключаться можно с любой ОС
+  на любую: агент выбирается по `uname` хоста (`lumen-agent-<ос>-<arch>`). Хосту на
+  Windows нужен OpenSSH с Git Bash в качестве оболочки (`DefaultShell` в реестре).
 - **Терминал**: полноценный (vim, htop, mc), несколько вкладок, Ctrl+клик по
   `файл:строка:столбец` открывает место в редакторе.
 - **Git**: статус в дереве и отдельная панель, stage/unstage/откат файлов и отдельных
@@ -130,17 +132,23 @@ languages = ["zig"]
 
 ```sh
 cargo build --release
-./scripts/build-agents.sh          # агенты для x86_64 и aarch64 (musl, статические)
+./scripts/build-agents.sh          # агенты для Linux x86_64/aarch64 (musl) и для этой ОС
 ./target/release/lumen-edit [папка [файл]]
 ./target/release/lumen-edit ssh://host/путь/к/проекту
 ```
 
 Для агентов нужны цели `rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl`;
 C-тулчейн для кросс-сборки не нужен (линкуется встроенным `rust-lld`). Редактор ищет
-агентов в `agents/` рядом с бинарником, в `target/agents/`,
+агентов в `agents/` рядом с бинарником, в `target/agents/`, в `Contents/Resources/agents/` пакета `.app`,
 `~/.local/share/lumen-edit/agents/` и `/usr/lib/lumen-edit/agents/`.
 
 На aarch64-машине сам редактор собирается нативно той же командой `cargo build --release`.
+
+**macOS.** `./scripts/install.sh` ставит `~/Applications/Lumen Edit.app` и ссылку
+`~/.local/bin/lumen-edit`; `./scripts/bundle-macos.sh` только собирает `.app`. На macOS
+`build-agents.sh` дополнительно собирает агентов для macOS, на Windows (из Git Bash) — для
+Windows; в архивах релиза лежат агенты для всех ОС. Приложение из релиза не подписано:
+после распаковки один раз выполните `xattr -dr com.apple.quarantine "Lumen Edit.app"`.
 
 ## Горячие клавиши
 

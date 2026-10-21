@@ -1,4 +1,4 @@
-//! Linux and macOS.
+//! Linux and macOS (only the font list differs).
 
 use std::{
     path::{Path, PathBuf},
@@ -115,6 +115,7 @@ pub fn uri_to_path(uri: &str) -> Option<String> {
     url.to_file_path().ok().map(|p| p.to_string_lossy().into_owned())
 }
 
+#[cfg(not(target_os = "macos"))]
 pub const FONTS: FontCandidates = FontCandidates {
     ui: &[
         "/usr/share/fonts/inter/Inter.ttc",
@@ -138,4 +139,19 @@ pub const FONTS: FontCandidates = FontCandidates {
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/noto/NotoSansMath-Regular.ttf",
     ],
+};
+
+/// macOS ships no Inter or JetBrains Mono; its own faces cover Cyrillic.
+/// SF Pro is a variable font, so Helvetica Neue goes first.
+#[cfg(target_os = "macos")]
+pub const FONTS: FontCandidates = FontCandidates {
+    ui: &[
+        "/Library/Fonts/Inter.ttc",
+        "/System/Library/Fonts/HelveticaNeue.ttc",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+    ],
+    mono: &["/Library/Fonts/JetBrainsMono-Regular.ttf", "/System/Library/Fonts/Menlo.ttc", "/System/Library/Fonts/Monaco.ttf"],
+    nerd: &["/Library/Fonts/SymbolsNerdFont-Regular.ttf", "/Library/Fonts/SymbolsNerdFontMono-Regular.ttf"],
+    symbols: &["/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"],
 };

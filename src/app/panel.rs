@@ -561,7 +561,10 @@ fn output(ui: &mut egui::Ui, app: &mut App) {
         {
             let status = remote.agent_status.lock().unwrap().clone();
             ui.label(
-                RichText::new(format!("SSH {} ({}): {status}", remote.target, remote.arch)).monospace().small().color(theme::MUTED_TEXT),
+                RichText::new(format!("SSH {} ({}): {status}", remote.target, remote.platform()))
+                    .monospace()
+                    .small()
+                    .color(theme::MUTED_TEXT),
             );
         }
         let unavailable = app.lsp.unavailable();

@@ -126,7 +126,8 @@ pub fn on_connected(app: &mut App, target: String, result: Result<Arc<Remote>, S
                 app.config.save();
             }
             let status = remote.agent_status.lock().unwrap().clone();
-            app.output.push((t!("SSH {target}: connected ({n1}, {status})", target = target, n1 = remote.arch, status = status), false));
+            app.output
+                .push((t!("SSH {target}: connected ({n1}, {status})", target = target, n1 = remote.platform(), status = status), false));
             let host = Host::Remote(remote);
             if !app.known_hosts.iter().any(|h| h.same(&host)) {
                 app.known_hosts.push(host.clone());

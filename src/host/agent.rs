@@ -68,35 +68,47 @@ impl Drop for AgentClient {
     }
 }
 
-/// Finds an agent binary built for `arch` next to the editor.
-fn local_agent_binary(arch: &str) -> Option<PathBuf> {
+/// Agent file name for a platform: `lumen-agent-<os>-<arch>[.exe]`.
+pub fn agent_name(os: &str, arch: &str) -> String {
+    let exe = if os == "windows" { ".exe" } else { "" };
+    format!("lumen-agent-{os}-{arch}{exe}")
+}
+
+/// Finds an agent binary built for the remote platform next to the editor.
+fn local_agent_binary(os: &str, arch: &str) -> Option<PathBuf> {
+    // Resolved, so a symlink in ~/.local/bin still finds the app bundle.
     let exe = std::env::current_exe().ok()?;
+    let exe = exe.canonicalize().unwrap_or(exe);
     let exe_dir = exe.parent()?.to_path_buf();
-    let name = format!("lumen-agent-{arch}");
+    let name = agent_name(os, arch);
     let mut candidates = vec![
         exe_dir.join("agents").join(&name),
         exe_dir.join(&name),
         exe_dir.join("../agents").join(&name),
         exe_dir.join("../../agents").join(&name),
+        // Inside a macOS app bundle.
+        exe_dir.join("../Resources/agents").join(&name),
     ];
     if let Some(data) = dirs::data_dir() {
         candidates.push(data.join("lumen-edit/agents").join(&name));
     }
     candidates.push(PathBuf::from("/usr/lib/lumen-edit/agents").join(&name));
-    // A native build may work if the remote has the same arch and libc.
-    if arch == std::env::consts::ARCH {
-        candidates.push(exe_dir.join("lumen-agent"));
+    // A native build works on the same OS and arch (and libc on Linux).
+    if os == std::env::consts::OS && arch == std::env::consts::ARCH {
+        let native = format!("lumen-agent{}", std::env::consts::EXE_SUFFIX);
+        candidates.push(exe_dir.join(&native));
         // `cargo test` binaries live in target/<profile>/deps.
-        candidates.push(exe_dir.join("../lumen-agent"));
+        candidates.push(exe_dir.join("..").join(&native));
     }
     candidates.into_iter().find(|path| path.is_file())
 }
 
 pub fn install_and_start(remote: &Arc<Remote>) -> Result<AgentClient, String> {
-    let binary = local_agent_binary(&remote.arch).ok_or_else(|| t!("no agent build for {n1}", n1 = remote.arch))?;
+    let binary = local_agent_binary(&remote.os, &remote.arch).ok_or_else(|| t!("no agent build for {n1}", n1 = remote.platform()))?;
     let data = std::fs::read(&binary).map_err(|e| e.to_string())?;
     let hash = data.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
-    let remote_path = format!("{}/.cache/lumen-edit/agent-{hash:016x}", remote.home);
+    let exe = if remote.os == "windows" { ".exe" } else { "" };
+    let remote_path = format!("{}/.cache/lumen-edit/agent-{hash:016x}{exe}", remote.home);
     let quoted = shell_quote(&remote_path);
 
     let check = format!("[ -x {quoted} ] && {quoted} --version");

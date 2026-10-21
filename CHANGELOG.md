@@ -19,6 +19,9 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 - SSH health check: the host badge turns red when the connection drops; its menu shows connection and agent status, reconnects and restarts the remote agent. A dead agent is restarted automatically once the host answers.
 - Panics are written to `~/.local/state/lumen-edit/crash.log`.
+- macOS: fonts, `.app` bundle (`scripts/bundle-macos.sh`, `install.sh`), server pulse from sysctl/vm_stat/top; CI and releases for macOS and Windows.
+- SSH between any OSes: the host's OS is detected and the agent is picked as `lumen-agent-<os>-<arch>`; release archives carry agents for Linux, macOS and Windows. Windows hosts need Git Bash as the OpenSSH shell.
+- Branches checked out in another worktree are marked; switching to one offers to open that worktree.
 
 ### Fixed
 - Images replaced on disk are shown anew in viewers and Markdown previews (textures were cached by path).
