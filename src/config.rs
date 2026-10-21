@@ -1,6 +1,9 @@
 //! User settings and recent projects in `~/.config/lumen-edit/config.toml`.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +54,9 @@ pub struct Config {
     pub ssh_hosts: Vec<String>,
     /// Open files per project (`host|root`), restored on reopen.
     pub sessions: HashMap<String, Vec<String>>,
+    /// Shortcuts that differ from the defaults: command id -> chords like
+    /// `Ctrl+Shift+P` (Ctrl is Cmd on macOS); `[]` unbinds the command.
+    pub keybindings: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for Config {
@@ -81,6 +87,7 @@ impl Default for Config {
             recent: Vec::new(),
             ssh_hosts: Vec::new(),
             sessions: HashMap::new(),
+            keybindings: BTreeMap::new(),
         }
     }
 }

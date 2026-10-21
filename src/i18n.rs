@@ -63,6 +63,12 @@ pub fn tr(text: &'static str) -> &'static str {
     }
 }
 
+/// The Russian translation of an English text, whatever the current
+/// language (searching commands by either name).
+pub fn russian_of(text: &'static str) -> &'static str {
+    russian().get(text).copied().unwrap_or(text)
+}
+
 /// Substitutes `{name}` placeholders; unknown braces stay as they are.
 pub fn fill(template: &str, args: &[(&str, &dyn Display)]) -> String {
     let mut out = String::with_capacity(template.len() + 16);
@@ -93,6 +99,14 @@ macro_rules! t {
     };
     ($text:literal, $($name:ident = $value:expr),+ $(,)?) => {
         $crate::i18n::fill($crate::i18n::tr($text), &[$((stringify!($name), &$value as &dyn std::fmt::Display)),+])
+    };
+}
+
+/// `t_key!("Text")` marks an English text for translation without
+/// translating it; `i18n::tr` turns it into the current language later.
+macro_rules! t_key {
+    ($text:literal) => {
+        $text
     };
 }
 
@@ -129,11 +143,11 @@ mod tests {
         }
     }
 
-    /// Every `t!("…")` in the sources has a Russian translation, and no
+    /// Every `t!("…")` and `t_key!("…")` in the sources has a Russian translation, and no
     /// Cyrillic text is left outside the catalog.
     #[test]
     fn sources_are_fully_translated() {
-        let literal = regex::Regex::new(r#"\bt!\(\s*"((?:[^"\\]|\\.)*)""#).unwrap();
+        let literal = regex::Regex::new(r#"\bt(?:_key)?!\(\s*"((?:[^"\\]|\\.)*)""#).unwrap();
         let cyrillic = regex::Regex::new(r#""[^"\n]*[А-Яа-яЁё][^"\n]*""#).unwrap();
         let mut missing = Vec::new();
         let mut untranslated = Vec::new();

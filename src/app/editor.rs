@@ -11,7 +11,13 @@ use eframe::egui::{
     pos2, text::LayoutJob, vec2,
 };
 
-use super::{document::Document, util};
+use super::{
+    Command,
+    commands::Scope,
+    document::Document,
+    keymap::{self, Chord},
+    util,
+};
 use crate::{
     git::LineChange,
     lsp::{self, CompletionItem, Severity},
@@ -818,36 +824,39 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     response.context_menu(|ui| {
         ui.set_min_width(250.0);
         let has_selection = !doc.buffer.primary().is_empty();
-        let shortcut = |text: &str| RichText::new(text.to_string()).color(theme::FAINT_TEXT);
-        if ui.add_enabled(has_selection, egui::Button::new(t!("Cut")).shortcut_text(shortcut("Ctrl+X"))).clicked() {
+        let shortcut = |text: Option<String>| RichText::new(text.unwrap_or_default()).color(theme::FAINT_TEXT);
+        // Copy and cut come from the system, they are not in the keymap.
+        let system = |key| Some(Chord { ctrl: true, alt: false, shift: false, key }.label());
+        if ui.add_enabled(has_selection, egui::Button::new(t!("Cut")).shortcut_text(shortcut(system(Key::X)))).clicked() {
             ui.ctx().copy_text(doc.buffer.selected_text());
             doc.buffer.delete_backward(false);
             ui.close();
         }
-        if ui.add_enabled(has_selection, egui::Button::new(t!("Copy")).shortcut_text(shortcut("Ctrl+C"))).clicked() {
+        if ui.add_enabled(has_selection, egui::Button::new(t!("Copy")).shortcut_text(shortcut(system(Key::C)))).clicked() {
             ui.ctx().copy_text(doc.buffer.selected_text());
             ui.close();
         }
         if settings.has_lsp {
             ui.separator();
-            if ui.add(egui::Button::new(t!("Go to Definition")).shortcut_text(shortcut("F12"))).clicked() {
+            if ui.add(egui::Button::new(t!("Go to Definition")).shortcut_text(shortcut(Command::GotoDefinition.shortcut_text()))).clicked()
+            {
                 actions.push(EditorAction::GotoDefinition);
                 ui.close();
             }
-            if ui.add(egui::Button::new(t!("Find All References")).shortcut_text(shortcut("Shift+F12"))).clicked() {
+            if ui.add(egui::Button::new(t!("Find All References")).shortcut_text(shortcut(Command::References.shortcut_text()))).clicked() {
                 actions.push(EditorAction::References);
                 ui.close();
             }
-            if ui.add(egui::Button::new(t!("Rename Symbol")).shortcut_text(shortcut("F2"))).clicked() {
+            if ui.add(egui::Button::new(t!("Rename Symbol")).shortcut_text(shortcut(Command::Rename.shortcut_text()))).clicked() {
                 let word = doc.buffer.word_at(doc.buffer.primary().head);
                 doc.view.rename = Some(RenamePopup { text: doc.buffer.slice(word), focus: true });
                 ui.close();
             }
-            if ui.add(egui::Button::new(t!("Quick fixes")).shortcut_text(shortcut("Ctrl+."))).clicked() {
+            if ui.add(egui::Button::new(t!("Quick fixes")).shortcut_text(shortcut(Command::CodeActions.shortcut_text()))).clicked() {
                 actions.push(EditorAction::CodeActions);
                 ui.close();
             }
-            if ui.add(egui::Button::new(t!("Format Document")).shortcut_text(shortcut("Ctrl+Shift+I"))).clicked() {
+            if ui.add(egui::Button::new(t!("Format Document")).shortcut_text(shortcut(Command::Format.shortcut_text()))).clicked() {
                 actions.push(EditorAction::Format);
                 ui.close();
             }
@@ -1571,7 +1580,9 @@ fn handle_keyboard(
                 }
                 doc.view.reveal = true;
             }
-            Event::Key { key, pressed: true, modifiers, .. } if handle_key(doc, key, modifiers, actions, visible_lines, tab, settings) => {
+            Event::Key { key, physical_key, pressed: true, modifiers, .. }
+                if handle_key(doc, key, physical_key, modifiers, actions, visible_lines, tab, settings) =>
+            {
                 moved = true;
             }
             _ => {}
@@ -1628,9 +1639,11 @@ fn handle_keyboard(
 }
 
 /// Returns true when the cursor moved without editing.
+#[allow(clippy::too_many_arguments)]
 fn handle_key(
     doc: &mut Document,
     key: Key,
+    physical: Option<Key>,
     m: Modifiers,
     actions: &mut Vec<EditorAction>,
     visible_lines: usize,
@@ -1677,32 +1690,21 @@ fn handle_key(
         return false; // handled by the popup
     }
 
+    if let Some(command) = keymap::current().lookup(Scope::Editor, key, physical, m) {
+        run_command(doc, command, actions, settings.has_lsp);
+        return false;
+    }
+
+    // Keys that are not commands: moving, deleting, new lines, indentation.
     doc.view.reveal = true;
     match key {
         Key::ArrowLeft | Key::ArrowRight => {
             doc.buffer.move_horizontal(key == Key::ArrowRight, ctrl || m.alt, m.shift);
             return true;
         }
-        Key::ArrowUp | Key::ArrowDown => {
-            let down = key == Key::ArrowDown;
-            if m.alt && m.shift {
-                if down {
-                    doc.buffer.duplicate_lines();
-                } else {
-                    doc.buffer.duplicate_lines();
-                    doc.buffer.move_vertical(-1, false, tab);
-                }
-            } else if m.alt && ctrl || ctrl && m.shift {
-                doc.buffer.add_cursor_vertical(down, tab);
-            } else if m.alt {
-                doc.buffer.move_lines(down);
-            } else if ctrl {
-                doc.view.scroll.y += if down { 20.0 } else { -20.0 };
-                doc.view.reveal = false;
-            } else {
-                doc.buffer.move_vertical(if down { 1 } else { -1 }, m.shift, tab);
-                return true;
-            }
+        Key::ArrowUp | Key::ArrowDown if !ctrl && !m.alt => {
+            doc.buffer.move_vertical(if key == Key::ArrowDown { 1 } else { -1 }, m.shift, tab);
+            return true;
         }
         Key::Home => {
             if ctrl {
@@ -1737,26 +1739,10 @@ fn handle_key(
                 }
             }
         }
-        Key::Delete => {
-            if m.shift && !ctrl {
-                doc.buffer.delete_lines();
-            } else {
-                doc.buffer.delete_forward(ctrl);
-            }
-        }
+        Key::Delete => doc.buffer.delete_forward(ctrl),
         Key::Enter => {
             doc.view.completion = None;
-            if ctrl && m.shift {
-                doc.buffer.move_home(false);
-                doc.buffer.move_home(false);
-                doc.buffer.newline();
-                doc.buffer.move_vertical(-1, false, tab);
-            } else if ctrl {
-                doc.buffer.move_end(false);
-                doc.buffer.newline();
-            } else {
-                doc.buffer.newline();
-            }
+            doc.buffer.newline();
         }
         Key::Tab => {
             if m.shift {
@@ -1777,63 +1763,92 @@ fn handle_key(
             }
             doc.view.reveal = false;
         }
-        Key::Z if ctrl => {
-            if m.shift {
-                doc.buffer.redo()
-            } else {
-                doc.buffer.undo()
-            }
-            doc.view.completion = None;
-        }
-        Key::Y if ctrl => doc.buffer.redo(),
-        Key::A if ctrl => {
-            doc.buffer.select_all();
-            doc.view.reveal = false;
-        }
-        Key::D if ctrl => doc.buffer.add_next_occurrence(),
-        Key::L if ctrl => doc.buffer.select_line(),
-        Key::K if ctrl && m.shift => doc.buffer.delete_lines(),
-        Key::K if ctrl => {
-            actions.push(EditorAction::Hover(doc.buffer.primary().head));
-        }
-        Key::Slash if ctrl => doc.buffer.toggle_comment(),
-        Key::OpenBracket if ctrl => doc.buffer.outdent(),
-        Key::CloseBracket if ctrl => doc.buffer.indent(),
-        Key::Space if ctrl => {
-            if settings.has_lsp {
-                actions.push(EditorAction::Completion { trigger: None });
-            }
-        }
-        Key::F if ctrl && !m.shift => {
-            let selection = doc.buffer.selected_text();
-            doc.view.open_find(Some(selection), false);
-            doc.view.reveal = false;
-        }
-        Key::H if ctrl => {
-            let selection = doc.buffer.selected_text();
-            doc.view.open_find(Some(selection), true);
-            doc.view.reveal = false;
-        }
-        Key::F3 => {
-            if doc.view.find.is_none() {
-                let selection = doc.buffer.selected_text();
-                doc.view.open_find(Some(selection), false);
-            }
-            find_step(doc, !m.shift);
-        }
-        Key::F12 if m.shift => actions.push(EditorAction::References),
-        Key::F12 => actions.push(EditorAction::GotoDefinition),
-        Key::F2 => {
-            let word = doc.buffer.word_at(doc.buffer.primary().head);
-            doc.view.rename = Some(RenamePopup { text: doc.buffer.slice(word), focus: true });
-        }
-        Key::Period if ctrl => actions.push(EditorAction::CodeActions),
-        Key::I if ctrl && m.shift => actions.push(EditorAction::Format),
         _ => {
             doc.view.reveal = false;
         }
     }
     false
+}
+
+/// Runs an editor command on `doc`, from a shortcut, the palette or the CLI.
+/// Returns false for commands that are not the editor's.
+pub fn run_command(doc: &mut Document, command: Command, actions: &mut Vec<EditorAction>, has_lsp: bool) -> bool {
+    let tab = doc.buffer.tab_size;
+    doc.view.reveal = true;
+    match command {
+        Command::Undo | Command::Redo => {
+            if command == Command::Undo {
+                doc.buffer.undo();
+            } else {
+                doc.buffer.redo();
+            }
+            doc.view.completion = None;
+        }
+        Command::SelectAll => {
+            doc.buffer.select_all();
+            doc.view.reveal = false;
+        }
+        Command::SelectLine => doc.buffer.select_line(),
+        Command::AddNextOccurrence => doc.buffer.add_next_occurrence(),
+        Command::AddCursorAbove | Command::AddCursorBelow => doc.buffer.add_cursor_vertical(command == Command::AddCursorBelow, tab),
+        Command::MoveLinesUp | Command::MoveLinesDown => doc.buffer.move_lines(command == Command::MoveLinesDown),
+        Command::CopyLinesDown => doc.buffer.duplicate_lines(),
+        Command::CopyLinesUp => {
+            doc.buffer.duplicate_lines();
+            doc.buffer.move_vertical(-1, false, tab);
+        }
+        Command::DeleteLines => doc.buffer.delete_lines(),
+        Command::InsertLineBelow => {
+            doc.view.completion = None;
+            doc.buffer.move_end(false);
+            doc.buffer.newline();
+        }
+        Command::InsertLineAbove => {
+            doc.view.completion = None;
+            doc.buffer.move_home(false);
+            doc.buffer.move_home(false);
+            doc.buffer.newline();
+            doc.buffer.move_vertical(-1, false, tab);
+        }
+        Command::ToggleComment => doc.buffer.toggle_comment(),
+        Command::Indent => doc.buffer.indent(),
+        Command::Outdent => doc.buffer.outdent(),
+        Command::ScrollLineUp | Command::ScrollLineDown => {
+            doc.view.scroll.y += if command == Command::ScrollLineDown { 20.0 } else { -20.0 };
+            doc.view.reveal = false;
+        }
+        Command::TriggerSuggest => {
+            if has_lsp {
+                actions.push(EditorAction::Completion { trigger: None });
+            }
+        }
+        Command::ShowHover => actions.push(EditorAction::Hover(doc.buffer.primary().head)),
+        Command::Find | Command::Replace => {
+            let selection = doc.buffer.selected_text();
+            doc.view.open_find(Some(selection), command == Command::Replace);
+            doc.view.reveal = false;
+        }
+        Command::FindNext | Command::FindPrevious => {
+            if doc.view.find.is_none() {
+                let selection = doc.buffer.selected_text();
+                doc.view.open_find(Some(selection), false);
+            }
+            find_step(doc, command == Command::FindNext);
+        }
+        Command::GotoDefinition => actions.push(EditorAction::GotoDefinition),
+        Command::References => actions.push(EditorAction::References),
+        Command::Rename => {
+            let word = doc.buffer.word_at(doc.buffer.primary().head);
+            doc.view.rename = Some(RenamePopup { text: doc.buffer.slice(word), focus: true });
+        }
+        Command::CodeActions => actions.push(EditorAction::CodeActions),
+        Command::Format => actions.push(EditorAction::Format),
+        _ => {
+            doc.view.reveal = false;
+            return false;
+        }
+    }
+    true
 }
 
 pub fn refilter_completion(completion: &mut Completion, prefix: &str) {

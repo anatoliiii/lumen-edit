@@ -46,6 +46,7 @@ pub fn menu_bar(ui: &mut egui::Ui, app: &mut App) {
                         app.config.save();
                     }
                     menu_item(ui, app, Command::Settings);
+                    menu_item(ui, app, Command::Keybindings);
                     ui.separator();
                     menu_item(ui, app, Command::CloseWorkspace);
                     menu_item(ui, app, Command::Quit);
@@ -600,6 +601,10 @@ pub fn settings_window(ctx: &egui::Context, app: &mut App) {
                 ui.end_row();
             }
         });
+        ui.separator();
+        if ui.button(t!("Keyboard Shortcuts…")).clicked() {
+            super::keybindings::open(app);
+        }
         ui.separator();
         ui.label(RichText::new(t!("Settings file: {n1}", n1 = crate::config::config_path().display())).small().color(theme::FAINT_TEXT));
     });

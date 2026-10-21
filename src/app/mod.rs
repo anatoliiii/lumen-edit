@@ -9,6 +9,8 @@ mod document;
 pub mod editor;
 mod explorer;
 mod icons;
+mod keybindings;
+mod keymap;
 mod lsp_manager;
 mod markdown;
 mod media;
@@ -297,6 +299,8 @@ pub struct App {
     doc_waiters: Vec<(String, control::DocAction)>,
     pending_screenshot: Option<(String, crate::control::Reply)>,
     pub settings_open: bool,
+    /// The "Keyboard Shortcuts" window, when open.
+    pub keybindings: Option<keybindings::State>,
     pub about_open: bool,
     pub pulse: pulse::Pulse,
     /// SSH hosts connected in this session (for Teleport), besides the project host.
@@ -322,6 +326,7 @@ impl App {
     pub fn new(cc: &eframe::CreationContext) -> Self {
         let ctx = cc.egui_ctx.clone();
         let config = Config::load();
+        keymap::set(keymap::Keymap::new(&config.keybindings));
         install_fonts(&ctx, &config);
         egui_extras::install_image_loaders(&ctx);
         theme::apply(&ctx, config.ui_font_size);
@@ -365,6 +370,7 @@ impl App {
             doc_waiters: Vec::new(),
             pending_screenshot: None,
             settings_open: false,
+            keybindings: None,
             about_open: false,
             pulse: pulse::Pulse::default(),
             known_hosts: Vec::new(),
@@ -421,6 +427,7 @@ impl App {
                     ("commands", _) => app.run_command(Command::CommandPalette),
                     ("log", _) => app.open_log(true),
                     ("settings", _) => app.settings_open = true,
+                    ("keybindings", query) => keybindings::open_with_query(&mut app, query),
                     ("teleport", _) => app.run_command(Command::Teleport),
                     ("agent", _) => app.run_command(Command::Agent),
                     ("ssh", _) => app.run_command(Command::ConnectSsh),
@@ -1421,16 +1428,7 @@ impl App {
     // ------------------------------------------------------------- frame
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let shortcuts = commands::shortcuts();
-        let mut triggered = Vec::new();
-        ctx.input_mut(|input| {
-            for (shortcut, command) in &shortcuts {
-                if input.consume_shortcut(shortcut) {
-                    triggered.push(*command);
-                }
-            }
-        });
-        for command in triggered {
+        for command in ctx.input_mut(|input| keymap::consume(input, commands::Scope::Global)) {
             self.run_command(command);
         }
     }
@@ -1787,7 +1785,8 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.process_messages();
         self.handle_close_request(&ctx);
-        if self.palette.is_none() && self.dialog.is_none() {
+        let recording = keybindings::capture_keys(self, &ctx);
+        if !recording && self.palette.is_none() && self.dialog.is_none() {
             self.handle_shortcuts(&ctx);
         }
         if ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::WindowFocused(true)))) {
@@ -1881,6 +1880,7 @@ impl eframe::App for App {
         if self.settings_open {
             status::settings_window(&ctx, self);
         }
+        keybindings::window(&ctx, self);
         if self.about_open {
             about::window(&ctx, self);
         }

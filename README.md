@@ -144,6 +144,21 @@ Tools are grouped by entity (`state`, `workspace`, `file`, `search`, `code`, `ex
 
 `~/.config/lumen-edit/config.toml`, or the Settings window (Ctrl+,): interface language, fonts, indentation, format on save, auto save, blame, SSH agent, `pull --rebase`, language servers, pi command/model/mode and sandbox.
 
+### Keyboard shortcuts
+
+Every shortcut can be changed in **Keyboard Shortcuts** (Ctrl+Alt+K, or File → Keyboard Shortcuts): search a command by its English or Russian name, its id or its keys (`ctrl+shift+p`, `f5`), or press **Record keys** and hit the shortcut itself. Click a shortcut to record a new one, × removes it, ↺ goes back to the default; keys taken from another command are removed there. The command palette finds commands the same way.
+
+Changes are stored as overrides in `config.toml`; `Ctrl` means Cmd on macOS:
+
+```toml
+[keybindings]
+quick_open = ["Ctrl+E"]          # replaces the default Ctrl+P
+toggle_terminal = ["Ctrl+`", "Alt+F12"]
+quit = []                        # no shortcut
+```
+
+`lumen-edit commands` lists the ids. Arrows, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab, Escape and copy/paste are fixed.
+
 ## Architecture
 
 ```text

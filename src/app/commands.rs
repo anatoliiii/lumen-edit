@@ -1,8 +1,6 @@
 //! All user-facing commands: palette entries, menu items and shortcuts.
 
-use eframe::egui::{Key, KeyboardShortcut, Modifiers};
-
-use super::{App, PanelTab, SideView, Tab, editor::EditorAction, palette::Palette};
+use super::{App, PanelTab, SideView, Tab, palette::Palette};
 use crate::tasks::Group;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,12 +40,35 @@ pub enum Command {
     EditTasks,
     Find,
     Replace,
+    FindNext,
+    FindPrevious,
     MarkdownPreview,
     GotoDefinition,
     References,
     Rename,
     CodeActions,
     Format,
+    TriggerSuggest,
+    ShowHover,
+    Undo,
+    Redo,
+    SelectAll,
+    SelectLine,
+    AddNextOccurrence,
+    AddCursorAbove,
+    AddCursorBelow,
+    MoveLinesUp,
+    MoveLinesDown,
+    CopyLinesUp,
+    CopyLinesDown,
+    DeleteLines,
+    InsertLineBelow,
+    InsertLineAbove,
+    ToggleComment,
+    Indent,
+    Outdent,
+    ScrollLineUp,
+    ScrollLineDown,
     RestartLsp,
     GitCommit,
     GitCommitAmend,
@@ -72,6 +93,7 @@ pub enum Command {
     ZoomOut,
     ZoomReset,
     Settings,
+    Keybindings,
     About,
     Quit,
 }
@@ -112,12 +134,35 @@ pub const ALL: &[Command] = &[
     Command::EditTasks,
     Command::Find,
     Command::Replace,
+    Command::FindNext,
+    Command::FindPrevious,
     Command::MarkdownPreview,
     Command::GotoDefinition,
     Command::References,
     Command::Rename,
     Command::CodeActions,
     Command::Format,
+    Command::TriggerSuggest,
+    Command::ShowHover,
+    Command::Undo,
+    Command::Redo,
+    Command::SelectAll,
+    Command::SelectLine,
+    Command::AddNextOccurrence,
+    Command::AddCursorAbove,
+    Command::AddCursorBelow,
+    Command::MoveLinesUp,
+    Command::MoveLinesDown,
+    Command::CopyLinesUp,
+    Command::CopyLinesDown,
+    Command::DeleteLines,
+    Command::InsertLineBelow,
+    Command::InsertLineAbove,
+    Command::ToggleComment,
+    Command::Indent,
+    Command::Outdent,
+    Command::ScrollLineUp,
+    Command::ScrollLineDown,
     Command::RestartLsp,
     Command::GitCommit,
     Command::GitCommitAmend,
@@ -142,6 +187,7 @@ pub const ALL: &[Command] = &[
     Command::ZoomOut,
     Command::ZoomReset,
     Command::Settings,
+    Command::Keybindings,
     Command::About,
     Command::Quit,
 ];
@@ -166,174 +212,169 @@ impl Command {
     }
 
     pub fn label(self) -> &'static str {
+        crate::i18n::tr(self.label_key())
+    }
+
+    /// The English name, which is also the translation key.
+    pub fn label_key(self) -> &'static str {
         match self {
-            Command::QuickOpen => t!("Go to File…"),
-            Command::CommandPalette => t!("Command Palette"),
-            Command::GotoLine => t!("Go to Line…"),
-            Command::OpenFolder => t!("Open Folder…"),
-            Command::ConnectSsh => t!("Connect via SSH…"),
-            Command::OpenRecent => t!("Open Recent…"),
-            Command::CloseWorkspace => t!("Close Project"),
-            Command::NewFile => t!("New File…"),
-            Command::NewFolder => t!("New Folder…"),
-            Command::Teleport => t!("File Teleport"),
-            Command::Save => t!("Save"),
-            Command::SaveAll => t!("Save All"),
-            Command::CloseTab => t!("Close Tab"),
-            Command::NextTab => t!("Next Tab"),
-            Command::PrevTab => t!("Previous Tab"),
-            Command::ToggleSidebar => t!("Toggle Sidebar"),
-            Command::ShowExplorer => t!("Explorer"),
-            Command::ShowSearch => t!("Search in Project"),
-            Command::ShowGit => t!("Git: Changes"),
-            Command::ShowRun => t!("Run and Tasks"),
-            Command::TogglePanel => t!("Toggle Bottom Panel"),
-            Command::ToggleTerminal => t!("Terminal: Toggle"),
-            Command::NewTerminal => t!("Terminal: New"),
-            Command::KillTerminal => t!("Terminal: Close Current"),
-            Command::ShowProblems => t!("Problems"),
-            Command::ShowOutput => t!("Output"),
-            Command::ShowPulse => t!("Server Pulse"),
-            Command::RunDefault => t!("Run: Default Task"),
-            Command::RunTask => t!("Run: Choose Task…"),
-            Command::Build => t!("Run: Build"),
-            Command::Test => t!("Run: Test"),
-            Command::RerunLast => t!("Run: Rerun Last Task"),
-            Command::EditTasks => t!("Run: Configure Tasks (tasks.toml)"),
-            Command::Find => t!("Find"),
-            Command::MarkdownPreview => t!("Markdown: Preview / Source"),
-            Command::Replace => t!("Replace"),
-            Command::GotoDefinition => t!("Go to Definition"),
-            Command::References => t!("Find All References"),
-            Command::Rename => t!("Rename Symbol"),
-            Command::CodeActions => t!("Quick Fixes…"),
-            Command::Format => t!("Format Document"),
-            Command::RestartLsp => t!("Restart Language Servers"),
-            Command::GitCommit => t!("Git: Commit"),
-            Command::GitCommitAmend => t!("Git: Amend Last Commit"),
+            Command::QuickOpen => t_key!("Go to File…"),
+            Command::CommandPalette => t_key!("Command Palette"),
+            Command::GotoLine => t_key!("Go to Line…"),
+            Command::OpenFolder => t_key!("Open Folder…"),
+            Command::ConnectSsh => t_key!("Connect via SSH…"),
+            Command::OpenRecent => t_key!("Open Recent…"),
+            Command::CloseWorkspace => t_key!("Close Project"),
+            Command::NewFile => t_key!("New File…"),
+            Command::NewFolder => t_key!("New Folder…"),
+            Command::Teleport => t_key!("File Teleport"),
+            Command::Save => t_key!("Save"),
+            Command::SaveAll => t_key!("Save All"),
+            Command::CloseTab => t_key!("Close Tab"),
+            Command::NextTab => t_key!("Next Tab"),
+            Command::PrevTab => t_key!("Previous Tab"),
+            Command::ToggleSidebar => t_key!("Toggle Sidebar"),
+            Command::ShowExplorer => t_key!("Explorer"),
+            Command::ShowSearch => t_key!("Search in Project"),
+            Command::ShowGit => t_key!("Git: Changes"),
+            Command::ShowRun => t_key!("Run and Tasks"),
+            Command::TogglePanel => t_key!("Toggle Bottom Panel"),
+            Command::ToggleTerminal => t_key!("Terminal: Toggle"),
+            Command::NewTerminal => t_key!("Terminal: New"),
+            Command::KillTerminal => t_key!("Terminal: Close Current"),
+            Command::ShowProblems => t_key!("Problems"),
+            Command::ShowOutput => t_key!("Output"),
+            Command::ShowPulse => t_key!("Server Pulse"),
+            Command::RunDefault => t_key!("Run: Default Task"),
+            Command::RunTask => t_key!("Run: Choose Task…"),
+            Command::Build => t_key!("Run: Build"),
+            Command::Test => t_key!("Run: Test"),
+            Command::RerunLast => t_key!("Run: Rerun Last Task"),
+            Command::EditTasks => t_key!("Run: Configure Tasks (tasks.toml)"),
+            Command::Find => t_key!("Find"),
+            Command::MarkdownPreview => t_key!("Markdown: Preview / Source"),
+            Command::Replace => t_key!("Replace"),
+            Command::FindNext => t_key!("Find Next"),
+            Command::FindPrevious => t_key!("Find Previous"),
+            Command::GotoDefinition => t_key!("Go to Definition"),
+            Command::References => t_key!("Find All References"),
+            Command::Rename => t_key!("Rename Symbol"),
+            Command::CodeActions => t_key!("Quick Fixes…"),
+            Command::Format => t_key!("Format Document"),
+            Command::TriggerSuggest => t_key!("Trigger Suggestions"),
+            Command::ShowHover => t_key!("Show Hover"),
+            Command::Undo => t_key!("Undo"),
+            Command::Redo => t_key!("Redo"),
+            Command::SelectAll => t_key!("Select All"),
+            Command::SelectLine => t_key!("Select Line"),
+            Command::AddNextOccurrence => t_key!("Add Selection to Next Match"),
+            Command::AddCursorAbove => t_key!("Add Cursor Above"),
+            Command::AddCursorBelow => t_key!("Add Cursor Below"),
+            Command::MoveLinesUp => t_key!("Move Line Up"),
+            Command::MoveLinesDown => t_key!("Move Line Down"),
+            Command::CopyLinesUp => t_key!("Copy Line Up"),
+            Command::CopyLinesDown => t_key!("Copy Line Down"),
+            Command::DeleteLines => t_key!("Delete Line"),
+            Command::InsertLineBelow => t_key!("Insert Line Below"),
+            Command::InsertLineAbove => t_key!("Insert Line Above"),
+            Command::ToggleComment => t_key!("Toggle Line Comment"),
+            Command::Indent => t_key!("Indent Line"),
+            Command::Outdent => t_key!("Outdent Line"),
+            Command::ScrollLineUp => t_key!("Scroll Up"),
+            Command::ScrollLineDown => t_key!("Scroll Down"),
+            Command::RestartLsp => t_key!("Restart Language Servers"),
+            Command::GitCommit => t_key!("Git: Commit"),
+            Command::GitCommitAmend => t_key!("Git: Amend Last Commit"),
             Command::GitPush => "Git: push",
             Command::GitPull => "Git: pull",
             Command::GitFetch => "Git: fetch",
-            Command::GitSync => t!("Git: Sync (pull + push)"),
-            Command::GitCheckout => t!("Git: Switch Branch…"),
-            Command::GitNewBranch => t!("Git: Create Branch…"),
-            Command::GitMerge => t!("Git: Merge Branch into Current…"),
-            Command::GitStash => t!("Git: Stash Changes"),
-            Command::GitStashPop => t!("Git: Pop Stash"),
-            Command::GitLog => t!("Git: History (graph)"),
-            Command::GitStageFile => t!("Git: Stage Current File"),
-            Command::GitFileHistory => t!("Git: Current File History"),
-            Command::GitInit => t!("Git: Initialize Repository"),
-            Command::GitAddRemote => t!("Git: Add Remote…"),
-            Command::GitToggleBlame => t!("Git: Toggle Line Blame"),
-            Command::Agent => t!("pi Agent"),
-            Command::AgentSendSelection => t!("Agent: Send Selection"),
-            Command::ZoomIn => t!("Zoom In"),
-            Command::ZoomOut => t!("Zoom Out"),
-            Command::ZoomReset => t!("Reset Zoom"),
-            Command::Settings => t!("Settings"),
-            Command::About => t!("About"),
-            Command::Quit => t!("Quit"),
+            Command::GitSync => t_key!("Git: Sync (pull + push)"),
+            Command::GitCheckout => t_key!("Git: Switch Branch…"),
+            Command::GitNewBranch => t_key!("Git: Create Branch…"),
+            Command::GitMerge => t_key!("Git: Merge Branch into Current…"),
+            Command::GitStash => t_key!("Git: Stash Changes"),
+            Command::GitStashPop => t_key!("Git: Pop Stash"),
+            Command::GitLog => t_key!("Git: History (graph)"),
+            Command::GitStageFile => t_key!("Git: Stage Current File"),
+            Command::GitFileHistory => t_key!("Git: Current File History"),
+            Command::GitInit => t_key!("Git: Initialize Repository"),
+            Command::GitAddRemote => t_key!("Git: Add Remote…"),
+            Command::GitToggleBlame => t_key!("Git: Toggle Line Blame"),
+            Command::Agent => t_key!("pi Agent"),
+            Command::AgentSendSelection => t_key!("Agent: Send Selection"),
+            Command::ZoomIn => t_key!("Zoom In"),
+            Command::ZoomOut => t_key!("Zoom Out"),
+            Command::ZoomReset => t_key!("Reset Zoom"),
+            Command::Settings => t_key!("Settings"),
+            Command::Keybindings => t_key!("Keyboard Shortcuts"),
+            Command::About => t_key!("About"),
+            Command::Quit => t_key!("Quit"),
         }
     }
 
-    pub fn shortcut_text(self) -> Option<&'static str> {
-        Some(match self {
-            Command::QuickOpen => "Ctrl+P",
-            Command::CommandPalette => "Ctrl+Shift+P",
-            Command::GotoLine => "Ctrl+G",
-            Command::OpenFolder => "Ctrl+O",
-            Command::ConnectSsh => "Ctrl+Alt+O",
-            Command::NewFile => "Ctrl+N",
-            Command::Teleport => "Ctrl+Alt+T",
-            Command::Save => "Ctrl+S",
-            Command::SaveAll => "Ctrl+Alt+S",
-            Command::CloseTab => "Ctrl+W",
-            Command::NextTab => "Ctrl+Tab",
-            Command::PrevTab => "Ctrl+Shift+Tab",
-            Command::ToggleSidebar => "Ctrl+B",
-            Command::ShowExplorer => "Ctrl+Shift+E",
-            Command::ShowSearch => "Ctrl+Shift+F",
-            Command::ShowGit => "Ctrl+Shift+G",
-            Command::ShowRun => "Ctrl+Shift+R",
-            Command::TogglePanel => "Ctrl+J",
-            Command::ToggleTerminal => "Ctrl+`",
-            Command::NewTerminal => "Ctrl+Shift+`",
-            Command::ShowProblems => "Ctrl+Shift+M",
-            Command::RunDefault => "F5",
-            Command::RunTask => "Ctrl+Alt+R",
-            Command::Build => "Ctrl+Shift+B",
-            Command::RerunLast => "Ctrl+F5",
-            Command::KillTerminal => "Shift+F5",
-            Command::Find => "Ctrl+F",
-            Command::MarkdownPreview => "Ctrl+Alt+P",
-            Command::Replace => "Ctrl+H",
-            Command::GotoDefinition => "F12",
-            Command::References => "Shift+F12",
-            Command::Rename => "F2",
-            Command::CodeActions => "Ctrl+.",
-            Command::Format => "Ctrl+Shift+I",
-            Command::GitCommit => "Ctrl+Enter",
-            Command::Agent => "Ctrl+Shift+A",
-            Command::AgentSendSelection => "Ctrl+Alt+A",
-            Command::ZoomIn => "Ctrl+=",
-            Command::ZoomOut => "Ctrl+-",
-            Command::ZoomReset => "Ctrl+0",
-            Command::Settings => "Ctrl+,",
-            Command::Quit => "Ctrl+Q",
-            _ => return None,
-        })
+    /// Where the command's shortcuts work.
+    pub fn scope(self) -> Scope {
+        match self {
+            Command::Find
+            | Command::Replace
+            | Command::FindNext
+            | Command::FindPrevious
+            | Command::GotoDefinition
+            | Command::References
+            | Command::Rename
+            | Command::CodeActions
+            | Command::Format
+            | Command::TriggerSuggest
+            | Command::ShowHover
+            | Command::Undo
+            | Command::Redo
+            | Command::SelectAll
+            | Command::SelectLine
+            | Command::AddNextOccurrence
+            | Command::AddCursorAbove
+            | Command::AddCursorBelow
+            | Command::MoveLinesUp
+            | Command::MoveLinesDown
+            | Command::CopyLinesUp
+            | Command::CopyLinesDown
+            | Command::DeleteLines
+            | Command::InsertLineBelow
+            | Command::InsertLineAbove
+            | Command::ToggleComment
+            | Command::Indent
+            | Command::Outdent
+            | Command::ScrollLineUp
+            | Command::ScrollLineDown => Scope::Editor,
+            Command::GitCommit => Scope::CommitMessage,
+            _ => Scope::Global,
+        }
+    }
+
+    /// The first shortcut of the command, as shown in menus.
+    pub fn shortcut_text(self) -> Option<String> {
+        super::keymap::current().label(self)
     }
 }
 
-/// Global shortcuts, checked before widgets see the input. Editor-local
-/// keys (F12, Ctrl+F, ...) are handled by the editor itself.
-pub fn shortcuts() -> Vec<(KeyboardShortcut, Command)> {
-    let ctrl = Modifiers::COMMAND;
-    let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-    let ctrl_alt = Modifiers::COMMAND | Modifiers::ALT;
-    let none = Modifiers::NONE;
-    let s = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
-    vec![
-        // Shift variants first: consume_shortcut ignores extra modifiers.
-        (s(ctrl_shift, Key::P), Command::CommandPalette),
-        (s(ctrl, Key::P), Command::QuickOpen),
-        (s(ctrl, Key::G), Command::GotoLine),
-        (s(ctrl_alt, Key::O), Command::ConnectSsh),
-        (s(ctrl, Key::O), Command::OpenFolder),
-        (s(ctrl, Key::N), Command::NewFile),
-        (s(ctrl_alt, Key::T), Command::Teleport),
-        (s(ctrl_alt, Key::S), Command::SaveAll),
-        (s(ctrl, Key::S), Command::Save),
-        (s(ctrl, Key::W), Command::CloseTab),
-        (s(ctrl_shift, Key::Tab), Command::PrevTab),
-        (s(ctrl, Key::Tab), Command::NextTab),
-        (s(ctrl, Key::PageDown), Command::NextTab),
-        (s(ctrl, Key::PageUp), Command::PrevTab),
-        (s(ctrl, Key::B), Command::ToggleSidebar),
-        (s(ctrl_alt, Key::P), Command::MarkdownPreview),
-        (s(ctrl_shift, Key::E), Command::ShowExplorer),
-        (s(ctrl_shift, Key::F), Command::ShowSearch),
-        (s(ctrl_shift, Key::G), Command::ShowGit),
-        (s(ctrl_shift, Key::R), Command::ShowRun),
-        (s(ctrl_shift, Key::M), Command::ShowProblems),
-        (s(ctrl, Key::J), Command::TogglePanel),
-        (s(ctrl_shift, Key::Backtick), Command::NewTerminal),
-        (s(ctrl, Key::Backtick), Command::ToggleTerminal),
-        (s(ctrl, Key::F5), Command::RerunLast),
-        (s(Modifiers::SHIFT, Key::F5), Command::KillTerminal),
-        (s(none, Key::F5), Command::RunDefault),
-        (s(ctrl_alt, Key::R), Command::RunTask),
-        (s(ctrl_shift, Key::B), Command::Build),
-        (s(ctrl_shift, Key::A), Command::Agent),
-        (s(ctrl_alt, Key::A), Command::AgentSendSelection),
-        (s(ctrl, Key::Equals), Command::ZoomIn),
-        (s(ctrl, Key::Plus), Command::ZoomIn),
-        (s(ctrl, Key::Minus), Command::ZoomOut),
-        (s(ctrl, Key::Num0), Command::ZoomReset),
-        (s(ctrl, Key::Comma), Command::Settings),
-        (s(ctrl, Key::Q), Command::Quit),
-    ]
+/// Where a shortcut is listened for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// Anywhere in the window, before widgets see the keys.
+    Global,
+    /// In a focused code editor.
+    Editor,
+    /// In the commit message box.
+    CommitMessage,
+}
+
+impl Scope {
+    pub fn label(self) -> &'static str {
+        match self {
+            Scope::Global => t!("everywhere"),
+            Scope::Editor => t!("in the editor"),
+            Scope::CommitMessage => t!("in the commit message"),
+        }
+    }
 }
 
 impl App {
@@ -447,29 +488,12 @@ impl App {
                 None => self.run_command(Command::RunDefault),
             },
             Command::EditTasks if has_workspace => super::run::edit_tasks_file(self),
-            Command::Find | Command::Replace => {
-                if let Some(doc) = self.active_doc() {
-                    let selection = doc.buffer.selected_text();
-                    doc.view.open_find(Some(selection), command == Command::Replace);
-                }
-            }
             Command::MarkdownPreview => {
                 if let Some(doc) = self.active_doc()
                     && (doc.lang == crate::syntax::Lang::Markdown || super::media::kind(&doc.path).is_some())
                 {
                     doc.preview = !doc.preview;
                     doc.view.focus_request = !doc.preview;
-                }
-            }
-            Command::GotoDefinition => self.editor_action(EditorAction::GotoDefinition),
-            Command::References => self.editor_action(EditorAction::References),
-            Command::CodeActions => self.editor_action(EditorAction::CodeActions),
-            Command::Format => self.editor_action(EditorAction::Format),
-            Command::Rename => {
-                if let Some(doc) = self.active_doc() {
-                    let head = doc.buffer.primary().head;
-                    let word = doc.buffer.word_at(head);
-                    doc.view.rename = Some(super::editor::RenamePopup { text: doc.buffer.slice(word), focus: true });
                 }
             }
             Command::RestartLsp => {
@@ -573,8 +597,10 @@ impl App {
                 super::agent::insert_selection(self);
             }
             Command::Settings => self.settings_open = !self.settings_open,
+            Command::Keybindings => super::keybindings::open(self),
             Command::About => self.about_open = true,
             Command::Quit => self.ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close),
+            _ if command.scope() == Scope::Editor => self.run_editor_command(command),
             _ => {}
         }
     }
@@ -609,12 +635,16 @@ impl App {
         }
     }
 
-    /// Runs an LSP-backed action for the active document.
-    pub fn editor_action(&mut self, action: EditorAction) {
-        if let Some(index) = self.active_tab
-            && let Some(Tab::Doc(_)) = self.tabs.get(index)
-        {
-            super::lsp_manager::run_actions(self, index, vec![action]);
+    /// Runs an editor command (from the palette, a menu or the CLI) on the
+    /// active document.
+    fn run_editor_command(&mut self, command: Command) {
+        let Some(index) = self.active_tab else { return };
+        let Some(Tab::Doc(doc)) = self.tabs.get_mut(index) else { return };
+        let has_lsp = self.lsp.has_clients(doc);
+        let mut actions = Vec::new();
+        super::editor::run_command(doc, command, &mut actions, has_lsp);
+        if !actions.is_empty() {
+            super::lsp_manager::run_actions(self, index, actions);
         }
     }
 }
