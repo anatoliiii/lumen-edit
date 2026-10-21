@@ -1393,7 +1393,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
         // Second row: sandbox, usage, extension statuses and session buttons.
         ui.horizontal(|ui| {
             let (badge, color, hint) = if agent.sandboxed {
-                (t!("⚿ sandbox"), theme::SUCCESS, t!("pi can only write to the project folder, ~/.pi and caches"))
+                (t!("🛡 sandbox"), theme::SUCCESS, t!("pi can only write to the project folder, ~/.pi and caches"))
             } else {
                 (t!("no sandbox"), theme::WARNING, t!("bubblewrap not found or the sandbox is disabled in Settings"))
             };
