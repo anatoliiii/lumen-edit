@@ -192,7 +192,7 @@ pub fn connect_window(ctx: &egui::Context, app: &mut App) {
         Stage::PickFolder { host, .. } => t!("Folder on {n1}", n1 = host.label()),
     };
     egui::Window::new(title)
-        .id(egui::Id::new("connect_window"))
+        .id(egui::Id::unique("connect_window"))
         .collapsible(false)
         .resizable(true)
         .default_width(640.0)
@@ -273,7 +273,7 @@ pub fn connect_window(ctx: &egui::Context, app: &mut App) {
                 ui.add_space(4.0);
                 let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width().max(600.0), 260.0), Sense::hover());
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-                let id = egui::Id::new(("ssh_master", target.as_str()));
+                let id = egui::Id::unique(("ssh_master", target.as_str()));
                 if !child.memory(|m| m.has_focus(id)) && running {
                     child.memory_mut(|m| m.request_focus(id));
                 }

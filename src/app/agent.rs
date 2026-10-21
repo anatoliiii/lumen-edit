@@ -323,7 +323,7 @@ fn model_key(model: &Value) -> String {
 fn session_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actions: &mut Vec<Action>) {
     let sessions = agent.sessions.lock().unwrap().clone();
     let mut close = ui.ctx().input(|i| i.key_pressed(Key::Escape));
-    let area = egui::Area::new(egui::Id::new(("session_picker", agent.id)))
+    let area = egui::Area::new(egui::Id::unique(("session_picker", agent.id)))
         .order(egui::Order::Foreground)
         .pivot(egui::Align2::RIGHT_TOP)
         .fixed_pos(anchor.right_bottom() + vec2(0.0, 4.0))
@@ -479,7 +479,7 @@ fn model_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actions
     let selected_key = order.get(agent.picker_selected).map(|m| model_key(m));
     let scroll_to_selected = std::mem::take(&mut agent.picker_scroll);
     let mut toggle: Option<String> = None;
-    let area = egui::Area::new(egui::Id::new(("model_picker", agent.id)))
+    let area = egui::Area::new(egui::Id::unique(("model_picker", agent.id)))
         .order(egui::Order::Foreground)
         .fixed_pos(anchor.left_bottom() + vec2(0.0, 4.0))
         .show(ui.ctx(), |ui| {
@@ -1736,7 +1736,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
             .hint_text(hint)
             .desired_rows(3)
             .desired_width(f32::INFINITY)
-            .id(egui::Id::new(("agent_input", agent.id))),
+            .id(egui::Id::unique(("agent_input", agent.id))),
     );
     if agent.focus_input {
         editor.request_focus();

@@ -693,8 +693,9 @@ impl App {
                 let path = str_param(params, "path")
                     .map(|p| self.resolve(p))
                     .unwrap_or_else(|| crate::control::socket_dir().join(format!("screenshot-{}.png", std::process::id())).to_string_lossy().into_owned());
-                self.pending_screenshot = Some((path, reply));
-                self.ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Screenshot(Default::default()));
+                self.ctx.request_screenshot(move |image| {
+                    let _ = reply.send(save_screenshot(&path, &image));
+                });
                 self.ctx.request_repaint();
                 None
             }
@@ -1111,26 +1112,15 @@ fn exec(host: &Host, cwd: &str, command: &str, timeout: Duration) -> Result<Valu
     }))
 }
 
-/// Finishes a pending `screenshot` request when the image arrives.
-pub fn take_screenshot(app: &mut App, ctx: &eframe::egui::Context) {
-    let image = ctx.input(|i| {
-        i.events.iter().find_map(|e| if let eframe::egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None })
-    });
-    let Some(image) = image else {
-        ctx.request_repaint();
-        return;
-    };
-    let Some((path, reply)) = app.pending_screenshot.take() else { return };
-    let result = (|| -> Result<Value, String> {
-        let [width, height] = image.size;
-        let file = std::fs::File::create(&path).map_err(|e| format!("{path}: {e}"))?;
-        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-        let data: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
-        writer.write_image_data(&data).map_err(|e| e.to_string())?;
-        Ok(json!({ "path": path, "width": width, "height": height }))
-    })();
-    let _ = reply.send(result);
+/// Saves a `screenshot` request's image as PNG.
+fn save_screenshot(path: &str, image: &eframe::egui::ColorImage) -> Result<Value, String> {
+    let [width, height] = image.size;
+    let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    let data: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
+    writer.write_image_data(&data).map_err(|e| e.to_string())?;
+    Ok(json!({ "path": path, "width": width, "height": height }))
 }
