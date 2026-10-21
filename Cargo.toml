@@ -31,7 +31,7 @@ path = "src/main.rs"
 
 [dependencies]
 lumen-shared = { path = "shared" }
-eframe = "=0.36.2"
+eframe = "=0.37.0"
 rfd = "=0.17.2"
 egui_extras = { version = "=0.36.2", features = ["image", "svg_text", "gif", "webp"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
