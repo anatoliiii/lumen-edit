@@ -475,7 +475,7 @@ fn pane(ui: &mut egui::Ui, tab: &mut TeleportTab, side: usize, hosts: &[Host], a
                     for i in range {
                         let entry = &entries[i];
                         let selected = pane.selected.contains(&entry.name);
-                        let id = Id::new(("teleport_row", tab.id, side, &entry.name));
+                        let id = Id::unique(("teleport_row", tab.id, side, &entry.name));
                         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::hover());
                         let response = ui.interact(rect, id, Sense::click_and_drag());
                         if selected {
@@ -532,7 +532,7 @@ fn pane(ui: &mut egui::Ui, tab: &mut TeleportTab, side: usize, hosts: &[Host], a
                             && let Some(payload) = egui::DragAndDrop::payload::<(u64, usize, Vec<String>)>(ui.ctx())
                         {
                             let text = if payload.2.len() == 1 { payload.2[0].clone() } else { t!("{n1} items", n1 = payload.2.len()) };
-                            egui::Area::new(Id::new("teleport_drag"))
+                            egui::Area::new(Id::unique("teleport_drag"))
                                 .order(egui::Order::Tooltip)
                                 .fixed_pos(pointer + vec2(12.0, 8.0))
                                 .show(ui.ctx(), |ui| {

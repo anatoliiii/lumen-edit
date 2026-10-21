@@ -231,7 +231,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     // Background for the empty-space context menu. It must be created before
     // the rows so that rows, added later, get the clicks.
     let background_rect = ui.available_rect_before_wrap();
-    let background = ui.interact(background_rect, ui.id().with("explorer_empty"), Sense::click());
+    let background = ui.interact(background_rect, ui.scope_id().with("explorer_empty"), Sense::click());
     let mut scroll = egui::ScrollArea::vertical().id_salt("explorer_scroll").auto_shrink([false, false]);
     if let Some(index) = scroll_index {
         let offset = (index as f32 * row_h - 120.0).max(0.0);
