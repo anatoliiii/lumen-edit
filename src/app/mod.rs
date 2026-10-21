@@ -1777,8 +1777,20 @@ fn install_fonts(ctx: &egui::Context, config: &Config) {
             fonts.families.entry(egui::FontFamily::Monospace).or_default().push(name);
         }
     }
+    // Bundled last, so icons exist even where the system has no symbol fonts.
+    for (name, data) in BUNDLED_SYMBOLS {
+        fonts.font_data.insert(name.to_string(), egui::FontData::from_static(data).into());
+        fonts.families.entry(egui::FontFamily::Proportional).or_default().push(name.to_string());
+        fonts.families.entry(egui::FontFamily::Monospace).or_default().push(name.to_string());
+    }
     ctx.set_fonts(fonts);
 }
+
+/// Noto Sans Symbols 1 and 2 (SIL OFL 1.1, see assets/fonts/OFL.txt).
+const BUNDLED_SYMBOLS: [(&str, &[u8]); 2] = [
+    ("noto_symbols", include_bytes!("../../assets/fonts/NotoSansSymbols-Regular.ttf")),
+    ("noto_symbols2", include_bytes!("../../assets/fonts/NotoSansSymbols2-Regular.ttf")),
+];
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -2005,8 +2017,9 @@ mod glyph_tests {
         // egui reports a glyph as missing when it lives in the font that also
         // serves the replacement glyph; ask the font files themselves.
         let candidates = crate::platform::FONTS;
-        let files: Vec<Vec<u8>> =
+        let mut files: Vec<Vec<u8>> =
             candidates.ui.iter().chain(candidates.symbols).chain(candidates.nerd).filter_map(|p| std::fs::read(p).ok()).collect();
+        files.extend(super::BUNDLED_SYMBOLS.iter().map(|(_, data)| data.to_vec()));
         missing.retain(|c| {
             !files.iter().any(|data| {
                 use skrifa::MetadataProvider;
