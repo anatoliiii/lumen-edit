@@ -292,7 +292,7 @@ pub fn fetch(host: &Host, root: &str) -> Result<String, String> {
     git_verbose(host, root, &["fetch", "--all", "--prune"])
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Branch {
     pub name: String,
     pub remote: bool,
@@ -302,6 +302,8 @@ pub struct Branch {
     pub commit: String,
     pub date: String,
     pub subject: String,
+    /// Root of the worktree that has this branch checked out, if any.
+    pub worktree: String,
 }
 
 pub fn branches(host: &Host, root: &str) -> Result<Vec<Branch>, String> {
@@ -311,7 +313,7 @@ pub fn branches(host: &Host, root: &str) -> Result<Vec<Branch>, String> {
         &[
             "for-each-ref",
             "--sort=-committerdate",
-            "--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(objectname:short)%00%(committerdate:relative)%00%(subject)",
+            "--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(objectname:short)%00%(committerdate:relative)%00%(subject)%00%(worktreepath)",
             "refs/heads",
             "refs/remotes",
         ],
@@ -320,7 +322,7 @@ pub fn branches(host: &Host, root: &str) -> Result<Vec<Branch>, String> {
         .lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('\0').collect();
-            if parts.len() < 7 || parts[0].ends_with("/HEAD") {
+            if parts.len() < 8 || parts[0].ends_with("/HEAD") {
                 return None;
             }
             Some(Branch {
@@ -331,6 +333,7 @@ pub fn branches(host: &Host, root: &str) -> Result<Vec<Branch>, String> {
                 commit: parts[4].to_string(),
                 date: parts[5].to_string(),
                 subject: parts[6].to_string(),
+                worktree: parts[7].to_string(),
             })
         })
         .collect())
@@ -671,6 +674,26 @@ mod tests {
         assert_eq!(remotes(&host, &root).unwrap(), vec![Remote { name: "origin".into(), url: "https://example.com/me/repo.git".into() }]);
         remove_remote(&host, &root, "origin").unwrap();
         assert!(remotes(&host, &root).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn finds_branches_in_other_worktrees() {
+        let host = Host::Local;
+        let dir = std::env::temp_dir().join(format!("lumen-git-worktree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.join("main").to_string_lossy().into_owned();
+        let other = dir.join("other").to_string_lossy().into_owned();
+        std::fs::create_dir_all(&root).unwrap();
+        init(&host, &root).unwrap();
+        git(&host, &root, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "init"]).unwrap();
+        git(&host, &root, &["worktree", "add", "-b", "side", &other]).unwrap();
+        let branches = branches(&host, &root).unwrap();
+        let side = branches.iter().find(|b| b.name == "side").unwrap();
+        assert!(!side.current);
+        assert_eq!(std::path::Path::new(&side.worktree).canonicalize().unwrap(), std::path::Path::new(&other).canonicalize().unwrap());
+        assert!(checkout(&host, &root, side).unwrap_err().contains("already used by worktree"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

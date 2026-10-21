@@ -192,7 +192,13 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
                     if branch.current {
                         continue;
                     }
-                    let hint = if branch.remote { t!("remote") } else { "" };
+                    let hint = if branch.remote {
+                        t!("remote")
+                    } else if !branch.worktree.is_empty() {
+                        t!("worktree")
+                    } else {
+                        ""
+                    };
                     let action = if *merge { Action::Merge(branch.name.clone()) } else { Action::Checkout(branch.clone()) };
                     push(
                         branch.name.clone(),
@@ -374,7 +380,7 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
             }
             Action::OpenRecent(recent) => super::welcome::open_recent(app, recent),
             Action::RunTask(task) => app.run_task(task),
-            Action::Checkout(branch) => app.git_op("switch", move |h, r| git::checkout(h, r, &branch)),
+            Action::Checkout(branch) => super::scm::checkout(app, branch),
             Action::Merge(name) => app.git_op("merge", move |h, r| git::merge(h, r, &name)),
             Action::CreateBranch(name) => app.git_op("switch -c", move |h, r| git::create_branch(h, r, &name, true)),
         }

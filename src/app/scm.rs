@@ -148,15 +148,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         ui.horizontal(|ui| {
             let branch = if status.detached { "(detached HEAD)".to_string() } else { status.branch.clone() };
             if ui.button(format!("⎇ {branch}")).on_hover_text(t!("Switch branch")).clicked() {
-                actions.push(Action::Checkout(git::Branch {
-                    name: String::new(),
-                    remote: false,
-                    current: false,
-                    upstream: String::new(),
-                    commit: String::new(),
-                    date: String::new(),
-                    subject: String::new(),
-                }));
+                actions.push(Action::Checkout(git::Branch::default()));
             }
             let sync_label = match (&status.upstream, status.ahead, status.behind) {
                 (None, _, _) => t!("↑ Publish").to_string(),
@@ -498,6 +490,8 @@ fn branch_row(ui: &mut egui::Ui, branch: &git::Branch, actions: &mut Vec<Action>
     };
     let marker = if branch.current {
         "●"
+    } else if !branch.worktree.is_empty() {
+        "⊞"
     } else if branch.remote {
         "⇅"
     } else {
@@ -506,7 +500,12 @@ fn branch_row(ui: &mut egui::Ui, branch: &git::Branch, actions: &mut Vec<Action>
     painter.text(rect.left_center() + vec2(20.0, 0.0), Align2::CENTER_CENTER, marker, FontId::proportional(11.0), color);
     painter.text(rect.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, &branch.name, FontId::proportional(13.0), color);
     painter.text(rect.right_center() - vec2(10.0, 0.0), Align2::RIGHT_CENTER, &branch.date, FontId::proportional(11.0), theme::FAINT_TEXT);
-    let response = response.on_hover_text(format!("{} {}", branch.commit, branch.subject));
+    let hover = if branch.current || branch.worktree.is_empty() {
+        format!("{} {}", branch.commit, branch.subject)
+    } else {
+        format!("{} {}\n{}", branch.commit, branch.subject, t!("worktree: {path}", path = branch.worktree))
+    };
+    let response = response.on_hover_text(hover);
     if response.double_clicked() && !branch.current {
         actions.push(Action::Checkout(branch.clone()));
     }
@@ -530,6 +529,31 @@ fn branch_row(ui: &mut egui::Ui, branch: &git::Branch, actions: &mut Vec<Action>
                 ui.close();
             }
         }
+    });
+}
+
+/// Switches to a branch; a branch already checked out in another worktree
+/// cannot be switched to, so that worktree is offered to open instead.
+pub fn checkout(app: &mut App, branch: git::Branch) {
+    let Some(workspace) = &app.workspace else { return };
+    let repo = workspace.git.repo_root.clone().unwrap_or_default();
+    let local = if branch.remote { branch.name.split_once('/').map_or(branch.name.as_str(), |(_, rest)| rest) } else { &branch.name };
+    let worktree = workspace
+        .git
+        .branches
+        .iter()
+        .find(|b| !b.remote && b.name == local)
+        .map(|b| b.worktree.trim_end_matches('/').to_string())
+        .filter(|path| !path.is_empty() && path != repo.trim_end_matches('/'));
+    let Some(worktree) = worktree else {
+        app.git_op("switch", move |h, r| git::checkout(h, r, &branch));
+        return;
+    };
+    let host = workspace.host.clone();
+    app.dialog = Some(Dialog::Confirm {
+        title: t!("Branch is in another worktree").into(),
+        message: t!("Branch “{name}” is checked out in the worktree {path}. Open that folder?", name = local, path = worktree),
+        action: Box::new(move |app: &mut App| app.open_workspace(host, worktree)),
     });
 }
 
@@ -573,7 +597,7 @@ fn drop_actions(app: &mut App, actions: Vec<Action>) {
                 app.git_op("continue", move |h, r| git::continue_op(h, r, &state));
             }
             Action::Checkout(branch) if branch.name.is_empty() => app.palette = Some(Palette::branches(false)),
-            Action::Checkout(branch) => app.git_op("switch", move |h, r| git::checkout(h, r, &branch)),
+            Action::Checkout(branch) => checkout(app, branch),
             Action::DeleteBranch(name) => {
                 app.dialog = Some(Dialog::Confirm {
                     title: t!("Delete branch").into(),
