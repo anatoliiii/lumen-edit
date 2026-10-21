@@ -6,5 +6,5 @@ In short: be respectful and constructive, assume good faith, and keep discussion
 Harassment, personal attacks and discriminatory language are not tolerated.
 
 Report unacceptable behavior privately to the maintainer through
-[GitHub security advisories](https://github.com/anatoliiii/lumen-edit-rs/security/advisories/new)
+[GitHub security advisories](https://github.com/anatoliiii/lumen-edit/security/advisories/new)
 or a direct message. Reports are handled confidentially.

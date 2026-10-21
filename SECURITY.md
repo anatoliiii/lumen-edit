@@ -7,7 +7,7 @@ Only the latest release receives security fixes.
 ## Reporting a vulnerability
 
 Please do **not** open a public issue for security problems. Report them privately through
-[GitHub security advisories](https://github.com/anatoliiii/lumen-edit-rs/security/advisories/new).
+[GitHub security advisories](https://github.com/anatoliiii/lumen-edit/security/advisories/new).
 You will get a reply within a week.
 
 ## Security notes

@@ -5,7 +5,7 @@
 **A native code editor in Rust — no Electron, no JavaScript.**
 Open a project locally or on a remote machine over SSH, edit with full language-server support, run it in the built-in terminal, and manage git — all in a single fast binary.
 
-[![CI](https://github.com/anatoliiii/lumen-edit-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/anatoliiii/lumen-edit-rs/actions/workflows/ci.yml)
+[![CI](https://github.com/anatoliiii/lumen-edit/actions/workflows/ci.yml/badge.svg)](https://github.com/anatoliiii/lumen-edit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-2024_edition-orange.svg)
 ![Platforms](https://img.shields.io/badge/platform-Linux_x86__64_%7C_aarch64-lightgrey.svg)
@@ -54,8 +54,8 @@ Open a project locally or on a remote machine over SSH, edit with full language-
 Requirements: Linux or macOS (x86_64 or aarch64; Windows builds too), Rust 1.95 or newer, `git`, `ssh`. Optional: `bwrap` for the agent sandbox, `shellcheck`, language servers.
 
 ```sh
-git clone https://github.com/anatoliiii/lumen-edit-rs.git
-cd lumen-edit-rs
+git clone https://github.com/anatoliiii/lumen-edit.git
+cd lumen-edit
 ./scripts/install.sh
 ```
 

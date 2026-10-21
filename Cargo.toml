@@ -7,8 +7,8 @@ version = "0.2.0"
 edition = "2024"
 license = "MIT"
 authors = ["Анатолий Копейкин"]
-repository = "https://github.com/anatoliiii/lumen-edit-rs"
-homepage = "https://github.com/anatoliiii/lumen-edit-rs"
+repository = "https://github.com/anatoliiii/lumen-edit"
+homepage = "https://github.com/anatoliiii/lumen-edit"
 rust-version = "1.95"
 
 [package]

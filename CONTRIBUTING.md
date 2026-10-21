@@ -5,8 +5,8 @@ Thanks for your interest in Lumen Edit! Issues and pull requests are welcome.
 ## Getting started
 
 ```sh
-git clone https://github.com/anatoliiii/lumen-edit-rs.git
-cd lumen-edit-rs
+git clone https://github.com/anatoliiii/lumen-edit.git
+cd lumen-edit
 cargo run -- .
 ```
 

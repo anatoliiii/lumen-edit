@@ -53,5 +53,5 @@ First public version: a complete rewrite of the early prototype.
 - pi coding agent tab with sessions, model/mode pickers and bubblewrap sandbox.
 - About window, settings window, install script and desktop entry.
 
-[Unreleased]: https://github.com/anatoliiii/lumen-edit-rs/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/anatoliiii/lumen-edit-rs/releases/tag/v0.2.0
+[Unreleased]: https://github.com/anatoliiii/lumen-edit/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/anatoliiii/lumen-edit/releases/tag/v0.2.0
