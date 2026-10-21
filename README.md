@@ -148,7 +148,7 @@ Tools are grouped by entity (`state`, `workspace`, `file`, `search`, `code`, `ex
 
 Every shortcut can be changed in **Keyboard Shortcuts** (Ctrl+Alt+K, or File → Keyboard Shortcuts): search a command by its English or Russian name, its id or its keys (`ctrl+shift+p`, `f5`), or press **Record keys** and hit the shortcut itself. Click a shortcut to record a new one, × removes it, ↺ goes back to the default; keys taken from another command are removed there. The command palette finds commands the same way.
 
-Changes are stored as overrides in `config.toml`; `Ctrl` means Cmd on macOS:
+Changes are stored as overrides in `config.toml`. There `Ctrl` is the primary modifier, so it means Cmd on macOS, and `MacCtrl` is the Control key of a Mac (plain Ctrl elsewhere); the window itself shows macOS chords as `Cmd+F`, `Ctrl+``. On macOS the terminal, tab switching and suggestions use Control (Ctrl+`, Ctrl+Tab, Ctrl+Space), because the system keeps Cmd+`, Cmd+Tab and Cmd+Space.
 
 ```toml
 [keybindings]

@@ -826,7 +826,7 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
         let has_selection = !doc.buffer.primary().is_empty();
         let shortcut = |text: Option<String>| RichText::new(text.unwrap_or_default()).color(theme::FAINT_TEXT);
         // Copy and cut come from the system, they are not in the keymap.
-        let system = |key| Some(Chord { ctrl: true, alt: false, shift: false, key }.label());
+        let system = |key| Some(Chord { ctrl: true, ..Chord::plain(key) }.label());
         if ui.add_enabled(has_selection, egui::Button::new(t!("Cut")).shortcut_text(shortcut(system(Key::X)))).clicked() {
             ui.ctx().copy_text(doc.buffer.selected_text());
             doc.buffer.delete_backward(false);

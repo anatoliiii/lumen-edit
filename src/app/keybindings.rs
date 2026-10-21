@@ -59,15 +59,12 @@ pub fn capture_keys(app: &mut App, ctx: &egui::Context) -> bool {
         return false;
     }
     let pressed = ctx.input_mut(|input| {
-        let pressed = input.events.iter().find_map(|event| match event {
-            Event::Key { key, pressed: true, modifiers, .. } => Some(Chord::from_event(*key, *modifiers)),
-            _ => None,
-        });
+        let pressed = pressed_chord(&input.events);
         input.events.retain(|e| !matches!(e, Event::Key { .. } | Event::Text(_) | Event::Copy | Event::Cut | Event::Paste(_)));
         pressed
     });
     let Some(chord) = pressed else { return true };
-    if chord == (Chord { ctrl: false, alt: false, shift: false, key: Key::Escape }) {
+    if chord == Chord::plain(Key::Escape) {
         state.recording = None;
         state.search_by_keys = false;
         return true;
@@ -78,7 +75,8 @@ pub fn capture_keys(app: &mut App, ctx: &egui::Context) -> bool {
     }
     let Some(recording) = state.recording else { return true };
     if chord.types_text() {
-        state.message = Some((t!("{keys} types text: add Ctrl or Alt", keys = chord.label()), true));
+        let modifiers = if cfg!(target_os = "macos") { "Cmd, Ctrl / Opt" } else { "Ctrl / Alt" };
+        state.message = Some((t!("{keys} types text: hold {modifiers} with it", keys = chord.label(), modifiers = modifiers), true));
         return true;
     }
     state.recording = None;
@@ -99,6 +97,16 @@ pub fn capture_keys(app: &mut App, ctx: &egui::Context) -> bool {
     });
     apply(app);
     true
+}
+
+/// The first chord pressed among `events`. Shift, Ctrl, Alt and Cmd come as
+/// keys of their own: they only count together with the key they are held
+/// with.
+fn pressed_chord(events: &[Event]) -> Option<Chord> {
+    events.iter().find_map(|event| match event {
+        Event::Key { key, pressed: true, modifiers, .. } if !keymap::is_modifier(*key) => Some(Chord::from_event(*key, *modifiers)),
+        _ => None,
+    })
 }
 
 /// Makes the edited `[keybindings]` take effect and saves them.
@@ -157,12 +165,9 @@ pub fn window(ctx: &egui::Context, app: &mut App) {
     let overrides = app.config.keybindings.clone();
     let mut open = true;
     let mut change = None;
-    egui::Window::new(t!("Keyboard Shortcuts"))
-        .open(&mut open)
-        .resizable(true)
-        .collapsible(false)
-        .default_size([760.0, 560.0])
-        .show(ctx, |ui| {
+    egui::Window::new(t!("Keyboard Shortcuts")).open(&mut open).resizable(true).collapsible(false).default_size([760.0, 560.0]).show(
+        ctx,
+        |ui| {
             search_row(ui, &mut state);
             for problem in &keymap.problems {
                 ui.label(RichText::new(problem).small().color(theme::WARNING));
@@ -191,11 +196,9 @@ pub fn window(ctx: &egui::Context, app: &mut App) {
                     change = Some(Change::ResetAll);
                 }
                 ui.label(
-                    RichText::new(t!(
-                        "Ctrl is Cmd on macOS. Fixed keys: arrows, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab, Escape, copy and paste."
-                    ))
-                    .small()
-                    .color(theme::MUTED_TEXT),
+                    RichText::new(t!("Fixed keys: arrows, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab, Escape, copy and paste."))
+                        .small()
+                        .color(theme::MUTED_TEXT),
                 );
             });
             ui.label(
@@ -203,7 +206,8 @@ pub fn window(ctx: &egui::Context, app: &mut App) {
                     .small()
                     .color(theme::FAINT_TEXT),
             );
-        });
+        },
+    );
 
     match change {
         Some(Change::Record(recording)) => {
@@ -234,17 +238,13 @@ pub fn window(ctx: &egui::Context, app: &mut App) {
 }
 
 fn search_row(ui: &mut egui::Ui, state: &mut State) {
-    ui.horizontal(|ui| {
-        let hint = if state.search_by_keys {
-            t!("Press the keys to look for…")
-        } else {
-            t!("Search: name in English or Russian, id or keys (ctrl+shift+p)")
-        };
-        let width = (ui.available_width() - 170.0).max(160.0);
-        let edit = ui.add_enabled(!state.search_by_keys, egui::TextEdit::singleline(&mut state.query).hint_text(hint).desired_width(width));
-        if state.focus_search {
-            edit.request_focus();
-            state.focus_search = false;
+    // Right to left: the buttons first, the search box takes what is left,
+    // so the row never pushes the window wider.
+    let row = vec2(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(row, Layout::right_to_left(Align::Center), |ui| {
+        if !state.query.is_empty() && ui.small_button("×").on_hover_text(t!("Clear")).clicked() {
+            state.query.clear();
+            state.focus_search = true;
         }
         let label = if state.search_by_keys { t!("● Recording keys") } else { t!("Record keys") };
         if ui
@@ -256,31 +256,46 @@ fn search_row(ui: &mut egui::Ui, state: &mut State) {
             state.recording = None;
             state.focus_search = !state.search_by_keys;
         }
-        if !state.query.is_empty() && ui.small_button("×").on_hover_text(t!("Clear")).clicked() {
-            state.query.clear();
-            state.focus_search = true;
+        let hint = if state.search_by_keys {
+            t!("Press the keys to look for…").to_string()
+        } else {
+            let example = Chord::parse("Ctrl+Shift+P").map(|c| c.label().to_lowercase()).unwrap_or_default();
+            t!("Search: name in English or Russian, id or keys ({example})", example = example)
+        };
+        let edit = egui::TextEdit::singleline(&mut state.query).hint_text(hint).desired_width(ui.available_width());
+        let edit = ui.add_enabled(!state.search_by_keys, edit);
+        if state.focus_search {
+            edit.request_focus();
+            state.focus_search = false;
         }
     });
 }
 
 /// One command: its names on the left, its keys in the middle, the add and
-/// reset buttons on the right.
+/// reset buttons on the right. The columns add up to exactly the width at
+/// hand: anything wider would make the window grow every frame.
 fn command_row(ui: &mut egui::Ui, keymap: &Keymap, state: &State, command: Command, overridden: bool, change: &mut Option<Change>) {
-    let buttons = 56.0;
-    let width = ui.available_width() - buttons;
-    let name_width = (width * 0.5).max(200.0);
-    let keys_width = (width - name_width - 16.0).max(160.0);
+    let gap = 12.0;
+    let buttons = 52.0;
+    let rest = (ui.available_width() - buttons - 2.0 * gap).max(0.0);
+    let name_width = (rest * 0.5).floor();
+    let keys_width = rest - name_width;
     ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         ui.allocate_ui_with_layout(vec2(name_width, 0.0), Layout::top_down(Align::Min), |ui| {
             ui.set_width(name_width);
             names(ui, command, overridden);
         });
-        ui.add_space(8.0);
+        ui.add_space(gap);
         ui.allocate_ui_with_layout(vec2(keys_width, 0.0), Layout::left_to_right(Align::Center).with_main_wrap(true), |ui| {
             ui.set_width(keys_width);
+            ui.spacing_mut().item_spacing.x = 6.0;
             keys(ui, keymap, state, command, change);
         });
-        ui.horizontal(|ui| {
+        ui.add_space(gap);
+        ui.allocate_ui_with_layout(vec2(buttons, 0.0), Layout::left_to_right(Align::Center), |ui| {
+            ui.set_width(buttons);
+            ui.spacing_mut().item_spacing.x = 6.0;
             if ui.small_button("+").on_hover_text(t!("Add a shortcut")).clicked() {
                 *change = Some(Change::Record(Recording { command, replace: None }));
             }
@@ -307,11 +322,15 @@ fn names(ui: &mut egui::Ui, command: Command, overridden: bool) {
 /// The command's chords: click one to change it, × removes it.
 fn keys(ui: &mut egui::Ui, keymap: &Keymap, state: &State, command: Command, change: &mut Option<Change>) {
     let recording = |replace| state.recording == Some(Recording { command, replace });
-    let waiting = || RichText::new(t!("press keys… (Escape cancels)")).color(theme::ACCENT);
+    let held = keymap::held_label(ui.input(|i| i.modifiers));
+    let waiting = || {
+        let text = if held.is_empty() { t!("press keys… (Escape cancels)").to_string() } else { format!("{held}…") };
+        egui::Label::new(RichText::new(text).monospace().color(theme::ACCENT)).wrap()
+    };
     let chords = keymap.chords(command);
     for &chord in chords {
         if recording(Some(chord)) {
-            ui.label(waiting());
+            ui.add(waiting());
             continue;
         }
         let taken = keymap.conflicts(command, chord);
@@ -332,7 +351,7 @@ fn keys(ui: &mut egui::Ui, keymap: &Keymap, state: &State, command: Command, cha
         }
     }
     if recording(None) {
-        ui.label(waiting());
+        ui.add(waiting());
     } else if chords.is_empty() {
         ui.label(RichText::new("—").color(theme::FAINT_TEXT));
     }
@@ -340,10 +359,29 @@ fn keys(ui: &mut egui::Ui, keymap: &Keymap, state: &State, command: Command, cha
 
 #[cfg(test)]
 mod tests {
+    use eframe::egui::Modifiers;
+
     use super::*;
 
     fn chord(text: &str) -> Chord {
         Chord::parse(text).unwrap()
+    }
+
+    #[test]
+    fn recording_waits_for_the_key_held_with_the_modifiers() {
+        let mac = cfg!(target_os = "macos");
+        let key = |key, modifiers| Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers };
+        // Cmd+F on a Mac (Ctrl+F elsewhere): the modifier arrives first.
+        let primary = Modifiers { command: true, mac_cmd: mac, ctrl: !mac, ..Modifiers::NONE };
+        let modifier = if mac { Key::SuperLeft } else { Key::ControlLeft };
+        assert_eq!(pressed_chord(&[key(modifier, primary)]), None);
+        assert_eq!(pressed_chord(&[key(modifier, primary), key(Key::F, primary)]), Chord::parse("Ctrl+F"));
+        // The Control key of a Mac with backtick.
+        let control = Modifiers { ctrl: true, command: !mac, ..Modifiers::NONE };
+        let chord = pressed_chord(&[key(Key::ControlLeft, control), key(Key::Backtick, control)]).unwrap();
+        assert_eq!(chord, Chord::parse("MacCtrl+`").unwrap());
+        assert!(!chord.types_text());
+        assert_eq!(chord.label(), "Ctrl+`");
     }
 
     #[test]

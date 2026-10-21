@@ -55,7 +55,8 @@ pub struct Config {
     /// Open files per project (`host|root`), restored on reopen.
     pub sessions: HashMap<String, Vec<String>>,
     /// Shortcuts that differ from the defaults: command id -> chords like
-    /// `Ctrl+Shift+P` (Ctrl is Cmd on macOS); `[]` unbinds the command.
+    /// `Ctrl+Shift+P` (Ctrl is Cmd on macOS, `MacCtrl` its Control key);
+    /// `[]` unbinds the command.
     pub keybindings: BTreeMap<String, Vec<String>>,
 }
 

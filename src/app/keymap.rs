@@ -1,8 +1,10 @@
 //! Keyboard shortcuts: the defaults, the user's overrides from
 //! `[keybindings]` in config.toml, matching key presses and searching.
 //!
-//! A chord is written `Ctrl+Shift+P`. `Ctrl` is the platform's primary
-//! modifier, so the same config means Cmd+Shift+P on macOS.
+//! In config.toml a chord is written `Ctrl+Shift+P`. `Ctrl` is the
+//! platform's primary modifier, so the same config means Cmd+Shift+P on
+//! macOS; the Control key of a Mac is `MacCtrl` (plain Ctrl elsewhere).
+//! On screen and in search macOS chords read `Cmd+Shift+P`, `Ctrl+``.
 
 use std::{
     collections::BTreeMap,
@@ -13,22 +15,40 @@ use eframe::egui::{Event, InputState, Key, Modifiers};
 
 use super::commands::{ALL, Command, Scope};
 
+const MAC: bool = cfg!(target_os = "macos");
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Chord {
-    /// Ctrl on Linux and Windows, Cmd on macOS.
+    /// The primary modifier: Ctrl on Linux and Windows, Cmd on macOS.
     pub ctrl: bool,
+    /// The Control key of a Mac, which is not the primary modifier there.
+    pub mac_ctrl: bool,
     pub alt: bool,
     pub shift: bool,
     pub key: Key,
 }
 
 impl Chord {
-    pub fn from_event(key: Key, modifiers: Modifiers) -> Chord {
-        Chord { ctrl: modifiers.command, alt: modifiers.alt, shift: modifiers.shift, key }
+    pub const fn plain(key: Key) -> Chord {
+        Chord { ctrl: false, mac_ctrl: false, alt: false, shift: false, key }
     }
 
-    /// Parses `Ctrl+Shift+P`, `cmd+alt+t`, `Shift+F12`, `Ctrl++`.
+    pub fn from_event(key: Key, modifiers: Modifiers) -> Chord {
+        Chord { ctrl: modifiers.command, mac_ctrl: MAC && modifiers.ctrl, alt: modifiers.alt, shift: modifiers.shift, key }
+    }
+
+    /// Parses the config form: `Ctrl+Shift+P`, `MacCtrl+``, `Shift+F12`, `Ctrl++`.
     pub fn parse(text: &str) -> Option<Chord> {
+        Self::parse_with(text, false)
+    }
+
+    /// Parses a chord as shown on screen: on macOS `Cmd` is the primary
+    /// modifier and `Ctrl` the Control key.
+    pub fn parse_label(text: &str) -> Option<Chord> {
+        Self::parse_with(text, MAC)
+    }
+
+    fn parse_with(text: &str, mac_names: bool) -> Option<Chord> {
         let text = text.trim();
         let (modifiers, key) = if text == "+" {
             ("", "+")
@@ -37,44 +57,38 @@ impl Chord {
         } else {
             text.rsplit_once('+').unwrap_or(("", text))
         };
-        let mut chord = Chord { ctrl: false, alt: false, shift: false, key: key_from_name(key.trim())? };
+        let mut chord = Chord::plain(key_from_name(key.trim()).filter(|k| !is_modifier(*k))?);
         for part in modifiers.split('+').map(str::trim).filter(|p| !p.is_empty()) {
-            match modifier_alias(&part.to_lowercase()) {
-                Some("ctrl") => chord.ctrl = true,
-                Some("alt") => chord.alt = true,
-                Some("shift") => chord.shift = true,
+            match part.to_lowercase().as_str() {
+                "cmd" | "command" | "mod" | "super" | "meta" => chord.ctrl = true,
+                "ctrl" | "control" if mac_names => chord.mac_ctrl = true,
+                "ctrl" | "control" => chord.ctrl = true,
+                "macctrl" if MAC => chord.mac_ctrl = true,
+                "macctrl" => chord.ctrl = true,
+                "alt" | "option" | "opt" => chord.alt = true,
+                "shift" => chord.shift = true,
                 _ => return None,
             }
         }
         Some(chord)
     }
 
-    /// The portable form stored in config.toml: `Ctrl+Alt+Shift+Key`.
+    /// The portable form stored in config.toml.
     pub fn to_config(self) -> String {
-        self.join(["Ctrl", "Alt", "Shift"])
+        join(&[(self.ctrl, "Ctrl"), (self.mac_ctrl, "MacCtrl"), (self.alt, "Alt"), (self.shift, "Shift")], self.key)
     }
 
-    /// How the chord is shown: `Cmd+Opt+Shift+P` on macOS.
+    /// How the chord is shown: `Cmd+Shift+P` or `Ctrl+Opt+T` on macOS.
     pub fn label(self) -> String {
-        if cfg!(target_os = "macos") { self.join(["Cmd", "Opt", "Shift"]) } else { self.to_config() }
+        let mut text = modifiers_label(self.ctrl, self.mac_ctrl, self.alt, self.shift);
+        text.push_str(key_text(self.key));
+        text
     }
 
-    fn join(self, names: [&str; 3]) -> String {
-        let mut out = String::new();
-        for (on, name) in [(self.ctrl, names[0]), (self.alt, names[1]), (self.shift, names[2])] {
-            if on {
-                out.push_str(name);
-                out.push('+');
-            }
-        }
-        out.push_str(key_text(self.key));
-        out
-    }
-
-    /// Keys that type text need Ctrl or Alt, otherwise the shortcut would
-    /// eat ordinary typing.
+    /// Keys that type text need a modifier other than Shift, otherwise the
+    /// shortcut would eat ordinary typing.
     pub fn types_text(self) -> bool {
-        !self.ctrl && !self.alt && !is_special(self.key)
+        !self.ctrl && !self.mac_ctrl && !self.alt && !is_special(self.key)
     }
 
     /// 0 = exact match, 1 = matched ignoring Shift (needed to type some
@@ -83,9 +97,7 @@ impl Chord {
         if key != self.key || modifiers.command != self.ctrl || modifiers.alt != self.alt {
             return None;
         }
-        // On macOS the physical Control key is not Cmd: leave it to the
-        // terminal and text fields.
-        if cfg!(target_os = "macos") && modifiers.ctrl {
+        if MAC && modifiers.ctrl != self.mac_ctrl {
             return None;
         }
         if modifiers.shift == self.shift {
@@ -98,13 +110,39 @@ impl Chord {
     }
 }
 
-fn modifier_alias(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "ctrl" | "control" | "cmd" | "command" | "mod" | "super" | "meta" => "ctrl",
-        "alt" | "option" | "opt" => "alt",
-        "shift" | "⇧" => "shift",
-        _ => return None,
-    })
+/// Held modifiers as shown before the key: `Cmd+Shift+`.
+pub fn held_label(modifiers: Modifiers) -> String {
+    modifiers_label(modifiers.command, MAC && modifiers.ctrl, modifiers.alt, modifiers.shift)
+}
+
+fn modifiers_label(ctrl: bool, mac_ctrl: bool, alt: bool, shift: bool) -> String {
+    let names: &[(bool, &str)] = if MAC {
+        &[(mac_ctrl, "Ctrl"), (ctrl, "Cmd"), (alt, "Opt"), (shift, "Shift")]
+    } else {
+        &[(ctrl, "Ctrl"), (alt, "Alt"), (shift, "Shift")]
+    };
+    names.iter().filter(|(on, _)| *on).map(|(_, name)| format!("{name}+")).collect()
+}
+
+fn join(modifiers: &[(bool, &str)], key: Key) -> String {
+    let mut text: String = modifiers.iter().filter(|(on, _)| *on).map(|(_, name)| format!("{name}+")).collect();
+    text.push_str(key_text(key));
+    text
+}
+
+/// Shift, Ctrl, Alt and Cmd themselves: egui reports them as keys too.
+pub fn is_modifier(key: Key) -> bool {
+    matches!(
+        key,
+        Key::ShiftLeft
+            | Key::ShiftRight
+            | Key::ControlLeft
+            | Key::ControlRight
+            | Key::AltLeft
+            | Key::AltRight
+            | Key::SuperLeft
+            | Key::SuperRight
+    )
 }
 
 fn key_from_name(name: &str) -> Option<Key> {
@@ -165,7 +203,11 @@ pub fn defaults(command: Command) -> &'static [&'static str] {
         Command::Save => &["Ctrl+S"],
         Command::SaveAll => &["Ctrl+Alt+S"],
         Command::CloseTab => &["Ctrl+W"],
+        // macOS keeps Cmd+Tab, Cmd+`, Cmd+Space and Cmd+H for itself: the
+        // Mac defaults use the Control key there, like VS Code.
+        Command::NextTab if MAC => &["MacCtrl+Tab", "Ctrl+PageDown"],
         Command::NextTab => &["Ctrl+Tab", "Ctrl+PageDown"],
+        Command::PrevTab if MAC => &["MacCtrl+Shift+Tab", "Ctrl+PageUp"],
         Command::PrevTab => &["Ctrl+Shift+Tab", "Ctrl+PageUp"],
         Command::ToggleSidebar => &["Ctrl+B"],
         Command::ShowExplorer => &["Ctrl+Shift+E"],
@@ -173,7 +215,9 @@ pub fn defaults(command: Command) -> &'static [&'static str] {
         Command::ShowGit => &["Ctrl+Shift+G"],
         Command::ShowRun => &["Ctrl+Shift+R"],
         Command::TogglePanel => &["Ctrl+J"],
+        Command::ToggleTerminal if MAC => &["MacCtrl+`"],
         Command::ToggleTerminal => &["Ctrl+`"],
+        Command::NewTerminal if MAC => &["MacCtrl+Shift+`"],
         Command::NewTerminal => &["Ctrl+Shift+`"],
         Command::KillTerminal => &["Shift+F5"],
         Command::ShowProblems => &["Ctrl+Shift+M"],
@@ -193,6 +237,7 @@ pub fn defaults(command: Command) -> &'static [&'static str] {
         Command::GitCommit => &["Ctrl+Enter"],
         // Editor.
         Command::Find => &["Ctrl+F"],
+        Command::Replace if MAC => &["Ctrl+Alt+F"],
         Command::Replace => &["Ctrl+H"],
         Command::FindNext => &["F3"],
         Command::FindPrevious => &["Shift+F3"],
@@ -201,6 +246,7 @@ pub fn defaults(command: Command) -> &'static [&'static str] {
         Command::Rename => &["F2"],
         Command::CodeActions => &["Ctrl+."],
         Command::Format => &["Ctrl+Shift+I"],
+        Command::TriggerSuggest if MAC => &["MacCtrl+Space"],
         Command::TriggerSuggest => &["Ctrl+Space"],
         Command::ShowHover => &["Ctrl+K"],
         Command::Undo => &["Ctrl+Z"],
@@ -352,14 +398,25 @@ pub fn consume(input: &mut InputState, scope: Scope) -> Vec<Command> {
     triggered
 }
 
-/// `cmd + Shift+p` -> `ctrl+shift+p`: lower case, modifier aliases resolved,
-/// no spaces around `+`.
+/// `Cmd + Shift+P` -> `cmd+shift+p`: lower case, no spaces around `+`,
+/// modifier names as `label()` writes them (`option` -> `alt`; `cmd` is
+/// `ctrl` off macOS).
 fn normalize(query: &str) -> String {
     // `ё` is often typed as `е`.
     let mut text = query.trim().to_lowercase().replace('\u{451}', "\u{435}");
     while text.contains(" +") || text.contains("+ ") {
         text = text.replace(" +", "+").replace("+ ", "+");
     }
+    let alias = |part: &str| -> String {
+        match part {
+            "opt" | "option" => "alt",
+            "command" | "super" | "meta" | "mod" if MAC => "cmd",
+            "cmd" | "command" | "super" | "meta" | "mod" | "control" if !MAC => "ctrl",
+            "control" => "ctrl",
+            other => other,
+        }
+        .to_string()
+    };
     text.split(' ')
         .map(|word| {
             if !word.contains('+') || word == "+" {
@@ -369,7 +426,7 @@ fn normalize(query: &str) -> String {
                 Some(head) => (head, true),
                 None => (word, false),
             };
-            let mut parts: Vec<String> = head.split('+').map(|p| modifier_alias(p).unwrap_or(p).to_string()).collect();
+            let mut parts: Vec<String> = head.split('+').map(alias).collect();
             if plus {
                 parts.push("+".into());
             }
@@ -380,8 +437,8 @@ fn normalize(query: &str) -> String {
 }
 
 /// Whether `command` matches a search: its name in English or Russian, its
-/// id, or its keys (`ctrl+shift+p` finds exactly that chord, `f5` every
-/// chord with F5).
+/// id, or its keys as shown (`cmd+shift+p` finds exactly that chord, `f5`
+/// every chord with F5).
 pub fn matches_query(keymap: &Keymap, command: Command, query: &str) -> bool {
     let query = normalize(query);
     if query.is_empty() {
@@ -391,7 +448,7 @@ pub fn matches_query(keymap: &Keymap, command: Command, query: &str) -> bool {
     if !query.contains(' ')
         && query.len() > 1
         && query.contains('+')
-        && let Some(chord) = Chord::parse(&query)
+        && let Some(chord) = Chord::parse_label(&query)
     {
         return chords.contains(&chord);
     }
@@ -399,9 +456,9 @@ pub fn matches_query(keymap: &Keymap, command: Command, query: &str) -> bool {
     let mut haystack = format!("{english} {} {} {}", crate::i18n::russian_of(english), command.id(), command.id().replace('_', " "));
     for chord in chords {
         haystack.push(' ');
-        haystack.push_str(&chord.to_config());
-        haystack.push(' ');
         haystack.push_str(&chord.label());
+        haystack.push(' ');
+        haystack.push_str(chord.key.name());
     }
     let haystack = normalize(&haystack);
     query.split(' ').filter(|w| !w.is_empty()).all(|word| haystack.contains(word))
@@ -423,16 +480,26 @@ mod tests {
 
     #[test]
     fn parses_aliases_and_plus() {
-        let chord = |ctrl, alt, shift, key| Some(Chord { ctrl, alt, shift, key });
+        let chord = |ctrl, alt, shift, key| Some(Chord { ctrl, alt, shift, ..Chord::plain(key) });
         assert_eq!(Chord::parse("cmd+shift+p"), chord(true, false, true, Key::P));
         assert_eq!(Chord::parse("Option + T"), chord(false, true, false, Key::T));
         assert_eq!(Chord::parse("Ctrl++"), chord(true, false, false, Key::Plus));
         assert_eq!(Chord::parse("shift+f12"), chord(false, false, true, Key::F12));
         assert_eq!(Chord::parse("ctrl+pagedown"), chord(true, false, false, Key::PageDown));
         assert_eq!(Chord::parse("Ctrl+Shift"), None);
+        assert_eq!(Chord::parse("Ctrl+ShiftLeft"), None);
         assert_eq!(Chord::parse("Hyper+P"), None);
         assert_eq!(Chord::parse("Ctrl+`").unwrap().to_config(), "Ctrl+`");
         assert_eq!(Chord::parse("ctrl+minus").unwrap().to_config(), "Ctrl+-");
+        // The Control key of a Mac: its own modifier there, Ctrl elsewhere.
+        let mac_ctrl = Chord::parse("MacCtrl+`").unwrap();
+        assert_eq!((mac_ctrl.ctrl, mac_ctrl.mac_ctrl), (!MAC, MAC));
+        assert_eq!(Chord::parse(&mac_ctrl.to_config()), Some(mac_ctrl));
+        assert_eq!(Chord::parse_label(&mac_ctrl.label()), Some(mac_ctrl));
+        assert_eq!(mac_ctrl.label(), "Ctrl+`");
+        let primary = Chord::parse("Ctrl+F").unwrap();
+        assert_eq!(primary.label(), if MAC { "Cmd+F" } else { "Ctrl+F" });
+        assert_eq!(Chord::parse_label(&primary.label()), Some(primary));
     }
 
     #[test]
@@ -446,28 +513,49 @@ mod tests {
         }
     }
 
+    /// The modifiers egui reports while `chord` is held.
+    fn press(chord: Chord) -> Modifiers {
+        Modifiers {
+            alt: chord.alt,
+            shift: chord.shift,
+            command: chord.ctrl,
+            mac_cmd: MAC && chord.ctrl,
+            ctrl: if MAC { chord.mac_ctrl } else { chord.ctrl },
+        }
+    }
+
+    #[test]
+    fn every_default_triggers_its_command() {
+        let keymap = Keymap::new(&BTreeMap::new());
+        for &command in ALL {
+            for &chord in keymap.chords(command) {
+                assert_eq!(keymap.lookup(command.scope(), chord.key, None, press(chord)), Some(command), "{}", chord.label());
+                assert_eq!(Chord::from_event(chord.key, press(chord)), chord);
+            }
+        }
+    }
+
     #[test]
     fn lookup_prefers_exact_modifiers() {
         let keymap = Keymap::new(&BTreeMap::new());
-        let m = |command, shift| Modifiers {
-            command,
-            ctrl: command && !cfg!(target_os = "macos"),
-            mac_cmd: command && cfg!(target_os = "macos"),
-            shift,
-            alt: false,
-        };
-        assert_eq!(keymap.lookup(Scope::Global, Key::P, None, m(true, true)), Some(Command::CommandPalette));
-        assert_eq!(keymap.lookup(Scope::Global, Key::P, None, m(true, false)), Some(Command::QuickOpen));
-        assert_eq!(keymap.lookup(Scope::Global, Key::Backtick, None, m(true, true)), Some(Command::NewTerminal));
+        let m = |text: &str| press(Chord::parse(&format!("{text}+A")).unwrap());
+        assert_eq!(keymap.lookup(Scope::Global, Key::P, None, m("Ctrl+Shift")), Some(Command::CommandPalette));
+        assert_eq!(keymap.lookup(Scope::Global, Key::P, None, m("Ctrl")), Some(Command::QuickOpen));
         // `+` needs Shift on a US keyboard.
-        assert_eq!(keymap.lookup(Scope::Global, Key::Plus, None, m(true, true)), Some(Command::ZoomIn));
+        assert_eq!(keymap.lookup(Scope::Global, Key::Plus, None, m("Ctrl+Shift")), Some(Command::ZoomIn));
         // Ctrl+Shift+D is not Ctrl+D.
-        assert_eq!(keymap.lookup(Scope::Editor, Key::D, None, m(true, true)), None);
+        assert_eq!(keymap.lookup(Scope::Editor, Key::D, None, m("Ctrl+Shift")), None);
         // A non-Latin layout: the logical key is unknown, the physical one is P.
-        assert_eq!(keymap.lookup(Scope::Global, Key::Q, Some(Key::P), m(true, false)), Some(Command::Quit));
-        assert_eq!(keymap.lookup(Scope::Global, Key::F20, Some(Key::P), m(true, false)), Some(Command::QuickOpen));
-        assert_eq!(keymap.lookup(Scope::Editor, Key::Enter, None, m(true, false)), Some(Command::InsertLineBelow));
-        assert_eq!(keymap.lookup(Scope::CommitMessage, Key::Enter, None, m(true, false)), Some(Command::GitCommit));
+        assert_eq!(keymap.lookup(Scope::Global, Key::Q, Some(Key::P), m("Ctrl")), Some(Command::Quit));
+        assert_eq!(keymap.lookup(Scope::Global, Key::F20, Some(Key::P), m("Ctrl")), Some(Command::QuickOpen));
+        assert_eq!(keymap.lookup(Scope::Editor, Key::Enter, None, m("Ctrl")), Some(Command::InsertLineBelow));
+        assert_eq!(keymap.lookup(Scope::CommitMessage, Key::Enter, None, m("Ctrl")), Some(Command::GitCommit));
+        if MAC {
+            // Control and Cmd are different keys on a Mac.
+            assert_eq!(keymap.lookup(Scope::Global, Key::P, None, m("MacCtrl")), None);
+            assert_eq!(keymap.lookup(Scope::Global, Key::Backtick, None, m("MacCtrl")), Some(Command::ToggleTerminal));
+            assert_eq!(keymap.lookup(Scope::Global, Key::Backtick, None, m("Ctrl")), None);
+        }
     }
 
     #[test]
@@ -497,15 +585,18 @@ mod tests {
         assert!(find(&russian.to_uppercase()).contains(&Command::CommandPalette));
         assert!(find(russian.split(' ').next().unwrap()).contains(&Command::CommandPalette));
         assert!(find("command_palette").contains(&Command::CommandPalette));
-        assert_eq!(find("ctrl+shift+p"), vec![Command::CommandPalette]);
+        let primary = if MAC { "cmd" } else { "ctrl" };
+        assert_eq!(find(&format!("{primary}+shift+p")), vec![Command::CommandPalette]);
         assert_eq!(find("Cmd + Shift + P"), vec![Command::CommandPalette]);
-        assert_eq!(find("ctrl+="), vec![Command::ZoomIn]);
-        assert_eq!(find("ctrl++"), vec![Command::ZoomIn]);
+        assert_eq!(find(&format!("{primary}+=")), vec![Command::ZoomIn]);
+        assert_eq!(find(&format!("{primary}++")), vec![Command::ZoomIn]);
+        assert_eq!(find(&Chord::parse("MacCtrl+`").unwrap().label()), vec![Command::ToggleTerminal]);
+        assert!(find("backtick").contains(&Command::ToggleTerminal));
         let f5 = find("f5");
         for command in [Command::RunDefault, Command::RerunLast, Command::KillTerminal] {
             assert!(f5.contains(&command), "{command:?} in {f5:?}");
         }
-        assert!(find("ctrl+shift").contains(&Command::CommandPalette));
+        assert!(find(&format!("{primary}+shift")).contains(&Command::CommandPalette));
         assert!(find("").len() == ALL.len());
         assert!(find("zzzz").is_empty());
     }
