@@ -1,7 +1,7 @@
 # Maintainer: Анатолий Копейкин <anatoliiii@users.noreply.github.com>
 # Contributor: lumen-edit contributors
 pkgname=${pkgname:-lumen-edit}
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 arch=('x86_64' 'aarch64')
 url='https://github.com/anatoliiii/lumen-edit'

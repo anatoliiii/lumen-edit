@@ -2106,14 +2106,14 @@ dependencies = [
 
 [[package]]
 name = "lumen-agent"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lumen-shared",
 ]
 
 [[package]]
 name = "lumen-edit"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "dirs",
@@ -2162,7 +2162,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-shared"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ignore",
  "notify",
