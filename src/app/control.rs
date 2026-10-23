@@ -154,6 +154,12 @@ impl App {
         let fail = |error: String| Some(Err(error));
         match method {
             "state" => done(self.state_json()),
+            "open_files" => done(json!(self.open_files().iter().map(|f| json!({
+                "path": f.path,
+                "name": f.name,
+                "dirty": f.dirty,
+                "lines": f.lines,
+            })).collect::<Vec<_>>())),
             "methods" => done(json!(crate::control::methods::METHODS.iter().map(|m| m.name).collect::<Vec<_>>())),
             "commands" => done(json!(
                 commands::ALL.iter().map(|c| json!({ "id": c.id(), "label": c.label(), "shortcut": c.shortcut_text() })).collect::<Vec<_>>()

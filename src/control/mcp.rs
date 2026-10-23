@@ -89,6 +89,7 @@ pub const GROUPS: &[(&str, &str, &[(&str, &str)])] = &[
         &[
             ("read", "read_file"),
             ("open", "open_file"),
+            ("list_open", "open_files"),
             ("edit", "edit"),
             ("replace", "replace_text"),
             ("write", "write_file"),

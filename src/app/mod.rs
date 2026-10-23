@@ -262,6 +262,15 @@ pub struct Toast {
     at: Instant,
 }
 
+/// A text file open in a tab: its path, display name and a snapshot taken at
+/// query time (dirty flag, line count). See `App::open_files`.
+pub struct OpenFile {
+    pub path: String,
+    pub name: String,
+    pub dirty: bool,
+    pub lines: usize,
+}
+
 pub struct App {
     ctx: egui::Context,
     pub config: Config,
@@ -463,6 +472,24 @@ impl App {
 
     pub fn host(&self) -> Option<Host> {
         self.workspace.as_ref().map(|w| w.host.clone())
+    }
+
+    /// The text files open in tabs, in tab order (unsaved changes included).
+    /// Used by the control layer (`open_files`) to list the workspace without a
+    /// full `state` dump.
+    pub fn open_files(&self) -> Vec<OpenFile> {
+        self.tabs
+            .iter()
+            .filter_map(|t| match t {
+                Tab::Doc(doc) => Some(OpenFile {
+                    path: doc.path.clone(),
+                    name: doc.name().to_string(),
+                    dirty: doc.is_dirty(),
+                    lines: doc.buffer.line_count(),
+                }),
+                _ => None,
+            })
+            .collect()
     }
 
     // ------------------------------------------------------------ workspace
