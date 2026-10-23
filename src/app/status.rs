@@ -277,11 +277,20 @@ pub fn activity_bar(ui: &mut egui::Ui, app: &mut App) {
                 );
             }
             ui.painter().text(rect.center(), Align2::CENTER_CENTER, "π", FontId::proportional(21.0), color);
-            if busy {
-                ui.painter().circle_filled(rect.center() + vec2(10.0, 9.0), 4.0, theme::SUCCESS);
+            let waiting = super::agent::manager::waiting_count(app);
+            if busy || waiting > 0 {
+                ui.painter().circle_filled(rect.center() + vec2(10.0, 9.0), 4.0, if waiting > 0 { theme::WARNING } else { theme::SUCCESS });
             }
+            response.context_menu(|ui| {
+                if ui.button(t!("Agent sessions")).clicked() {
+                    app.run_command(Command::AgentSessions);
+                    ui.close();
+                }
+            });
             if response.on_hover_text(t!("pi agent (Ctrl+Shift+A)")).clicked() {
-                if app.agent_dock.is_some() && app.agent_dock_open {
+                if super::agent::manager::agents(app).count() > 1 || waiting > 0 {
+                    app.agent_manager.open = true;
+                } else if app.agent_dock.is_some() && app.agent_dock_open {
                     app.agent_dock_open = false;
                 } else {
                     app.run_command(Command::Agent);

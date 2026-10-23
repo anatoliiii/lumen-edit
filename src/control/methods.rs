@@ -269,10 +269,20 @@ pub const METHODS: &[Method] = &[
     },
     Method {
         name: "agent",
-        description: "The pi agent tab: open it, send a task, read the transcript, stop it, list or switch sessions.",
+        description: "Manage Pi agents by stable editor ID: independent sessions or coordinator/worker groups. list shows states, tasks, results and session stats. create starts an agent (text optionally assigns its first task); coordinator=<ID> creates a worker in that coordinator's group. Completed worker results are delivered automatically once. Workers share project files, so assign disjoint edit scopes. group_stop cancels all work and pauses result delivery; resume_group explicitly re-enables delivery. No target ID means the active agent.",
         params: &[
-            p("action", Str, true, "open | prompt | transcript | abort | sessions | switch (text = session path) | new_session"),
-            p("text", Str, false, "Task text for prompt."),
+            p(
+                "action",
+                Str,
+                true,
+                "list | manager | create | dispatch | focus | close | restart | rename | clone | group_stop | resume_group | open | prompt | follow_up | clear_queue | transcript | abort | sessions | switch (text = session path, opens separately) | new_session",
+            ),
+            p("agent", Int, false, "Target live agent ID from action=list. Omit for the active agent."),
+            p("coordinator", Int, false, "Coordinator ID when creating a worker; omit for independent sessions."),
+            p("role", Str, false, "independent (default) or coordinator when creating an agent."),
+            p("name", Str, false, "Name for create or rename."),
+            p("model", Str, false, "Model provider/id for a newly created agent; default: editor settings."),
+            p("text", Str, false, "Task or prompt text; session path for switch."),
             p("last", Int, false, "Transcript: only the last N items (default 30)."),
         ],
     },

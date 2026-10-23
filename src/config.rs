@@ -54,6 +54,8 @@ pub struct Config {
     pub ssh_hosts: Vec<String>,
     /// Open files per project (`host|root`), restored on reopen.
     pub sessions: HashMap<String, Vec<String>>,
+    /// Open Pi conversations per project; prompts are never replayed on restore.
+    pub agent_sessions: HashMap<String, Vec<crate::app::agent::team::SavedAgent>>,
     /// Shortcuts that differ from the defaults: command id -> chords like
     /// `Ctrl+Shift+P` (Ctrl is Cmd on macOS, `MacCtrl` its Control key);
     /// `[]` unbinds the command.
@@ -88,6 +90,7 @@ impl Default for Config {
             recent: Vec::new(),
             ssh_hosts: Vec::new(),
             sessions: HashMap::new(),
+            agent_sessions: HashMap::new(),
             keybindings: BTreeMap::new(),
         }
     }

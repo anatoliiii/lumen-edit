@@ -199,7 +199,13 @@ fn parse_args(method: &methods::Method, args: &[String]) -> Result<Value, String
     methods::parse_cli_params(method, &normalized)
 }
 
-fn call_and_print(method: &str, params: Value, args: &[String]) -> ExitCode {
+fn call_and_print(method: &str, mut params: Value, args: &[String]) -> ExitCode {
+    if method == "agent"
+        && let Ok(caller) = std::env::var("LUMEN_AGENT_ID")
+        && let Ok(caller) = caller.parse::<u64>()
+    {
+        params["_caller_agent"] = json!(caller);
+    }
     let launch = matches!(method, "open_file" | "open_folder" | "connect_ssh");
     match control::connect_or_launch(launch) {
         Ok(mut client) => print_result(method, client.call(method, params), args),

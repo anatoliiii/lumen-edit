@@ -1,7 +1,7 @@
 //! Application state and the main loop. Workers report back through `Msg`.
 
 mod about;
-mod agent;
+pub(crate) mod agent;
 mod commands;
 mod control;
 mod diffview;
@@ -147,6 +147,7 @@ pub enum Msg {
     /// A record from a pi agent process.
     Agent {
         id: u64,
+        generation: u64,
         event: serde_json::Value,
     },
     /// Continuation from a worker thread.
@@ -316,6 +317,7 @@ pub struct App {
     /// The agent docked beside the code (when not in a tab).
     pub agent_dock: Option<Box<agent::AgentTab>>,
     pub agent_dock_open: bool,
+    pub agent_manager: agent::manager::Manager,
     /// Images referenced from Markdown previews, by absolute path.
     pub image_cache: std::collections::HashMap<String, media::ImageEntry>,
     /// This editor's control socket, passed to agents.
@@ -383,6 +385,7 @@ impl App {
             known_hosts: Vec::new(),
             agent_dock: None,
             agent_dock_open: false,
+            agent_manager: Default::default(),
             image_cache: std::collections::HashMap::new(),
             control_socket: None,
             last_doc_id: None,
@@ -558,7 +561,8 @@ impl App {
         for path in session {
             self.open_file(path, None);
         }
-        if reopen_agent {
+        agent::manager::restore(self);
+        if reopen_agent && agent::find(self).is_none() {
             agent::open(self);
         }
     }
@@ -578,6 +582,7 @@ impl App {
         self.active_tab = None;
         self.agent_dock = None;
         self.agent_dock_open = false;
+        self.agent_manager = Default::default();
         self.terminals.clear();
         self.references.clear();
         self.loading_files.clear();
@@ -603,6 +608,7 @@ impl App {
             })
             .collect();
         self.config.sessions.insert(workspace.session_key(), files);
+        agent::manager::persist(self);
         self.config.save();
     }
 
@@ -742,6 +748,13 @@ impl App {
         if index >= self.tabs.len() {
             return;
         }
+        let agent_id = match self.tabs.get(index) {
+            Some(Tab::Agent(agent)) => Some(agent.id),
+            _ => None,
+        };
+        if let Some(id) = agent_id {
+            agent::manager::prepare_close(self, id);
+        }
         let tab = self.tabs.remove(index);
         if let Tab::Doc(doc) = &tab {
             self.lsp.document_closed(doc);
@@ -756,6 +769,9 @@ impl App {
             && let Tab::Doc(doc) = &mut self.tabs[active]
         {
             doc.view.focus_request = true;
+        }
+        if agent_id.is_some() {
+            agent::manager::persist(self);
         }
     }
 
@@ -1305,7 +1321,7 @@ impl App {
             Msg::RemoteDir { path, result } => welcome::on_remote_dir(self, path, result),
             Msg::Control(request) => self.handle_control(request),
             Msg::Run(job) => job(self),
-            Msg::Agent { id, event } => agent::on_event(self, id, event),
+            Msg::Agent { id, generation, event } => agent::on_event(self, id, generation, event),
             Msg::Notice(text, error) => {
                 if !text.is_empty() {
                     self.notify(text, error);
@@ -1926,6 +1942,7 @@ impl eframe::App for App {
         if self.settings_open {
             status::settings_window(&ctx, self);
         }
+        agent::manager::show(&ctx, self);
         keybindings::window(&ctx, self);
         if self.about_open {
             about::window(&ctx, self);

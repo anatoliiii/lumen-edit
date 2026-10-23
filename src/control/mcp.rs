@@ -212,6 +212,15 @@ pub fn granular_tools() -> Vec<Value> {
         .collect()
 }
 
+/// Strip the grouped routing selector only when the native method does not use it.
+fn forwarded_arguments(method: &str, mut arguments: Value) -> Value {
+    let needs_action = methods::find(method).is_some_and(|method| method.params.iter().any(|p| p.name == "action"));
+    if !needs_action && let Value::Object(map) = &mut arguments {
+        map.remove("action");
+    }
+    arguments
+}
+
 fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let mut arguments = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -224,9 +233,14 @@ fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Val
         Ok(method) => method,
         Err(error) => return tool_error(error),
     };
-    if let Value::Object(map) = &mut arguments {
-        map.remove("action");
+    if method == "agent"
+        && let Ok(caller) = std::env::var("LUMEN_AGENT_ID")
+        && let Ok(caller) = caller.parse::<u64>()
+    {
+        arguments["_caller_agent"] = json!(caller);
     }
+
+    let arguments = forwarded_arguments(method, arguments);
     let mut result = None;
     // Reconnect once if the editor was restarted.
     for _ in 0..2 {
@@ -288,6 +302,16 @@ pub fn base64(data: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn preserves_native_agent_actions_for_grouped_and_granular_tools() {
+        let input = serde_json::json!({ "action": "create", "coordinator": 7, "name": "worker" });
+        assert_eq!(super::forwarded_arguments("agent", input.clone()), input);
+        assert_eq!(
+            super::forwarded_arguments("read_file", serde_json::json!({ "action": "read", "path": "a.rs" })),
+            serde_json::json!({ "path": "a.rs" })
+        );
+    }
+
     #[test]
     fn base64_matches_rfc() {
         assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");

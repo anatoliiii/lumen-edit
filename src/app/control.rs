@@ -705,39 +705,9 @@ impl App {
                 self.ctx.request_repaint();
                 None
             }
-            "agent" => {
-                let action = str_param(params, "action").unwrap_or("transcript");
-                if action == "open" || action == "prompt" {
-                    super::agent::open(self);
-                }
-                let Some(agent) = super::agent::agent_mut(self) else {
-                    return fail(t!("the agent is not open (action=open)").into());
-                };
-                match action {
-                    "open" => done(json!({ "running": agent.is_running(), "sandboxed": agent.sandboxed, "cwd": agent.cwd })),
-                    "prompt" => {
-                        agent.prompt(str_param(params, "text").unwrap_or("").to_string());
-                        done(json!(t!("sent; progress — action=transcript")))
-                    }
-                    "abort" => {
-                        agent.abort();
-                        done(json!("ok"))
-                    }
-                    "sessions" => done(agent.sessions_json()),
-                    "switch" => {
-                        agent.switch_session(str_param(params, "text").unwrap_or("").to_string());
-                        done(json!("ok"))
-                    }
-                    "new_session" => {
-                        agent.switch_session(String::new());
-                        done(json!("ok"))
-                    }
-                    _ => {
-                        let last = int_param(params, "last").unwrap_or(30).max(1) as usize;
-                        done(json!({ "streaming": agent.streaming, "exited": agent.exited, "items": agent.transcript(last) }))
-                    }
-                }
-            }
+            "agent" => match super::agent::manager::control(self, params) {
+                Ok(value) => done(value), Err(error) => fail(error),
+            },
             "pulse" => done(self.pulse.json()),
             "transfer" => {
                 let hosts = super::teleport::known_hosts(self);

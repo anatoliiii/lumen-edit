@@ -1,5 +1,7 @@
 # Lumen Edit
 
+[Управление сессиями агентов](docs/pi-sessions.ru.md) · [Ревизия интеграции Pi](docs/pi-integration-audit.md)
+
 [English](README.md) · [Лицензия MIT](LICENSE) · [Как участвовать](CONTRIBUTING.md)
 
 ![Редактор](docs/screenshots/ru/editor.png)

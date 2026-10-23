@@ -1,5 +1,7 @@
 <div align="center">
 
+[Agent sessions (RU)](docs/pi-sessions.ru.md) · [Pi integration audit](docs/pi-integration-audit.md)
+
 # ◆ Lumen Edit
 
 **A native code editor in Rust — no Electron, no JavaScript.**

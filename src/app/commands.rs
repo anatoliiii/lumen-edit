@@ -94,6 +94,7 @@ pub enum Command {
     GitToggleBlame,
     Agent,
     AgentSendSelection,
+    AgentSessions,
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -193,6 +194,7 @@ pub const ALL: &[Command] = &[
     Command::GitToggleBlame,
     Command::Agent,
     Command::AgentSendSelection,
+    Command::AgentSessions,
     Command::ZoomIn,
     Command::ZoomOut,
     Command::ZoomReset,
@@ -317,6 +319,7 @@ impl Command {
             Command::GitToggleBlame => t_key!("Git: Toggle Line Blame"),
             Command::Agent => t_key!("pi Agent"),
             Command::AgentSendSelection => t_key!("Agent: Send Selection"),
+            Command::AgentSessions => t_key!("Agent: Manage Sessions"),
             Command::ZoomIn => t_key!("Zoom In"),
             Command::ZoomOut => t_key!("Zoom Out"),
             Command::ZoomReset => t_key!("Reset Zoom"),
@@ -612,6 +615,7 @@ impl App {
                 self.config.save();
             }
             Command::Agent => super::agent::open(self),
+            Command::AgentSessions => self.agent_manager.open = true,
             Command::AgentSendSelection => {
                 if let Some(Tab::Doc(doc)) = self.active_tab.and_then(|i| self.tabs.get(i)) {
                     self.last_doc_id = Some(doc.id);
