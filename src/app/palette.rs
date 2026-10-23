@@ -134,8 +134,17 @@ fn build_items(app: &App, mode: &Mode, query: &str) -> Vec<Item> {
             }
         }
         Mode::Commands => {
-            for command in commands::ALL {
-                push(command.label().into(), String::new(), command.shortcut_text().unwrap_or("").into(), Action::Command(*command), None);
+            // Fuzzy by the name in the current language; otherwise the other
+            // language, the id or the keys (`ctrl+shift+p`, `f5`).
+            let keymap = super::keymap::current();
+            for &command in commands::ALL {
+                let label = command.label().to_string();
+                let hint = command.shortcut_text().unwrap_or_default();
+                if let Some((score, matches)) = fuzzy.score(&label, query) {
+                    items.push((score + 1000, Item { label, detail: String::new(), hint, matches, action: Action::Command(command) }));
+                } else if super::keymap::matches_query(&keymap, command, query) {
+                    items.push((0, Item { label, detail: String::new(), hint, matches: Vec::new(), action: Action::Command(command) }));
+                }
             }
         }
         Mode::GotoLine => {

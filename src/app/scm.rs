@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Align2, FontId, RichText, Sense, pos2, vec2};
 
-use super::{App, Dialog, diffview::DiffMode, palette::Palette};
+use super::{App, Command, Dialog, diffview::DiffMode, palette::Palette};
 use crate::{
     git::{self, FileStatus, RepoState},
     host, theme,
@@ -198,10 +198,19 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
 
     // Commit box.
     egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
-        let hint = if git.amend { t!("New message for the last commit") } else { t!("Commit message (Ctrl+Enter)") };
+        let hint = if git.amend {
+            t!("New message for the last commit").to_string()
+        } else {
+            match Command::GitCommit.shortcut_text() {
+                Some(keys) => t!("Commit message ({keys})", keys = keys),
+                None => t!("Commit message").to_string(),
+            }
+        };
         let editor =
             ui.add(egui::TextEdit::multiline(&mut git.commit_message).hint_text(hint).desired_rows(3).desired_width(f32::INFINITY));
-        if editor.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)) {
+        if editor.has_focus()
+            && ui.input_mut(|i| super::keymap::consume(i, super::commands::Scope::CommitMessage)).contains(&Command::GitCommit)
+        {
             actions.push(Action::Commit);
         }
         ui.horizontal(|ui| {

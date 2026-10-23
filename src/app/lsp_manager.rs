@@ -129,6 +129,35 @@ impl LspManager {
 
     /// A ready server for the document that supports `capability`, or
     /// `Err(true)` while servers are still starting.
+    /// Why a command the user asked for (go to definition, rename, ...)
+    /// cannot run on `doc`, or `None` when a server can do it.
+    pub fn missing_reason(&self, doc: &Document, capability: &str) -> Option<String> {
+        let starting = match self.client_with(doc, capability) {
+            Ok(_) => return None,
+            Err(starting) => starting,
+        };
+        if starting {
+            return Some(t!("The language server is still starting, try again in a moment").into());
+        }
+        let specs = lsp::servers_for(doc.lang, &self.specs);
+        if specs.is_empty() {
+            return Some(t!("No language server for {lang}", lang = doc.lang.display_name()));
+        }
+        let reasons: Vec<String> = specs
+            .iter()
+            .map(|spec| match self.servers.get(&spec.name) {
+                Some(ServerState::Failed(error)) => {
+                    let reason = format!("{}: {}", spec.name, error.lines().last().unwrap_or(error));
+                    with_install_hint(reason, &spec.name)
+                }
+                Some(ServerState::Unavailable) => with_install_hint(t!("{name}: not installed", name = spec.command), &spec.name),
+                Some(ServerState::Ready(client)) if !client.is_alive() => t!("{name}: stopped", name = spec.name),
+                _ => t!("{name}: does not support this", name = spec.name),
+            })
+            .collect();
+        Some(t!("Language server cannot do this. {reasons}", reasons = reasons.join("; ")))
+    }
+
     pub fn client_with(&self, doc: &Document, capability: &str) -> Result<Arc<LspClient>, bool> {
         if let Some(client) = self.clients_for(doc).into_iter().find(|c| c.has_capability(capability)) {
             return Ok(client);
@@ -482,6 +511,14 @@ fn guess_source(manager: &LspManager, doc: &Document, diagnostics: &[lsp_types::
     opened.first().cloned().unwrap_or_else(|| "lsp".into())
 }
 
+/// `reason` followed by the command that installs the server, if known.
+fn with_install_hint(reason: String, server: &str) -> String {
+    match lsp::install_hint(server) {
+        Some(command) => t!("{reason}. Install: {command}", reason = reason.trim_end_matches('.'), command = command),
+        None => reason,
+    }
+}
+
 pub fn run_actions(app: &mut App, tab_index: usize, actions: Vec<EditorAction>) {
     for action in actions {
         crate::debug_log!(
@@ -491,6 +528,21 @@ pub fn run_actions(app: &mut App, tab_index: usize, actions: Vec<EditorAction>) 
                 _ => "other".into(),
             }
         );
+        let Some(Tab::Doc(doc)) = app.tabs.get_mut(tab_index) else { return };
+        // Commands the user asked for say why nothing happens; hover and
+        // completion while typing stay quiet.
+        let asked = match &action {
+            EditorAction::GotoDefinition => Some("definitionProvider"),
+            EditorAction::References => Some("referencesProvider"),
+            EditorAction::Rename(_) => Some("renameProvider"),
+            EditorAction::CodeActions => Some("codeActionProvider"),
+            EditorAction::Format => Some("documentFormattingProvider"),
+            _ => None,
+        };
+        if let Some(reason) = asked.and_then(|capability| app.lsp.missing_reason(doc, capability)) {
+            app.notify(reason, true);
+            continue;
+        }
         let Some(Tab::Doc(doc)) = app.tabs.get_mut(tab_index) else { return };
         match action {
             EditorAction::Completion { trigger } => {

@@ -8,7 +8,7 @@ use std::sync::{
 use eframe::egui::{self, Align2, FontId, RichText, Sense, pos2, vec2};
 use lumen_shared::fsops::DirEntry;
 
-use super::{App, Bus, Msg};
+use super::{App, Bus, Command, Msg};
 use crate::{
     config::{Config, RecentProject},
     host::{self, Host, Remote, ssh, ssh_config},
@@ -463,15 +463,20 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 ui.label(RichText::new(t!("SHORTCUTS")).small().strong().color(theme::MUTED_TEXT));
                 ui.add_space(4.0);
                 egui::Grid::new("welcome_keys").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
-                    for (keys, label) in [
-                        ("Ctrl+P", t!("go to file")),
-                        ("Ctrl+Shift+P", t!("command palette")),
-                        ("F5 / Ctrl+Shift+B", t!("run / build")),
-                        ("Ctrl+`", t!("terminal")),
-                        ("Ctrl+Shift+G", "git"),
-                        ("F12 / Shift+F12 / F2", t!("definition / references / rename")),
+                    for (commands, label) in [
+                        (&[Command::QuickOpen][..], t!("go to file")),
+                        (&[Command::CommandPalette], t!("command palette")),
+                        (&[Command::RunDefault, Command::Build], t!("run / build")),
+                        (&[Command::ToggleTerminal], t!("terminal")),
+                        (&[Command::ShowGit], "git"),
+                        (&[Command::GotoDefinition, Command::References, Command::Rename], t!("definition / references / rename")),
+                        (&[Command::Keybindings], t!("keyboard shortcuts")),
                     ] {
-                        ui.label(RichText::new(keys).monospace().color(theme::TEXT));
+                        let keys: Vec<String> = commands.iter().filter_map(|c| c.shortcut_text()).collect();
+                        if keys.is_empty() {
+                            continue;
+                        }
+                        ui.label(RichText::new(keys.join(" / ")).monospace().color(theme::TEXT));
                         ui.label(RichText::new(label).color(theme::MUTED_TEXT));
                         ui.end_row();
                     }
