@@ -428,17 +428,25 @@ impl App {
             }
             Command::SaveAll => self.save_all(),
             Command::CloseTab => {
+                if self.agent_manager.open {
+                    super::agent::manager::hide(self);
+                    return;
+                }
                 if let Some(index) = self.active_tab {
                     self.request_close_tab(index);
                 }
             }
             Command::NextTab | Command::PrevTab => {
-                if let Some(active) = self.active_tab
-                    && !self.tabs.is_empty()
-                {
-                    let len = self.tabs.len();
-                    let next = if command == Command::NextTab { (active + 1) % len } else { (active + len - 1) % len };
-                    self.activate_tab(next);
+                // The agent workspace is one visible tab, independent of process count.
+                let pages: Vec<Option<usize>> = std::iter::once(None)
+                    .chain(self.tabs.iter().enumerate().filter(|(_, tab)| !matches!(tab, Tab::Agent(_))).map(|(i, _)| Some(i)))
+                    .collect();
+                let current = if self.agent_manager.open { 0 } else { pages.iter().position(|page| *page == self.active_tab).unwrap_or(0) };
+                let next =
+                    if command == Command::NextTab { (current + 1) % pages.len() } else { (current + pages.len() - 1) % pages.len() };
+                match pages[next] {
+                    None => super::agent::manager::open(self),
+                    Some(index) => self.activate_tab(index),
                 }
             }
             Command::ToggleSidebar => self.sidebar_open = !self.sidebar_open,
@@ -614,8 +622,8 @@ impl App {
                 }
                 self.config.save();
             }
-            Command::Agent => super::agent::open(self),
-            Command::AgentSessions => self.agent_manager.open = true,
+            Command::Agent => super::agent::manager::open(self),
+            Command::AgentSessions => super::agent::manager::open(self),
             Command::AgentSendSelection => {
                 if let Some(Tab::Doc(doc)) = self.active_tab.and_then(|i| self.tabs.get(i)) {
                     self.last_doc_id = Some(doc.id);

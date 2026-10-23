@@ -6,8 +6,8 @@ use super::{
 };
 #[path = "manager_ui.rs"]
 mod ui;
-pub use ui::show;
 use ui::{Action, apply};
+pub use ui::{show, tick};
 
 use crate::{
     app::{App, Tab},
@@ -24,11 +24,14 @@ use std::{
 #[derive(Default)]
 pub struct Manager {
     pub open: bool,
+    creating: Option<Role>,
+    history_view: bool,
     filter: String,
     name: String,
     task: String,
     model: String,
-    selected: Option<u64>,
+    model_filter: String,
+    pub(super) selected: Option<u64>,
     archived: bool,
     history: Arc<Mutex<Option<Result<Vec<SessionInfo>, String>>>>,
     history_dir: Option<String>,
@@ -64,11 +67,25 @@ pub fn by_id(app: &mut App, id: u64) -> Option<&mut AgentTab> {
     })
 }
 
-fn location(app: &App, id: u64) -> Option<Loc> {
+pub(super) fn location(app: &App, id: u64) -> Option<Loc> {
     if app.agent_dock.as_ref().is_some_and(|agent| agent.id == id) {
         return Some(Loc::Dock);
     }
     app.tabs.iter().position(|tab| matches!(tab, Tab::Agent(agent) if agent.id == id)).map(Loc::Tab)
+}
+
+pub fn open(app: &mut App) {
+    let selected = app.agent_manager.selected.filter(|id| agents(app).any(|a| a.id == *id));
+    app.agent_manager.selected = selected.or_else(|| agents(app).next().map(|a| a.id));
+    app.agent_manager.open = true;
+    app.agent_manager.creating = None;
+}
+
+pub fn hide(app: &mut App) {
+    app.agent_manager.open = false;
+    if matches!(app.active_tab.and_then(|i| app.tabs.get(i)), Some(Tab::Agent(_))) {
+        app.active_tab = app.tabs.iter().position(|tab| matches!(tab, Tab::Doc(_)));
+    }
 }
 
 pub fn focus(app: &mut App, id: u64) {
@@ -565,7 +582,7 @@ pub fn control(app: &mut App, params: &Value) -> Result<Value, String> {
     match action {
         "list" => return Ok(live_json(app)),
         "manager" => {
-            app.agent_manager.open = true;
+            open(app);
             return Ok(json!("ok"));
         }
         "create" | "new_session" => {
@@ -574,6 +591,7 @@ pub fn control(app: &mut App, params: &Value) -> Result<Value, String> {
                 "coordinator" => Role::Coordinator,
                 _ => return Err(t!("Unknown agent role").into()),
             };
+            let previous = (app.active_tab, app.agent_manager.selected);
             let id = try_create(
                 app,
                 Create {
@@ -584,6 +602,10 @@ pub fn control(app: &mut App, params: &Value) -> Result<Value, String> {
                     ..Default::default()
                 },
             )?;
+            if number("_caller_agent").is_some() {
+                app.active_tab = previous.0;
+                app.agent_manager.selected = previous.1;
+            }
             if !text.trim().is_empty() {
                 dispatch(app, id, text.into())?;
             }

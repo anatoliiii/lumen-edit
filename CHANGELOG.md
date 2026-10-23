@@ -7,12 +7,14 @@ and the project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Agent sessions now live inside the project workspace: session list and groups beside the selected chat, inline creation, searchable model selection and session actions.
 - Pi session manager: independent agents and coordinator/worker groups, task dispatch and result delivery, per-agent models, live status, queues, session totals and context usage.
 - Saved agent sessions and drafts restore per project without replaying tasks; history can be opened separately, cloned or reversibly archived.
 - Addressable CLI/MCP agent IDs, group controls and delegation through the editor tools.
 
 
 ### Fixed
+- Creating a background worker preserves the user's selected session and document.
 - MCP forwarding preserves the native agent action parameter, enabling agent management and delegation through Pi tools.
 - Pi restarts resume the exact session, ignore stale process events and cancel unsent startup prompts when stopped; expired background extension dialogs no longer block the UI.
 - Pi extension confirmation and input dialogs fit the viewport, with scrollable content and visible response buttons.

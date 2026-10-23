@@ -1764,6 +1764,13 @@ fn at(app: &mut App, loc: Loc) -> Option<&mut AgentTab> {
 
 /// The agent, wherever it is (dock first).
 pub fn find(app: &App) -> Option<Loc> {
+    if app.agent_manager.open
+        && let Some(id) = app.agent_manager.selected
+        && let Some(loc) = manager::location(app, id)
+    {
+        return Some(loc);
+    }
+
     if let Some(index) = app.active_tab
         && matches!(app.tabs.get(index), Some(super::Tab::Agent(_)))
     {
@@ -1842,6 +1849,7 @@ fn request_dialog(ctx: &egui::Context, agent_id: u64, request: &mut UiRequest) -
 
 pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
     let font_size = app.config.editor_font_size;
+    let integrated = app.agent_manager.open;
     let Some(agent) = at(app, loc) else { return };
     let mut actions = Vec::new();
 
@@ -1904,6 +1912,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                 ui.label(RichText::new(text).small().color(theme::FAINT_TEXT));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if integrated {
+                    return;
+                }
                 if loc == Loc::Dock && ui.small_button("×").on_hover_text(t!("Hide the panel (the agent keeps working)")).clicked() {
                     actions.push(Action::Hide);
                 }
@@ -2253,7 +2264,7 @@ fn apply(app: &mut App, loc: Loc, action: Action) {
             return;
         }
         Action::Manage => {
-            app.agent_manager.open = true;
+            manager::open(app);
             return;
         }
         Action::SwitchSession(path) => {

@@ -662,7 +662,6 @@
 "Interrupted by editor restart; assign the task again to continue" = "Прервано перезапуском редактора; назначьте задание повторно для продолжения"
 "Close this session before archiving it" = "Закройте эту сессию перед архивированием"
 "A session with this file name already exists" = "Сессия с таким именем файла уже существует"
-"Independent sessions and coordinator groups" = "Независимые сессии и группы с координатором"
 "Each agent has its own conversation. Group workers share project files; assign separate file scopes." = "У каждого агента свой диалог. Исполнители группы работают с общими файлами проекта; назначайте им разные области изменений."
 "Name" = "Имя"
 "Model" = "Модель"
@@ -670,8 +669,6 @@
 "Task or goal (optional for a new session)" = "Задание или цель (необязательно для новой сессии)"
 "New independent session" = "Независимая сессия"
 "New coordinator group" = "Группа с координатором"
-"Add worker to selected group" = "Добавить исполнителя в выбранную группу"
-"Assign task to selected agent" = "Назначить задание выбранному агенту"
 "Open agents" = "Открытые агенты"
 "Stop" = "Остановить"
 "Actions" = "Действия"
@@ -698,7 +695,6 @@
 "Coordinator" = "Координатор"
 "Worker" = "Исполнитель"
 
-"Choose model" = "Выбрать модель"
 
 "Completed" = "Завершено"
 
@@ -711,3 +707,17 @@
 "Pi connection failed: {error}" = "Ошибка соединения с Pi: {error}"
 
 "Saved agent session is missing: {path}" = "Не найден сохранённый файл сессии агента: {path}"
+
+"New group" = "Новая группа"
+
+"Coordinator group" = "Группа с координатором"
+
+"Add worker" = "Добавить исполнителя"
+
+"Create session" = "Создать сессию"
+
+"Your agents, in this project" = "Агенты этого проекта"
+
+"Choose a session on the left, or start a new conversation." = "Выберите сессию слева или начните новый диалог."
+
+"Search models" = "Поиск модели"

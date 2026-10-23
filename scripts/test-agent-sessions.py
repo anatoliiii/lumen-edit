@@ -11,6 +11,7 @@ import uuid
 import os
 from pathlib import Path
 import socket
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -206,7 +207,9 @@ def main():
             one = agent('create', name='Independent A')['id']
             two = agent('create', name='Independent B')['id']
             lead = agent('create', name='Coordinator', role='coordinator')['id']
+            selected_tab = next(tab for tab in call('state')['tabs'] if tab['active'])
             worker = mcp_agent(lead, {'action': 'create', 'name': 'Parser worker', 'coordinator': lead})['id']
+            assert next(tab for tab in call('state')['tabs'] if tab['active']) == selected_tab, 'Background worker creation stole focus'
             assert len(mcp_agent(lead, {'action': 'list'}, granular=False)) == 4
             wait_for(lambda: len(live()) == 4 and all(a['session'] for a in live()), 'Four distinct sessions failed to open')
             assert len({a['session'] for a in live()}) == 4
@@ -260,12 +263,55 @@ def main():
             wait_for(lambda: lookup(two)['pending_confirmations'] == 1, 'Hidden request was not counted')
             wait_for(lambda: lookup(two)['pending_confirmations'] == 0, 'Expired request remained visible')
             agent('abort', agent=two)
+            notes = project / 'notes.txt'
+            notes.write_text('Workspace session acceptance notes\n')
             agent('manager')
+            assert call('state')['agent_workspace']
+            call('open_file', path=str(notes))
+            wait_for(lambda: call('state').get('active', {}).get('path') == str(notes), 'Document did not open')
+            assert not call('state')['agent_workspace'], 'Opening a document did not leave the agent workspace'
+            agent('manager')
+            call('run_command', command='next_tab')
+            assert not call('state')['agent_workspace'], 'Next tab did not return to the document'
+            call('run_command', command='prev_tab')
+            assert call('state')['agent_workspace'], 'Previous tab did not return to agents'
+            agent('focus', agent=worker)
+            count = len(live())
+            call('run_command', command='close_tab')
+            assert len(live()) == count and lookup(worker), 'Closing the agent workspace killed its selected session'
+            assert not call('state')['agent_workspace']
+            agent('manager')
+            agent('focus', agent=worker)
             time.sleep(0.6)
             screenshot = root / 'manager.png'
             call('screenshot', path=str(screenshot))
             output = Path('/tmp/lumen-agent-manager.png')
             output.write_bytes(screenshot.read_bytes())
+            if shutil.which('xdotool'):
+                # Only the isolated Xvfb display is touched; test real pointer routing.
+                def click(x, y):
+                    subprocess.run(['xdotool', 'mousemove', '--sync', str(x), str(y), 'click', '1'], env=env, check=True)
+                click(420, 450)
+                wait_for(lambda: agent('transcript')['id'] == lead, 'Sidebar click did not select the coordinator conversation')
+                click(380, 112)
+                time.sleep(0.3)
+                form = root / 'new-session.png'
+                call('screenshot', path=str(form))
+                Path('/tmp/lumen-agent-new-session.png').write_bytes(form.read_bytes())
+                windows = subprocess.check_output(['xdotool', 'search', '--pid', str(process.pid)], env=env, text=True).splitlines()
+                subprocess.run(['xdotool', 'windowfocus', '--sync', windows[0]], env=env, check=True)
+                click(800, 170)
+                time.sleep(0.15)
+                subprocess.run(['xdotool', 'type', '--clearmodifiers', 'Inline UI session'], env=env, check=True)
+                time.sleep(0.2)
+                filled = root / 'filled-session.png'
+                call('screenshot', path=str(filled))
+                Path('/tmp/lumen-agent-filled-session.png').write_bytes(filled.read_bytes())
+                click(670, 430)
+                created = wait_for(lambda: next((a for a in live() if a['name'] == 'π Inline UI session'), None), 'Inline session form did not create an agent')
+                agent('close', agent=created['id'])
+                agent('manager')
+                agent('focus', agent=worker)
             # In-flight tasks are persisted, but must not be resubmitted after editor restart.
             agent('dispatch', agent=worker, text='hold')
             wait_for(lambda: lookup(worker)['streaming'], 'Second hold did not start')
@@ -279,8 +325,7 @@ def main():
             assert restored_worker['coordinator'] == restored_lead['id']
             assert restored_worker['task']['status'] == 'cancelled'
             assert not any(a['streaming'] for a in live()), 'Restoration replayed a model request'
-            agent('focus', agent=restored_lead['id'])
-            call('run_command', command='close_tab')
+            agent('close', agent=restored_lead['id'])
             assert lookup(restored_lead['id']) is None
             assert lookup(restored_worker['id'])['role'] == 'independent'
             assert lookup(restored_worker['id'])['coordinator'] is None

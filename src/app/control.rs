@@ -801,6 +801,7 @@ impl App {
         let connecting = self.connect.as_ref().map(|c| json!({ "target": c.target, "error": c.error }));
         json!({
             "workspace": workspace,
+            "agent_workspace": self.agent_manager.open,
             "connecting": connecting,
             "tabs": tabs,
             "active": active,

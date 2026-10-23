@@ -680,6 +680,7 @@ impl App {
         }
         let insert_at = self.active_tab.map(|i| i + 1).unwrap_or(self.tabs.len()).min(self.tabs.len());
         self.tabs.insert(insert_at, Tab::Doc(Box::new(doc)));
+        self.agent_manager.open = false;
         self.active_tab = Some(insert_at);
         self.request_highlight(id);
         self.load_git_base(&path);
@@ -730,6 +731,9 @@ impl App {
     pub fn activate_tab(&mut self, index: usize) {
         if index < self.tabs.len() {
             self.active_tab = Some(index);
+            if !matches!(self.tabs[index], Tab::Agent(_)) {
+                self.agent_manager.open = false;
+            }
             if let Tab::Doc(doc) = &mut self.tabs[index] {
                 doc.view.focus_request = true;
             }
@@ -1906,7 +1910,7 @@ impl eframe::App for App {
                         SideView::Run => run::show(ui, self),
                     });
             }
-            if self.agent_dock.is_some() && self.agent_dock_open {
+            if self.agent_dock.is_some() && self.agent_dock_open && !self.agent_manager.open {
                 let width = (ctx.content_rect().width() * 0.38).clamp(340.0, 620.0);
                 egui::Panel::right("agent_dock")
                     .resizable(true)
@@ -1942,7 +1946,7 @@ impl eframe::App for App {
         if self.settings_open {
             status::settings_window(&ctx, self);
         }
-        agent::manager::show(&ctx, self);
+        agent::manager::tick(&ctx, self);
         keybindings::window(&ctx, self);
         if self.about_open {
             about::window(&ctx, self);

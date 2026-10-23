@@ -265,7 +265,8 @@ pub fn activity_bar(ui: &mut egui::Ui, app: &mut App) {
             }
             // The pi agent.
             let (rect, response) = ui.allocate_exact_size(vec2(46.0, 44.0), Sense::click());
-            let agent_active = (app.agent_dock.is_some() && app.agent_dock_open)
+            let agent_active = app.agent_manager.open
+                || (app.agent_dock.is_some() && app.agent_dock_open)
                 || matches!(app.active_tab.and_then(|i| app.tabs.get(i)), Some(Tab::Agent(_)));
             let busy =
                 app.tabs.iter().any(|t| matches!(t, Tab::Agent(a) if a.streaming)) || app.agent_dock.as_ref().is_some_and(|a| a.streaming);
@@ -288,13 +289,7 @@ pub fn activity_bar(ui: &mut egui::Ui, app: &mut App) {
                 }
             });
             if response.on_hover_text(t!("pi agent (Ctrl+Shift+A)")).clicked() {
-                if super::agent::manager::agents(app).count() > 1 || waiting > 0 {
-                    app.agent_manager.open = true;
-                } else if app.agent_dock.is_some() && app.agent_dock_open {
-                    app.agent_dock_open = false;
-                } else {
-                    app.run_command(Command::Agent);
-                }
+                app.run_command(Command::AgentSessions);
             }
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                 ui.add_space(6.0);

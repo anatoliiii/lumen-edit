@@ -7,7 +7,18 @@ use super::{App, PanelTab, Tab, diffview, editor, lsp_manager, util};
 use crate::{host, lsp::Severity, theme};
 
 pub fn editor_area(ui: &mut egui::Ui, app: &mut App) {
+    if !app.agent_manager.open
+        && let Some(Tab::Agent(agent)) = app.active_tab.and_then(|i| app.tabs.get(i))
+    {
+        let id = agent.id;
+        super::agent::manager::focus(app, id);
+        super::agent::manager::open(app);
+    }
     tab_bar(ui, app);
+    if app.agent_manager.open {
+        super::agent::manager::show(ui, app);
+        return;
+    }
     let Some(index) = app.active_tab.filter(|i| *i < app.tabs.len()) else {
         empty_state(ui, app);
         return;
@@ -62,8 +73,18 @@ fn tab_bar(ui: &mut egui::Ui, app: &mut App) {
         &mut child,
         |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
+            let workspace_tab = ui.add(egui::Button::selectable(app.agent_manager.open, t!("Agent sessions")));
+            if workspace_tab.clicked() {
+                super::agent::manager::open(app);
+            }
+            if app.agent_manager.open && ui.small_button("×").on_hover_text(t!("Close")).clicked() {
+                super::agent::manager::hide(app);
+            }
             for (index, tab) in app.tabs.iter().enumerate() {
-                let active = app.active_tab == Some(index);
+                if matches!(tab, Tab::Agent(_)) {
+                    continue;
+                }
+                let active = !app.agent_manager.open && app.active_tab == Some(index);
                 let mut title = tab.title();
                 // Same file name in different folders: add the folder, like `about.png · ru`.
                 if let Some(path) = tab.path()
@@ -176,6 +197,7 @@ fn tab_bar(ui: &mut egui::Ui, app: &mut App) {
         },
     );
     if let Some(index) = activate {
+        app.agent_manager.open = false;
         app.activate_tab(index);
     }
     if let Some(index) = close {
