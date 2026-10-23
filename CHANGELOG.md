@@ -6,6 +6,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-23
+
 ### Added
 - English and Russian interface: text in the code is English, Russian comes from `locales/`; follows the system locale or Settings → Language. A test keeps the catalog complete.
 - Server pulse: live CPU, memory, disks and top processes of the project host, status bar indicator, charts panel, disk/memory alerts, `pulse` in CLI/MCP.
@@ -16,6 +18,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 - Image viewer for PNG, JPEG, GIF, WebP, BMP and ICO with zoom and a transparency checkerboard; local images render inside Markdown.
 - SVG files open as a live preview that follows edits; CSV/TSV files open as a table (delimiter detected, quoted fields supported).
 - pi agent: dock beside the editor, "Ask π" on a selection, send files and fragments, clickable file links and commands from the agent.
+- Configurable keyboard shortcuts, including copy and paste in the editor and terminal, with a searchable shortcuts window and key recording.
 
 - SSH health check: the host badge turns red when the connection drops; its menu shows connection and agent status, reconnects and restarts the remote agent. A dead agent is restarted automatically once the host answers.
 - Panics are written to `~/.local/state/lumen-edit/crash.log`.
@@ -53,5 +56,6 @@ First public version: a complete rewrite of the early prototype.
 - pi coding agent tab with sessions, model/mode pickers and bubblewrap sandbox.
 - About window, settings window, install script and desktop entry.
 
-[Unreleased]: https://github.com/anatoliiii/lumen-edit/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/anatoliiii/lumen-edit/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/anatoliiii/lumen-edit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/anatoliiii/lumen-edit/releases/tag/v0.2.0
