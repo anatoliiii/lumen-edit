@@ -606,6 +606,7 @@
 "{name}: expected a number" = "{name}: ожидалось число"
 "{name}: not installed" = "{name}: не установлен"
 "{name}: stopped" = "{name}: остановлен"
+"{reason}. Install: {command}" = "{reason}. Установка: {command}"
 "{target} connected — pick it in the Teleport pane" = "{target} подключён — выберите его в панели Телепорта"
 "{total} models" = "{total} моделей"
 "{total} tok · ${cost}" = "{total} ток · ${cost}"

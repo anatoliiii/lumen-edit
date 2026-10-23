@@ -146,8 +146,11 @@ impl LspManager {
         let reasons: Vec<String> = specs
             .iter()
             .map(|spec| match self.servers.get(&spec.name) {
-                Some(ServerState::Failed(error)) => format!("{}: {}", spec.name, error.lines().last().unwrap_or(error)),
-                Some(ServerState::Unavailable) => t!("{name}: not installed", name = spec.command),
+                Some(ServerState::Failed(error)) => {
+                    let reason = format!("{}: {}", spec.name, error.lines().last().unwrap_or(error));
+                    with_install_hint(reason, &spec.name)
+                }
+                Some(ServerState::Unavailable) => with_install_hint(t!("{name}: not installed", name = spec.command), &spec.name),
                 Some(ServerState::Ready(client)) if !client.is_alive() => t!("{name}: stopped", name = spec.name),
                 _ => t!("{name}: does not support this", name = spec.name),
             })
@@ -506,6 +509,14 @@ fn guess_source(manager: &LspManager, doc: &Document, diagnostics: &[lsp_types::
         return opened.iter().find(|n| *n != "ruff" && *n != "biome").cloned().unwrap_or(source);
     }
     opened.first().cloned().unwrap_or_else(|| "lsp".into())
+}
+
+/// `reason` followed by the command that installs the server, if known.
+fn with_install_hint(reason: String, server: &str) -> String {
+    match lsp::install_hint(server) {
+        Some(command) => t!("{reason}. Install: {command}", reason = reason.trim_end_matches('.'), command = command),
+        None => reason,
+    }
 }
 
 pub fn run_actions(app: &mut App, tab_index: usize, actions: Vec<EditorAction>) {

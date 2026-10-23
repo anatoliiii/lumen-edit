@@ -26,6 +26,27 @@ pub struct ServerSpec {
     pub fallback_for: Option<String>,
 }
 
+/// A command that installs one of the default servers, shown when it is
+/// missing or fails to start.
+pub fn install_hint(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "rust-analyzer" => "rustup component add rust-analyzer",
+        "clangd" if cfg!(target_os = "macos") => "xcode-select --install",
+        "clangd" if cfg!(windows) => "winget install LLVM.LLVM",
+        "clangd" => "sudo apt install clangd",
+        "gopls" => "go install golang.org/x/tools/gopls@latest",
+        "ty" => "uv tool install ty",
+        "ruff" => "uv tool install ruff",
+        "pylsp" => "pipx install python-lsp-server",
+        "csharp-ls" => "dotnet tool install -g csharp-ls",
+        "tsgo" => "npm install -g @typescript/native-preview",
+        "biome" => "npm install -g @biomejs/biome",
+        "taplo" => "cargo install taplo-cli --locked",
+        "sourcekit-lsp" if cfg!(target_os = "macos") => "xcode-select --install",
+        _ => return None,
+    })
+}
+
 pub fn default_servers() -> Vec<ServerSpec> {
     let spec = |name: &str, command: &str, args: &[&str], languages: &[&str], fallback_for: Option<&str>| ServerSpec {
         name: name.into(),
@@ -398,6 +419,15 @@ pub fn servers_for(lang: Lang, specs: &[ServerSpec]) -> Vec<ServerSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn install_hints_cover_the_default_servers() {
+        assert_eq!(install_hint("rust-analyzer"), Some("rustup component add rust-analyzer"));
+        for spec in default_servers() {
+            let known = install_hint(&spec.name).is_some() || matches!(spec.name.as_str(), "omnisharp" | "superhtml" | "sourcekit-lsp");
+            assert!(known, "no install hint for {}", spec.name);
+        }
+    }
 
     #[test]
     fn snippet_expansion() {
