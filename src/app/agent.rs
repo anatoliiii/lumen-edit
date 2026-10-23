@@ -193,11 +193,25 @@ mod tests {
     }
 
     #[test]
+    fn exited_session_does_not_remain_busy_and_can_be_restarted() {
+        let mut agent = detached();
+        agent.compacting = true;
+        agent.steering_queue.push("queued".into());
+        agent.follow_up_queue.push("later".into());
+        agent.startup_prompt = Some("unsent".into());
+        agent.handle(serde_json::json!({ "type": "__exit" }));
+        assert!(agent.exited.is_some());
+        assert!(!agent.busy(), "exit must clear transient state so restart is available");
+    }
+
+    #[test]
     fn stopping_during_startup_cancels_the_unsent_prompt() {
         let mut agent = detached();
         agent.prompt("must not run after cancellation".into());
         assert!(agent.startup_prompt.is_some());
+        agent.handle(serde_json::json!({ "type": "extension_ui_request", "id": "pending", "method": "confirm", "title": "Confirm" }));
         agent.abort();
+        assert!(agent.requests.is_empty());
         agent.handle(serde_json::json!({ "type": "response", "command": "get_state", "success": true, "data": {} }));
         assert!(agent.ready);
         assert!(agent.startup_prompt.is_none());
@@ -1003,6 +1017,16 @@ impl AgentTab {
         tab
     }
 
+    fn clear_runtime_state(&mut self) {
+        self.streaming = false;
+        self.compacting = false;
+        self.started_at = None;
+        self.startup_prompt = None;
+        self.steering_queue.clear();
+        self.follow_up_queue.clear();
+        self.requests.clear();
+    }
+
     fn send(&mut self, mut command: Value) {
         if command.get("id").is_none() {
             command["id"] = json!(format!("c{}", self.next_request));
@@ -1019,6 +1043,7 @@ impl AgentTab {
             self.items.push(Item::Notice { text: reason.clone(), error: true });
             self.exited = Some(reason);
             self.stdin = None;
+            self.clear_runtime_state();
             self.finish_task(TaskStatus::Failed);
         }
     }
@@ -1041,6 +1066,9 @@ impl AgentTab {
 
     pub fn abort(&mut self) {
         self.startup_prompt = None;
+        while !self.requests.is_empty() {
+            self.answer(0, json!({ "cancelled": true }));
+        }
         self.send(json!({ "type": "clear_queue" }));
         self.send(json!({ "type": "abort" }));
     }
@@ -1482,7 +1510,7 @@ impl AgentTab {
             }
             "extension_ui_request" => self.ui_request(&event),
             "__exit" => {
-                self.streaming = false;
+                self.clear_runtime_state();
                 let tail = self.stderr_tail.lock().unwrap().join("\n");
                 let reason = if tail.trim().is_empty() { t!("pi exited").to_string() } else { t!("pi exited:\n{tail}", tail = tail) };
                 self.items.push(Item::Notice { text: reason.clone(), error: true });
