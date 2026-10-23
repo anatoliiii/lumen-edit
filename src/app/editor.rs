@@ -15,7 +15,7 @@ use super::{
     Command,
     commands::Scope,
     document::Document,
-    keymap::{self, Chord},
+    keymap::{self, Chord, ClipboardAction},
     util,
 };
 use crate::{
@@ -1547,7 +1547,19 @@ fn handle_keyboard(
     let tab = doc.buffer.tab_size;
     let mut typed: Option<String> = None;
     let mut moved = false;
+    let keymap = keymap::current();
     for event in events {
+        // Ctrl+C / Ctrl+X / Ctrl+V go by the keymap: they may belong to
+        // another command, or to none.
+        if !keymap::requested_paste(ui.ctx())
+            && let Some(action) = keymap::clipboard_action(&keymap, Scope::Editor, &event)
+            && action != ClipboardAction::Native
+        {
+            if let ClipboardAction::Run(command) = action {
+                run_command(ui.ctx(), doc, command, actions, settings.has_lsp);
+            }
+            continue;
+        }
         match event {
             Event::Text(text) | Event::Ime(egui::ImeEvent::Commit(text)) => {
                 if text.is_empty() || text.chars().all(|c| c.is_control()) {
@@ -1563,25 +1575,9 @@ fn handle_keyboard(
                 doc.view.reveal = true;
                 doc.view.completion = None;
             }
-            Event::Copy | Event::Cut => {
-                let cut = matches!(event, Event::Cut);
-                if doc.buffer.selections.iter().all(|s| s.is_empty()) {
-                    // No selection: whole lines.
-                    let (line, _) = doc.buffer.line_col(doc.buffer.primary().head);
-                    ui.ctx().copy_text(format!("{}\n", doc.buffer.line_text(line)));
-                    if cut {
-                        doc.buffer.delete_lines();
-                    }
-                } else {
-                    ui.ctx().copy_text(doc.buffer.selected_text());
-                    if cut {
-                        doc.buffer.delete_backward(false);
-                    }
-                }
-                doc.view.reveal = true;
-            }
+            Event::Copy | Event::Cut => copy_or_cut(ui.ctx(), doc, matches!(event, Event::Cut)),
             Event::Key { key, physical_key, pressed: true, modifiers, .. }
-                if handle_key(doc, key, physical_key, modifiers, actions, visible_lines, tab, settings) =>
+                if handle_key(ui.ctx(), doc, key, physical_key, modifiers, actions, visible_lines, tab, settings) =>
             {
                 moved = true;
             }
@@ -1639,8 +1635,27 @@ fn handle_keyboard(
 }
 
 /// Returns true when the cursor moved without editing.
+/// Copies the selection, or the whole line when nothing is selected; `cut`
+/// also removes it.
+fn copy_or_cut(ctx: &egui::Context, doc: &mut Document, cut: bool) {
+    if doc.buffer.selections.iter().all(|s| s.is_empty()) {
+        let (line, _) = doc.buffer.line_col(doc.buffer.primary().head);
+        ctx.copy_text(format!("{}\n", doc.buffer.line_text(line)));
+        if cut {
+            doc.buffer.delete_lines();
+        }
+    } else {
+        ctx.copy_text(doc.buffer.selected_text());
+        if cut {
+            doc.buffer.delete_backward(false);
+        }
+    }
+    doc.view.reveal = true;
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_key(
+    ctx: &egui::Context,
     doc: &mut Document,
     key: Key,
     physical: Option<Key>,
@@ -1691,7 +1706,7 @@ fn handle_key(
     }
 
     if let Some(command) = keymap::current().lookup(Scope::Editor, key, physical, m) {
-        run_command(doc, command, actions, settings.has_lsp);
+        run_command(ctx, doc, command, actions, settings.has_lsp);
         return false;
     }
 
@@ -1772,10 +1787,13 @@ fn handle_key(
 
 /// Runs an editor command on `doc`, from a shortcut, the palette or the CLI.
 /// Returns false for commands that are not the editor's.
-pub fn run_command(doc: &mut Document, command: Command, actions: &mut Vec<EditorAction>, has_lsp: bool) -> bool {
+pub fn run_command(ctx: &egui::Context, doc: &mut Document, command: Command, actions: &mut Vec<EditorAction>, has_lsp: bool) -> bool {
     let tab = doc.buffer.tab_size;
     doc.view.reveal = true;
     match command {
+        Command::Copy | Command::Cut => copy_or_cut(ctx, doc, command == Command::Cut),
+        // The text arrives next frame as a paste event.
+        Command::Paste => keymap::request_paste(ctx),
         Command::Undo | Command::Redo => {
             if command == Command::Undo {
                 doc.buffer.undo();

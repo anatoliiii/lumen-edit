@@ -12,7 +12,13 @@ use std::{
 use eframe::egui::{self, Color32, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2, text::LayoutJob};
 use portable_pty::{CommandBuilder, MasterPty, PtySize};
 
-use crate::theme;
+use crate::{
+    app::{
+        Command, Scope,
+        keymap::{self, ClipboardAction},
+    },
+    theme,
+};
 
 #[derive(Default)]
 struct Callbacks {
@@ -403,7 +409,58 @@ impl Terminal {
         output
     }
 
+    /// Copies the selected text; false when nothing is selected.
+    pub fn copy_selection(&mut self, ctx: &egui::Context) -> bool {
+        match self.selected_text() {
+            Some(text) => {
+                ctx.copy_text(text);
+                self.selection = None;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The terminal's own commands: copy the selection, paste the clipboard.
+    fn run_command(&mut self, ctx: &egui::Context, command: Command) {
+        match command {
+            Command::TerminalCopy => {
+                self.copy_selection(ctx);
+            }
+            // The text arrives next frame as a paste event.
+            Command::TerminalPaste => keymap::request_paste(ctx),
+            _ => {}
+        }
+    }
+
     fn handle_event(&mut self, ui: &egui::Ui, event: &egui::Event, modifiers: Modifiers) {
+        let keys = keymap::current();
+        // Ctrl+C / Ctrl+X / Ctrl+V go by the keymap: copy and paste, another
+        // command, or (given to none) the control character for the program.
+        if !keymap::requested_paste(ui.ctx())
+            && let Some(action) = keymap::clipboard_action(&keys, Scope::Terminal, event)
+        {
+            match action {
+                ClipboardAction::Native => {}
+                ClipboardAction::Run(command) => return self.run_command(ui.ctx(), command),
+                ClipboardAction::Unbound => {
+                    let byte = match event {
+                        egui::Event::Copy => 0x03,
+                        egui::Event::Cut => 0x18,
+                        _ => 0x16,
+                    };
+                    self.write(&[byte]);
+                    self.scroll_to_bottom();
+                    return;
+                }
+            }
+        }
+        // Keys given to the terminal's copy and paste (Ctrl+Shift+C / V).
+        if let egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } = event
+            && let Some(command) = keys.lookup(Scope::Terminal, *key, *physical_key, *modifiers)
+        {
+            return self.run_command(ui.ctx(), command);
+        }
         match event {
             egui::Event::Text(text) => {
                 if !self.skip_text {

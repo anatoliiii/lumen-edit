@@ -29,6 +29,8 @@ pub enum Command {
     ToggleTerminal,
     NewTerminal,
     KillTerminal,
+    TerminalCopy,
+    TerminalPaste,
     ShowProblems,
     ShowOutput,
     ShowPulse,
@@ -52,6 +54,9 @@ pub enum Command {
     ShowHover,
     Undo,
     Redo,
+    Cut,
+    Copy,
+    Paste,
     SelectAll,
     SelectLine,
     AddNextOccurrence,
@@ -123,6 +128,8 @@ pub const ALL: &[Command] = &[
     Command::ToggleTerminal,
     Command::NewTerminal,
     Command::KillTerminal,
+    Command::TerminalCopy,
+    Command::TerminalPaste,
     Command::ShowProblems,
     Command::ShowOutput,
     Command::ShowPulse,
@@ -146,6 +153,9 @@ pub const ALL: &[Command] = &[
     Command::ShowHover,
     Command::Undo,
     Command::Redo,
+    Command::Cut,
+    Command::Copy,
+    Command::Paste,
     Command::SelectAll,
     Command::SelectLine,
     Command::AddNextOccurrence,
@@ -242,6 +252,8 @@ impl Command {
             Command::ToggleTerminal => t_key!("Terminal: Toggle"),
             Command::NewTerminal => t_key!("Terminal: New"),
             Command::KillTerminal => t_key!("Terminal: Close Current"),
+            Command::TerminalCopy => t_key!("Terminal: Copy Selection"),
+            Command::TerminalPaste => t_key!("Terminal: Paste"),
             Command::ShowProblems => t_key!("Problems"),
             Command::ShowOutput => t_key!("Output"),
             Command::ShowPulse => t_key!("Server Pulse"),
@@ -265,6 +277,9 @@ impl Command {
             Command::ShowHover => t_key!("Show Hover"),
             Command::Undo => t_key!("Undo"),
             Command::Redo => t_key!("Redo"),
+            Command::Cut => t_key!("Cut"),
+            Command::Copy => t_key!("Copy"),
+            Command::Paste => t_key!("Paste"),
             Command::SelectAll => t_key!("Select All"),
             Command::SelectLine => t_key!("Select Line"),
             Command::AddNextOccurrence => t_key!("Add Selection to Next Match"),
@@ -328,6 +343,9 @@ impl Command {
             | Command::ShowHover
             | Command::Undo
             | Command::Redo
+            | Command::Cut
+            | Command::Copy
+            | Command::Paste
             | Command::SelectAll
             | Command::SelectLine
             | Command::AddNextOccurrence
@@ -346,6 +364,7 @@ impl Command {
             | Command::ScrollLineUp
             | Command::ScrollLineDown => Scope::Editor,
             Command::GitCommit => Scope::CommitMessage,
+            Command::TerminalCopy | Command::TerminalPaste => Scope::Terminal,
             _ => Scope::Global,
         }
     }
@@ -365,6 +384,8 @@ pub enum Scope {
     Editor,
     /// In the commit message box.
     CommitMessage,
+    /// In a focused terminal.
+    Terminal,
 }
 
 impl Scope {
@@ -373,6 +394,7 @@ impl Scope {
             Scope::Global => t!("everywhere"),
             Scope::Editor => t!("in the editor"),
             Scope::CommitMessage => t!("in the commit message"),
+            Scope::Terminal => t!("in the terminal"),
         }
     }
 }
@@ -598,6 +620,22 @@ impl App {
             }
             Command::Settings => self.settings_open = !self.settings_open,
             Command::Keybindings => super::keybindings::open(self),
+            Command::TerminalCopy => {
+                if let Some(terminal) = self.terminals.get_mut(self.active_terminal) {
+                    terminal.copy_selection(&self.ctx);
+                }
+            }
+            Command::TerminalPaste if !self.terminals.is_empty() => {
+                // The paste arrives next frame in the focused terminal.
+                self.panel_open = true;
+                self.panel_tab = PanelTab::Terminal;
+                self.terminal_focus = true;
+                // E.g. the palette, on closing, gives the focus back to the editor.
+                if let Some(doc) = self.active_doc() {
+                    doc.view.focus_request = false;
+                }
+                super::keymap::request_paste(&self.ctx);
+            }
             Command::About => self.about_open = true,
             Command::Quit => self.ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close),
             _ if command.scope() == Scope::Editor => self.run_editor_command(command),
@@ -642,7 +680,7 @@ impl App {
         let Some(Tab::Doc(doc)) = self.tabs.get_mut(index) else { return };
         let has_lsp = self.lsp.has_clients(doc);
         let mut actions = Vec::new();
-        super::editor::run_command(doc, command, &mut actions, has_lsp);
+        super::editor::run_command(&self.ctx, doc, command, &mut actions, has_lsp);
         if !actions.is_empty() {
             super::lsp_manager::run_actions(self, index, actions);
         }

@@ -209,7 +209,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         let editor =
             ui.add(egui::TextEdit::multiline(&mut git.commit_message).hint_text(hint).desired_rows(3).desired_width(f32::INFINITY));
         if editor.has_focus()
-            && ui.input_mut(|i| super::keymap::consume(i, super::commands::Scope::CommitMessage)).contains(&Command::GitCommit)
+            && ui.input_mut(|i| super::keymap::consume(i, super::commands::Scope::CommitMessage, false)).contains(&Command::GitCommit)
         {
             actions.push(Action::Commit);
         }
