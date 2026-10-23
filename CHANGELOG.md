@@ -6,6 +6,11 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Pi extension confirmation and input dialogs fit the viewport, with scrollable content and visible response buttons.
+- New Pi sessions open independent agent tabs; moving an agent into an occupied dock preserves the previous agent in a tab.
+- Agent actions and file attachments target the active agent tab when several sessions are open.
+
 ## [0.3.0] - 2026-10-23
 
 ### Added

@@ -93,6 +93,57 @@ pub struct AgentTab {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn long_confirmation_keeps_buttons_visible_and_answers() {
+        use eframe::egui::{self, Event, PointerButton, RawInput, Rect, pos2, vec2};
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(480.0, 360.0));
+        let mut request = super::UiRequest {
+            id: "permission".into(),
+            method: "confirm".into(),
+            title: "Confirm command".into(),
+            message: "A very long command requiring approval\n".repeat(300),
+            options: Vec::new(),
+            value: String::new(),
+        };
+        let mut yes = None;
+        // Windows need a sizing pass before their first visible frame.
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+                super::request_dialog(ui.ctx(), 1, &mut request);
+            });
+            output.textures_delta.clear();
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(text) = shape.shape
+                    && text.galley.text() == t!("Yes")
+                {
+                    let rect = Rect::from_min_size(text.pos, text.galley.size());
+                    assert!(screen.contains_rect(rect), "confirmation button outside viewport: {rect:?}");
+                    yes = Some(rect.center());
+                }
+            }
+        }
+        let pos = yes.expect("confirmation button must be painted");
+        let mut answer = None;
+        for pressed in [true, false] {
+            let mut output = ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(screen),
+                    events: vec![
+                        Event::PointerMoved(pos),
+                        Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Default::default() },
+                    ],
+                    ..Default::default()
+                },
+                |ui| {
+                    answer = answer.take().or_else(|| super::request_dialog(ui.ctx(), 1, &mut request));
+                },
+            );
+            output.textures_delta.clear();
+        }
+        assert_eq!(answer, Some(serde_json::json!({ "confirmed": true })));
+    }
+
+    #[test]
     fn session_dir_matches_pi_layout() {
         let dir = super::session_dir("/home/user/projects/demo-app");
         assert!(dir.ends_with("--home-user-projects-demo-app--"), "{}", dir.display());
@@ -1334,6 +1385,11 @@ fn at(app: &mut App, loc: Loc) -> Option<&mut AgentTab> {
 
 /// The agent, wherever it is (dock first).
 pub fn find(app: &App) -> Option<Loc> {
+    if let Some(index) = app.active_tab
+        && matches!(app.tabs.get(index), Some(super::Tab::Agent(_)))
+    {
+        return Some(Loc::Tab(index));
+    }
     if app.agent_dock.is_some() {
         return Some(Loc::Dock);
     }
@@ -1343,6 +1399,66 @@ pub fn find(app: &App) -> Option<Loc> {
 pub fn agent_mut(app: &mut App) -> Option<&mut AgentTab> {
     let loc = find(app)?;
     at(app, loc)
+}
+
+/// Keep extension content scrollable and the response controls inside the viewport.
+fn request_dialog(ctx: &egui::Context, agent_id: u64, request: &mut UiRequest) -> Option<Value> {
+    let mut answer = None;
+    let viewport = ctx.content_rect();
+    egui::Window::new("π")
+        .id(egui::Id::unique(("agent_request", agent_id, &request.id)))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .fixed_size(vec2((viewport.width() - 48.0).clamp(1.0, 640.0), (viewport.height() - 80.0).max(1.0)))
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt(("request_content", agent_id, &request.id))
+                .max_height((ui.available_height() - 48.0).max(1.0))
+                .show(ui, |ui| {
+                    ui.add(egui::Label::new(RichText::new(&request.title).strong()).wrap());
+                    if !request.message.is_empty() {
+                        ui.add(egui::Label::new(&request.message).wrap());
+                    }
+                    match request.method.as_str() {
+                        "select" => {
+                            for option in &request.options {
+                                if ui.add(egui::Button::new(option).wrap()).clicked() {
+                                    answer = Some(json!({ "value": option }));
+                                }
+                            }
+                        }
+                        "confirm" => {}
+                        _ => {
+                            let editor = if request.method == "editor" {
+                                egui::TextEdit::multiline(&mut request.value).desired_rows(4)
+                            } else {
+                                egui::TextEdit::singleline(&mut request.value)
+                            };
+                            ui.add(editor.desired_width(ui.available_width()));
+                        }
+                    }
+                });
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                if request.method == "confirm" {
+                    if ui.button(t!("Yes")).clicked() {
+                        answer = Some(json!({ "confirmed": true }));
+                    }
+                    if ui.button(t!("No")).clicked() {
+                        answer = Some(json!({ "confirmed": false }));
+                    }
+                } else {
+                    if request.method != "select" && ui.button("OK").clicked() {
+                        answer = Some(json!({ "value": request.value }));
+                    }
+                    if ui.button(t!("Cancel")).clicked() {
+                        answer = Some(json!({ "cancelled": true }));
+                    }
+                }
+            });
+        });
+    answer
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
@@ -1651,59 +1767,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
             ui.label(RichText::new(text).small().monospace().color(theme::MUTED_TEXT));
         }
     }
-    // Dialogs from pi extensions.
-    let mut answer = None;
-    if let Some((index, request)) = agent.requests.iter_mut().enumerate().next() {
-        egui::Frame::new()
-            .fill(theme::SURFACE)
-            .stroke(Stroke::new(1.0, theme::ACCENT_DIM))
-            .corner_radius(CornerRadius::same(6))
-            .inner_margin(egui::Margin::same(8))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new(&request.title).strong());
-                if !request.message.is_empty() {
-                    ui.label(&request.message);
-                }
-                ui.horizontal_wrapped(|ui| match request.method.as_str() {
-                    "confirm" => {
-                        if ui.button(t!("Yes")).clicked() {
-                            answer = Some((index, json!({ "confirmed": true })));
-                        }
-                        if ui.button(t!("No")).clicked() {
-                            answer = Some((index, json!({ "confirmed": false })));
-                        }
-                    }
-                    "select" => {
-                        for option in &request.options {
-                            if ui.button(option).clicked() {
-                                answer = Some((index, json!({ "value": option })));
-                            }
-                        }
-                        if ui.button(t!("Cancel")).clicked() {
-                            answer = Some((index, json!({ "cancelled": true })));
-                        }
-                    }
-                    _ => {
-                        let editor = if request.method == "editor" {
-                            egui::TextEdit::multiline(&mut request.value).desired_rows(4)
-                        } else {
-                            egui::TextEdit::singleline(&mut request.value)
-                        };
-                        ui.add(editor.desired_width(ui.available_width() - 160.0));
-                        if ui.button("OK").clicked() {
-                            answer = Some((index, json!({ "value": request.value })));
-                        }
-                        if ui.button(t!("Cancel")).clicked() {
-                            answer = Some((index, json!({ "cancelled": true })));
-                        }
-                    }
-                });
-            });
-        ui.add_space(4.0);
-    }
-    if let Some((index, response)) = answer {
-        agent.answer(index, response);
+    // Extension dialogs use the viewport, rather than the fixed-height composer.
+    if let Some(request) = agent.requests.first_mut()
+        && let Some(response) = request_dialog(ui.ctx(), agent.id, request)
+    {
+        agent.answer(0, response);
     }
 
     // Slash command suggestions.
@@ -1785,6 +1853,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
 fn apply(app: &mut App, loc: Loc, action: Action) {
     match action {
         Action::Restart => return restart(app, loc),
+        Action::NewSession => return new_agent(app),
         Action::OpenFile(path) | Action::OpenLink(path) => return open_link(app, &path),
         Action::RunInTerminal(command) => {
             let task = crate::tasks::Task {
@@ -1810,7 +1879,6 @@ fn apply(app: &mut App, loc: Loc, action: Action) {
         Action::Send(text) => agent.prompt(text),
         Action::FollowUp(text) => agent.send(json!({ "type": "follow_up", "message": text })),
         Action::Abort => agent.abort(),
-        Action::NewSession => agent.send(json!({ "type": "new_session" })),
         Action::SwitchSession(path) => agent.send(json!({ "type": "switch_session", "sessionPath": path })),
         Action::RenameSession(name) => agent.send(json!({ "type": "set_session_name", "name": name })),
         Action::Compact => agent.send(json!({ "type": "compact" })),
@@ -1905,7 +1973,9 @@ fn toggle_dock(app: &mut App, loc: Loc) {
         Loc::Tab(index) => {
             if index < app.tabs.len() && matches!(app.tabs[index], super::Tab::Agent(_)) {
                 if let super::Tab::Agent(agent) = app.tabs.remove(index) {
-                    app.agent_dock = Some(agent);
+                    if let Some(previous) = app.agent_dock.replace(agent) {
+                        app.tabs.push(super::Tab::Agent(previous));
+                    }
                     app.agent_dock_open = true;
                 }
                 app.active_tab = if app.tabs.is_empty() { None } else { Some(index.min(app.tabs.len() - 1)) };
@@ -1991,6 +2061,11 @@ pub fn open(app: &mut App) {
         }
         return;
     }
+    new_agent(app);
+}
+
+/// Each parallel agent owns a separate RPC process and conversation.
+fn new_agent(app: &mut App) {
     let Some(workspace) = &app.workspace else {
         app.notify(t!("Open a project first"), true);
         return;
@@ -2000,7 +2075,7 @@ pub fn open(app: &mut App) {
     let id = app.next_id();
     let options = LaunchOptions::from_config(&app.config, false);
     let tab = Box::new(AgentTab::spawn(id, &host, &root, app.control_socket.as_deref(), &options, app.bus.clone()));
-    if app.config.agent_docked {
+    if app.config.agent_docked && app.agent_dock.is_none() {
         app.agent_dock = Some(tab);
         app.agent_dock_open = true;
     } else {
