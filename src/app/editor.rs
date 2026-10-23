@@ -193,7 +193,7 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     let line_h = (row_h * 1.4).round();
     let rect = ui.available_rect_before_wrap();
     ui.allocate_rect(rect, Sense::hover());
-    let id = Id::new(("editor", doc.id));
+    let id = Id::unique(("editor", doc.id));
 
     let line_count = doc.buffer.line_count();
     let digits = line_count.to_string().len().max(3) as f32;
@@ -1213,7 +1213,7 @@ fn show_find_bar(ui: &mut egui::Ui, doc: &mut Document, text_rect: Rect) {
     let mut do_replace = false;
     let mut do_replace_all = false;
     let width = 430.0;
-    egui::Area::new(Id::new(("find_bar", doc.id)))
+    egui::Area::new(Id::unique(("find_bar", doc.id)))
         .order(egui::Order::Foreground)
         .fixed_pos(pos2(text_rect.right() - width - 16.0, text_rect.top() + 4.0))
         .show(ui.ctx(), |ui| {
@@ -1311,7 +1311,7 @@ fn show_popups(
             let height = shown as f32 * row_h + 8.0;
             let below = cursor.bottom() + height < text_rect.bottom();
             let pos = if below { cursor.left_bottom() + vec2(-4.0, 2.0) } else { cursor.left_top() - vec2(4.0, height + 2.0) };
-            let area = egui::Area::new(Id::new(("completion", doc.id))).order(egui::Order::Foreground).fixed_pos(pos).show(&ctx, |ui| {
+            let area = egui::Area::new(Id::unique(("completion", doc.id))).order(egui::Order::Foreground).fixed_pos(pos).show(&ctx, |ui| {
                 egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
                     ui.set_width(460.0);
                     egui::ScrollArea::vertical().max_height(shown as f32 * row_h).auto_shrink([false, true]).show(ui, |ui| {
@@ -1382,7 +1382,7 @@ fn show_popups(
     if let (Some(signature), Some(cursor)) = (&doc.view.signature, cursor_rect)
         && doc.view.completion.is_none()
     {
-        egui::Area::new(Id::new(("signature", doc.id)))
+        egui::Area::new(Id::unique(("signature", doc.id)))
             .order(egui::Order::Foreground)
             .pivot(Align2::LEFT_BOTTOM)
             .fixed_pos(cursor.left_top() - vec2(4.0, 4.0))
@@ -1401,7 +1401,7 @@ fn show_popups(
         if hover.text.trim().is_empty() {
             // Waiting for the server; nothing to show yet.
         } else {
-            let area = egui::Area::new(Id::new(("hover", doc.id)))
+            let area = egui::Area::new(Id::unique(("hover", doc.id)))
                 .order(egui::Order::Foreground)
                 .pivot(Align2::LEFT_BOTTOM)
                 .fixed_pos(hover.pos - vec2(8.0, line_h * 0.6))
@@ -1430,7 +1430,7 @@ fn show_popups(
     if let (Some(popup), Some(cursor)) = (&mut doc.view.code_actions, cursor_rect) {
         let mut chosen = None;
         let mut close = false;
-        egui::Area::new(Id::new(("code_actions", doc.id)))
+        egui::Area::new(Id::unique(("code_actions", doc.id)))
             .order(egui::Order::Foreground)
             .fixed_pos(cursor.left_bottom() + vec2(0.0, 2.0))
             .show(&ctx, |ui| {
@@ -1473,9 +1473,10 @@ fn show_popups(
     // Rename input.
     if let (Some(rename), Some(cursor)) = (&mut doc.view.rename, cursor_rect) {
         let mut done = None;
-        egui::Area::new(Id::new(("rename", doc.id))).order(egui::Order::Foreground).fixed_pos(cursor.left_bottom() + vec2(0.0, 2.0)).show(
-            &ctx,
-            |ui| {
+        egui::Area::new(Id::unique(("rename", doc.id)))
+            .order(egui::Order::Foreground)
+            .fixed_pos(cursor.left_bottom() + vec2(0.0, 2.0))
+            .show(&ctx, |ui| {
                 egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
                     ui.label(egui::RichText::new(t!("Rename (Enter to apply)")).small().color(theme::MUTED_TEXT));
                     let input = ui.add(egui::TextEdit::singleline(&mut rename.text).desired_width(260.0));
@@ -1487,8 +1488,7 @@ fn show_popups(
                         done = Some(ui.input(|i| i.key_pressed(Key::Enter)));
                     }
                 });
-            },
-        );
+            });
         if let Some(apply) = done {
             if apply && !rename.text.trim().is_empty() {
                 actions.push(EditorAction::Rename(rename.text.trim().to_string()));

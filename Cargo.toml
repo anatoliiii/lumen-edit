@@ -31,9 +31,9 @@ path = "src/main.rs"
 
 [dependencies]
 lumen-shared = { path = "shared" }
-eframe = "=0.36.2"
+eframe = "=0.37.0"
 rfd = "=0.17.2"
-egui_extras = { version = "=0.36.2", features = ["image", "svg_text", "gif", "webp"] }
+egui_extras = { version = "=0.37.0", features = ["image", "svg_text", "gif", "webp"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
 ropey = "1.6"
 tree-sitter = "0.27"
@@ -55,14 +55,14 @@ tree-sitter-yaml = "0.7"
 tree-sitter-make = "1.1"
 tree-sitter-groovy = "0.1"
 tree-sitter-hcl = "1.1"
-vt100 = "0.16"
+vt100 = "0.17"
 portable-pty = "0.9"
 lsp-types = "0.97"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 crossbeam-channel = "0.5"
 notify = "8"
-toml = "0.9"
+toml = "1.1"
 dirs = "6"
 nucleo-matcher = "0.3"
 similar = "2"
@@ -87,4 +87,4 @@ opt-level = 2
 
 [dev-dependencies]
 # Reads font charmaps in the glyph test (already used by egui).
-skrifa = "0.44"
+skrifa = "0.48"

@@ -280,7 +280,7 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
 
     let screen = ctx.content_rect();
     let width = (screen.width() * 0.5).clamp(420.0, 720.0);
-    let area = egui::Area::new(egui::Id::new("palette"))
+    let area = egui::Area::new(egui::Id::unique("palette"))
         .order(egui::Order::Foreground)
         .fixed_pos(pos2(screen.center().x - width / 2.0, screen.top() + 46.0))
         .show(ctx, |ui| {

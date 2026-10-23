@@ -119,7 +119,7 @@ fn tab_bar(ui: &mut egui::Ui, app: &mut App) {
                 }
                 ui.painter().galley(pos2(rect.left() + 28.0, rect.center().y - galley.size().y / 2.0), galley, title_color);
                 let close_rect = egui::Rect::from_center_size(pos2(rect.right() - 16.0, rect.center().y), vec2(18.0, 18.0));
-                let close_response = ui.interact(close_rect, ui.id().with(("tab_close", index)), Sense::click());
+                let close_response = ui.interact(close_rect, ui.scope_id().with(("tab_close", index)), Sense::click());
                 let dirty = tab.dirty();
                 if close_response.hovered() {
                     ui.painter().rect_filled(close_rect, CornerRadius::same(3), theme::SURFACE_HOVER);
@@ -415,7 +415,7 @@ fn terminal_view(ui: &mut egui::Ui, app: &mut App) {
     }
     app.active_terminal = app.active_terminal.min(app.terminals.len() - 1);
     let font_size = app.config.terminal_font_size;
-    let id = egui::Id::new(("terminal", app.active_terminal));
+    let id = egui::Id::unique(("terminal", app.active_terminal));
     if app.terminal_focus {
         ui.memory_mut(|m| m.request_focus(id));
         app.terminal_focus = false;

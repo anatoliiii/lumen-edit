@@ -1,0 +1,23 @@
+#!/bin/sh
+# Post-install steps: refresh the desktop database and XDG user dirs.
+set -e
+
+# Refresh application menu after the desktop entry is installed.
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications
+fi
+
+# Create the standard XDG user directories if the package does not own them.
+if [ -z "${XDG_CONFIG_HOME:-}" ]; then
+    XDG_CONFIG_HOME="$HOME/.config"
+fi
+mkdir -p "$XDG_CONFIG_HOME"
+if [ ! -e "$XDG_CONFIG_HOME/user-dirs.dirs" ]; then
+    cat > "$XDG_CONFIG_HOME/user-dirs.dirs" <<'DIRS'
+$XDG_CONFIG_HOME:="$HOME/.config"
+$XDG_CACHE_HOME:="$HOME/.cache"
+$XDG_DATA_HOME:="$HOME/.local/share"
+$XDG_STATE_HOME:="$HOME/.local/state"
+$XDG_RUNTIME_DIR:="$XDG_RUNTIME_DIR"
+DIRS
+fi

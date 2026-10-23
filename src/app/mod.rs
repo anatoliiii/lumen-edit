@@ -264,6 +264,15 @@ pub struct Toast {
     at: Instant,
 }
 
+/// A text file open in a tab: its path, display name and a snapshot taken at
+/// query time (dirty flag, line count). See `App::open_files`.
+pub struct OpenFile {
+    pub path: String,
+    pub name: String,
+    pub dirty: bool,
+    pub lines: usize,
+}
+
 pub struct App {
     ctx: egui::Context,
     pub config: Config,
@@ -297,7 +306,6 @@ pub struct App {
     terminal_focus: bool,
     /// Actions waiting for a file to finish loading (control requests).
     doc_waiters: Vec<(String, control::DocAction)>,
-    pending_screenshot: Option<(String, crate::control::Reply)>,
     pub settings_open: bool,
     /// The "Keyboard Shortcuts" window, when open.
     pub keybindings: Option<keybindings::State>,
@@ -368,7 +376,6 @@ impl App {
             last_task: None,
             terminal_focus: false,
             doc_waiters: Vec::new(),
-            pending_screenshot: None,
             settings_open: false,
             keybindings: None,
             about_open: false,
@@ -472,6 +479,24 @@ impl App {
 
     pub fn host(&self) -> Option<Host> {
         self.workspace.as_ref().map(|w| w.host.clone())
+    }
+
+    /// The text files open in tabs, in tab order (unsaved changes included).
+    /// Used by the control layer (`open_files`) to list the workspace without a
+    /// full `state` dump.
+    pub fn open_files(&self) -> Vec<OpenFile> {
+        self.tabs
+            .iter()
+            .filter_map(|t| match t {
+                Tab::Doc(doc) => Some(OpenFile {
+                    path: doc.path.clone(),
+                    name: doc.name().to_string(),
+                    dirty: doc.is_dirty(),
+                    lines: doc.buffer.line_count(),
+                }),
+                _ => None,
+            })
+            .collect()
     }
 
     // ------------------------------------------------------------ workspace
@@ -1539,7 +1564,7 @@ impl App {
         let mut after: Option<Box<dyn FnOnce(&mut App)>> = None;
         let modal = |ctx: &egui::Context, title: &str, body: &mut dyn FnMut(&mut egui::Ui)| {
             egui::Window::new(title)
-                .id(egui::Id::new("app_dialog"))
+                .id(egui::Id::unique("app_dialog"))
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 120.0))
@@ -1728,7 +1753,7 @@ impl App {
             return;
         }
         let screen = ctx.content_rect();
-        egui::Area::new(egui::Id::new("toasts"))
+        egui::Area::new(egui::Id::unique("toasts"))
             .order(egui::Order::Tooltip)
             .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -36.0))
             .interactable(false)
@@ -1784,8 +1809,20 @@ fn install_fonts(ctx: &egui::Context, config: &Config) {
             fonts.families.entry(egui::FontFamily::Monospace).or_default().push(name);
         }
     }
+    // Bundled last, so icons exist even where the system has no symbol fonts.
+    for (name, data) in BUNDLED_SYMBOLS {
+        fonts.font_data.insert(name.to_string(), egui::FontData::from_static(data).into());
+        fonts.families.entry(egui::FontFamily::Proportional).or_default().push(name.to_string());
+        fonts.families.entry(egui::FontFamily::Monospace).or_default().push(name.to_string());
+    }
     ctx.set_fonts(fonts);
 }
+
+/// Noto Sans Symbols 1 and 2 (SIL OFL 1.1, see assets/fonts/OFL.txt).
+const BUNDLED_SYMBOLS: [(&str, &[u8]); 2] = [
+    ("noto_symbols", include_bytes!("../../assets/fonts/NotoSansSymbols-Regular.ttf")),
+    ("noto_symbols2", include_bytes!("../../assets/fonts/NotoSansSymbols2-Regular.ttf")),
+];
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1817,7 +1854,7 @@ impl eframe::App for App {
         {
             self.debug_typing = None;
             if let Some(id) = self.active_doc().map(|d| d.id) {
-                ctx.memory_mut(|m| m.request_focus(egui::Id::new(("editor", id))));
+                ctx.memory_mut(|m| m.request_focus(egui::Id::unique(("editor", id))));
             }
             ctx.input_mut(|i| {
                 for c in text.split('|') {
@@ -1895,9 +1932,6 @@ impl eframe::App for App {
         self.show_toasts(&ctx);
         self.per_frame_upkeep();
         self.update_title(&ctx);
-        if self.pending_screenshot.is_some() {
-            control::take_screenshot(self, &ctx);
-        }
         if let Ok(path) = std::env::var("LUMEN_SCREENSHOT") {
             self.allow_close = true;
             screenshot_hook(&ctx, &path);
@@ -1959,21 +1993,20 @@ fn screenshot_hook(ctx: &egui::Context, path: &str) {
     let frame = ctx.cumulative_frame_nr();
     let delay: u64 = std::env::var("LUMEN_SCREENSHOT_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(40);
     if frame == delay {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
-    }
-    let shot =
-        ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));
-    if let Some(image) = shot {
-        let [w, h] = image.size;
-        let mut out = Vec::with_capacity(w * h * 3);
-        for pixel in &image.pixels {
-            out.extend_from_slice(&[pixel.r(), pixel.g(), pixel.b()]);
-        }
-        let header = format!("P6\n{w} {h}\n255\n");
-        let mut data = header.into_bytes();
-        data.extend(out);
-        let _ = std::fs::write(path, data);
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        let (ctx, path) = (ctx.clone(), path.to_string());
+        ctx.clone().request_screenshot(move |image| {
+            let [w, h] = image.size;
+            let mut out = Vec::with_capacity(w * h * 3);
+            for pixel in &image.pixels {
+                out.extend_from_slice(&[pixel.r(), pixel.g(), pixel.b()]);
+            }
+            let header = format!("P6\n{w} {h}\n255\n");
+            let mut data = header.into_bytes();
+            data.extend(out);
+            let _ = std::fs::write(&path, data);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            ctx.request_repaint();
+        });
     }
     if frame < delay + 5 {
         ctx.request_repaint();
@@ -2018,8 +2051,9 @@ mod glyph_tests {
         // egui reports a glyph as missing when it lives in the font that also
         // serves the replacement glyph; ask the font files themselves.
         let candidates = crate::platform::FONTS;
-        let files: Vec<Vec<u8>> =
+        let mut files: Vec<Vec<u8>> =
             candidates.ui.iter().chain(candidates.symbols).chain(candidates.nerd).filter_map(|p| std::fs::read(p).ok()).collect();
+        files.extend(super::BUNDLED_SYMBOLS.iter().map(|(_, data)| data.to_vec()));
         missing.retain(|c| {
             !files.iter().any(|data| {
                 use skrifa::MetadataProvider;
