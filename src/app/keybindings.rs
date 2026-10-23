@@ -105,7 +105,8 @@ pub fn capture_keys(app: &mut App, ctx: &egui::Context) -> bool {
 fn pressed_chord(events: &[Event]) -> Option<Chord> {
     events.iter().find_map(|event| match event {
         Event::Key { key, pressed: true, modifiers, .. } if !keymap::is_modifier(*key) => Some(Chord::from_event(*key, *modifiers)),
-        _ => None,
+        // Ctrl+C / Ctrl+X / Ctrl+V arrive as clipboard events, not keys.
+        _ => keymap::clipboard_chord(event),
     })
 }
 
@@ -205,7 +206,7 @@ pub fn window(ctx: &egui::Context, app: &mut App) {
                 change = Some(Change::ResetAll);
             }
             ui.label(
-                RichText::new(t!("Fixed keys: arrows, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab, Escape, copy and paste."))
+                RichText::new(t!("Fixed keys: arrows, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab and Escape."))
                     .small()
                     .color(theme::MUTED_TEXT),
             );
@@ -415,6 +416,8 @@ mod tests {
         assert_eq!(chord, Chord::parse("MacCtrl+`").unwrap());
         assert!(!chord.types_text());
         assert_eq!(chord.label(), "Ctrl+`");
+        // Ctrl+V comes as a paste, not as a key press.
+        assert_eq!(pressed_chord(&[Event::Paste("text".into())]), Chord::parse("Ctrl+V"));
     }
 
     #[test]

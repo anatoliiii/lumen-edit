@@ -190,7 +190,7 @@ toggle_terminal = ["Ctrl+`", "Alt+F12"]
 quit = []                        # без сочетания
 ```
 
-Список id — `lumen-edit commands`. Не меняются стрелки, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab, Escape и копирование/вставка.
+Список id — `lumen-edit commands`. Не меняются стрелки, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab и Escape. Копирование и вставка — тоже команды: «Копировать», «Вырезать», «Вставить» в редакторе (Ctrl+C / Ctrl+X / Ctrl+V) и «Терминал: копировать выделение», «Терминал: вставить» в терминале (Ctrl+C или Ctrl+Shift+C, Ctrl+V или Ctrl+Shift+V). Если снять Ctrl+V с «Терминал: вставить», терминал получит ^V — так же, как Ctrl+C без выделения посылает ^C.
 
 ## Структура
 

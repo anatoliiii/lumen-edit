@@ -10,7 +10,7 @@ pub mod editor;
 mod explorer;
 mod icons;
 mod keybindings;
-mod keymap;
+pub(crate) mod keymap;
 mod lsp_manager;
 mod markdown;
 mod media;
@@ -46,7 +46,7 @@ use crate::{
     theme,
 };
 
-pub use commands::Command;
+pub use commands::{Command, Scope};
 
 /// Version line for `lumen-edit --version`.
 pub fn about_line() -> String {
@@ -1453,13 +1453,14 @@ impl App {
     // ------------------------------------------------------------- frame
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        for command in ctx.input_mut(|input| keymap::consume(input, commands::Scope::Global)) {
+        let clipboard = !keymap::requested_paste(ctx);
+        for command in ctx.input_mut(|input| keymap::consume(input, commands::Scope::Global, clipboard)) {
             self.run_command(command);
         }
         // Nothing has the keyboard (e.g. after a click in the file tree):
         // editor shortcuts still act on the open file.
         if ctx.memory(|m| m.focused().is_none()) && self.active_doc().is_some() {
-            for command in ctx.input_mut(|input| keymap::consume(input, commands::Scope::Editor)) {
+            for command in ctx.input_mut(|input| keymap::consume(input, commands::Scope::Editor, clipboard)) {
                 self.run_command(command);
             }
         }
@@ -1829,6 +1830,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.process_messages();
         self.handle_close_request(&ctx);
+        keymap::begin_frame(&ctx);
         let recording = keybindings::capture_keys(self, &ctx);
         if !recording && self.palette.is_none() && self.dialog.is_none() {
             self.handle_shortcuts(&ctx);

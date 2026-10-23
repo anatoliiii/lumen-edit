@@ -190,7 +190,7 @@ fn is_special(key: Key) -> bool {
 }
 
 /// Default shortcuts. Editor keys that are not listed here (arrows, Home/End,
-/// Backspace, Tab, Escape, copy/paste) are fixed.
+/// Backspace, Tab, Escape) are fixed.
 pub fn defaults(command: Command) -> &'static [&'static str] {
     match command {
         Command::QuickOpen => &["Ctrl+P"],
@@ -251,6 +251,13 @@ pub fn defaults(command: Command) -> &'static [&'static str] {
         Command::ShowHover => &["Ctrl+K"],
         Command::Undo => &["Ctrl+Z"],
         Command::Redo => &["Ctrl+Y", "Ctrl+Shift+Z"],
+        Command::Cut => &["Ctrl+X"],
+        Command::Copy => &["Ctrl+C"],
+        Command::Paste => &["Ctrl+V"],
+        // Ctrl+C copies a selection (else interrupts); with Shift as in
+        // other terminals.
+        Command::TerminalCopy => &["Ctrl+C", "Ctrl+Shift+C"],
+        Command::TerminalPaste => &["Ctrl+V", "Ctrl+Shift+V"],
         Command::SelectAll => &["Ctrl+A"],
         Command::SelectLine => &["Ctrl+L"],
         Command::AddNextOccurrence => &["Ctrl+D"],
@@ -385,19 +392,101 @@ pub fn set(keymap: Keymap) {
     }
 }
 
+/// The chord behind a clipboard event: egui turns a plain Ctrl+C / Ctrl+X /
+/// Ctrl+V (Cmd on macOS) into Copy / Cut / Paste without a key press.
+pub fn clipboard_chord(event: &Event) -> Option<Chord> {
+    let key = match event {
+        Event::Copy => Key::C,
+        Event::Cut => Key::X,
+        Event::Paste(_) => Key::V,
+        _ => return None,
+    };
+    Some(Chord { ctrl: true, ..Chord::plain(key) })
+}
+
+/// The modifiers egui reports with a clipboard event.
+fn clipboard_modifiers() -> Modifiers {
+    Modifiers { command: true, mac_cmd: MAC, ctrl: !MAC, ..Modifiers::NONE }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClipboardAction {
+    /// Copy, cut or paste as usual.
+    Native,
+    /// The keys belong to another command.
+    Run(Command),
+    /// No command has these keys any more.
+    Unbound,
+}
+
+/// What a clipboard event (Ctrl+C / Ctrl+X / Ctrl+V) does in `scope`, by
+/// the keys of the commands that normally copy, cut and paste there.
+pub fn clipboard_action(keymap: &Keymap, scope: Scope, event: &Event) -> Option<ClipboardAction> {
+    let chord = clipboard_chord(event)?;
+    let native = match (scope, chord.key) {
+        (Scope::Editor, Key::C) => Some(Command::Copy),
+        (Scope::Editor, Key::X) => Some(Command::Cut),
+        (Scope::Editor, Key::V) => Some(Command::Paste),
+        (Scope::Terminal, Key::C) => Some(Command::TerminalCopy),
+        (Scope::Terminal, Key::V) => Some(Command::TerminalPaste),
+        _ => None,
+    };
+    Some(match keymap.lookup(scope, chord.key, None, clipboard_modifiers()) {
+        Some(command) if Some(command) == native => ClipboardAction::Native,
+        Some(command) => ClipboardAction::Run(command),
+        None => ClipboardAction::Unbound,
+    })
+}
+
+const PASTE_PENDING: &str = "lumen-paste-pending";
+const PASTE_NOW: &str = "lumen-paste-now";
+
+/// Asks egui for the clipboard text: it arrives next frame as a paste
+/// event, which must then not be taken for Ctrl+V.
+pub fn request_paste(ctx: &eframe::egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(eframe::egui::Id::unique(PASTE_PENDING), true));
+    ctx.send_viewport_cmd(eframe::egui::ViewportCommand::RequestPaste);
+    // Make sure the next frame comes, or the text waits for the next input.
+    ctx.request_repaint();
+}
+
+/// Called first thing every frame: a paste asked for last frame is the one
+/// arriving now.
+pub fn begin_frame(ctx: &eframe::egui::Context) {
+    ctx.data_mut(|d| {
+        let pending = d.remove_temp::<bool>(eframe::egui::Id::unique(PASTE_PENDING)).unwrap_or(false);
+        d.insert_temp(eframe::egui::Id::unique(PASTE_NOW), pending);
+    });
+}
+
+/// Whether this frame's paste event was asked for by a command (and so is
+/// not Ctrl+V).
+pub fn requested_paste(ctx: &eframe::egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(eframe::egui::Id::unique(PASTE_NOW))).unwrap_or(false)
+}
+
 /// Removes the key presses bound in `scope` from this frame's input and
-/// returns their commands.
-pub fn consume(input: &mut InputState, scope: Scope) -> Vec<Command> {
-    let keymap = current();
+/// returns their commands. With `clipboard`, Ctrl+C / Ctrl+X / Ctrl+V bound
+/// to a command of `scope` run it instead of copying or pasting.
+pub fn consume(input: &mut InputState, scope: Scope, clipboard: bool) -> Vec<Command> {
+    consume_with(&current(), input, scope, clipboard)
+}
+
+fn consume_with(keymap: &Keymap, input: &mut InputState, scope: Scope, clipboard: bool) -> Vec<Command> {
     let mut triggered = Vec::new();
     input.events.retain(|event| {
-        if let Event::Key { key, physical_key, pressed: true, modifiers, .. } = event
-            && let Some(command) = keymap.lookup(scope, *key, *physical_key, *modifiers)
-        {
-            triggered.push(command);
-            return false;
+        let command = match event {
+            Event::Key { key, physical_key, pressed: true, modifiers, .. } => keymap.lookup(scope, *key, *physical_key, *modifiers),
+            _ if clipboard => clipboard_chord(event).and_then(|chord| keymap.lookup(scope, chord.key, None, clipboard_modifiers())),
+            _ => None,
+        };
+        match command {
+            Some(command) => {
+                triggered.push(command);
+                false
+            }
+            None => true,
         }
-        true
     });
     triggered
 }
@@ -560,6 +649,49 @@ mod tests {
             assert_eq!(keymap.lookup(Scope::Global, Key::Backtick, None, m("MacCtrl")), Some(Command::ToggleTerminal));
             assert_eq!(keymap.lookup(Scope::Global, Key::Backtick, None, m("Ctrl")), None);
         }
+    }
+
+    #[test]
+    fn clipboard_keys() {
+        let primary = clipboard_modifiers();
+        let key = |key, shift| Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers { shift, ..primary },
+        };
+        let paste = || Event::Paste("x".into());
+        let run = |keymap: &Keymap, scope, event: Event, clipboard: bool| {
+            let mut input = InputState::default();
+            input.events.push(event);
+            let triggered = consume_with(keymap, &mut input, scope, clipboard);
+            (triggered, input.events.len())
+        };
+        let defaults = Keymap::new(&BTreeMap::new());
+        // Ctrl+Shift+V / Ctrl+Shift+C in a terminal (egui 0.37 sends them as key presses).
+        assert_eq!(run(&defaults, Scope::Terminal, key(Key::V, true), true), (vec![Command::TerminalPaste], 0));
+        assert_eq!(run(&defaults, Scope::Terminal, key(Key::C, true), true), (vec![Command::TerminalCopy], 0));
+        // Plain Ctrl+V is left to whoever has the focus.
+        assert_eq!(run(&defaults, Scope::Global, paste(), true), (vec![], 1));
+        assert_eq!(clipboard_action(&defaults, Scope::Editor, &paste()), Some(ClipboardAction::Native));
+        assert_eq!(clipboard_action(&defaults, Scope::Terminal, &Event::Copy), Some(ClipboardAction::Native));
+        // Ctrl+X in a terminal is no copy command: it goes to the program.
+        assert_eq!(clipboard_action(&defaults, Scope::Terminal, &Event::Cut), Some(ClipboardAction::Unbound));
+        // Ctrl+V given to another command runs it instead of pasting...
+        let taken = Keymap::new(&BTreeMap::from([("quick_open".to_string(), vec!["Ctrl+V".to_string()])]));
+        assert_eq!(run(&taken, Scope::Global, paste(), true), (vec![Command::QuickOpen], 0));
+        // ...but not a paste a command asked for.
+        assert_eq!(run(&taken, Scope::Global, paste(), false), (vec![], 1));
+        // Paste without Ctrl+V: in the editor nothing, in a terminal ^V.
+        let rebound = Keymap::new(&BTreeMap::from([
+            ("paste".to_string(), vec!["Ctrl+Shift+V".to_string()]),
+            ("terminal_paste".to_string(), vec!["Ctrl+Shift+V".to_string()]),
+        ]));
+        assert_eq!(clipboard_action(&rebound, Scope::Editor, &paste()), Some(ClipboardAction::Unbound));
+        assert_eq!(clipboard_action(&rebound, Scope::Terminal, &paste()), Some(ClipboardAction::Unbound));
+        let swapped = Keymap::new(&BTreeMap::from([("terminal_copy".to_string(), vec!["Ctrl+V".to_string()])]));
+        assert_eq!(clipboard_action(&swapped, Scope::Terminal, &paste()), Some(ClipboardAction::Run(Command::TerminalCopy)));
     }
 
     #[test]

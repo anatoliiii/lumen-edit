@@ -157,7 +157,7 @@ toggle_terminal = ["Ctrl+`", "Alt+F12"]
 quit = []                        # no shortcut
 ```
 
-`lumen-edit commands` lists the ids. Arrows, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab, Escape and copy/paste are fixed.
+`lumen-edit commands` lists the ids. Arrows, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab and Escape are fixed. Copying and pasting are commands too: Copy, Cut and Paste in the editor (Ctrl+C / Ctrl+X / Ctrl+V), Terminal: Copy Selection and Terminal: Paste in the terminal (Ctrl+C or Ctrl+Shift+C, Ctrl+V or Ctrl+Shift+V). Take Ctrl+V away from Terminal: Paste and the terminal gets ^V instead, as Ctrl+C without a selection sends ^C.
 
 ## Architecture
 
