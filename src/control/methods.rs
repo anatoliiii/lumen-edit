@@ -45,6 +45,11 @@ pub const METHODS: &[Method] = &[
         description: "Editor state: project and host, open files, active file and cursor, git branch and changes, terminals, language servers, problem counts.",
         params: &[],
     },
+    Method {
+        name: "open_files",
+        description: "List the text files open in tabs (path, name, dirty flag, line count), in tab order; unsaved changes are included.",
+        params: &[],
+    },
     Method { name: "commands", description: "List every GUI command id usable with run_command.", params: &[] },
     Method {
         name: "run_command",
