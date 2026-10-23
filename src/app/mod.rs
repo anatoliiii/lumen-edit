@@ -1431,6 +1431,13 @@ impl App {
         for command in ctx.input_mut(|input| keymap::consume(input, commands::Scope::Global)) {
             self.run_command(command);
         }
+        // Nothing has the keyboard (e.g. after a click in the file tree):
+        // editor shortcuts still act on the open file.
+        if ctx.memory(|m| m.focused().is_none()) && self.active_doc().is_some() {
+            for command in ctx.input_mut(|input| keymap::consume(input, commands::Scope::Editor)) {
+                self.run_command(command);
+            }
+        }
     }
 
     fn per_frame_upkeep(&mut self) {

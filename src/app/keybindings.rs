@@ -165,9 +165,18 @@ pub fn window(ctx: &egui::Context, app: &mut App) {
     let overrides = app.config.keybindings.clone();
     let mut open = true;
     let mut change = None;
-    egui::Window::new(t!("Keyboard Shortcuts")).open(&mut open).resizable(true).collapsible(false).default_size([760.0, 560.0]).show(
-        ctx,
-        |ui| {
+    // A fixed width (only the height can be changed): the rows wrap inside
+    // it instead of ever pushing the window wider.
+    let width = (ctx.content_rect().width() - 48.0).clamp(360.0, 780.0);
+    egui::Window::new(t!("Keyboard Shortcuts"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable([false, true])
+        .default_width(width)
+        .min_width(width)
+        .max_width(width)
+        .default_height(560.0)
+        .show(ctx, |ui| {
             search_row(ui, &mut state);
             for problem in &keymap.problems {
                 ui.label(RichText::new(problem).small().color(theme::WARNING));
@@ -191,23 +200,27 @@ pub fn window(ctx: &egui::Context, app: &mut App) {
             });
 
             ui.separator();
-            ui.horizontal(|ui| {
-                if !overrides.is_empty() && ui.button(t!("Reset all")).clicked() {
-                    change = Some(Change::ResetAll);
-                }
-                ui.label(
-                    RichText::new(t!("Fixed keys: arrows, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab, Escape, copy and paste."))
-                        .small()
-                        .color(theme::MUTED_TEXT),
-                );
-            });
+            // Everything below wraps: a line that cannot would widen the window.
+            if !overrides.is_empty() && ui.button(t!("Reset all")).clicked() {
+                change = Some(Change::ResetAll);
+            }
             ui.label(
-                RichText::new(t!("Saved in [keybindings] of {path}", path = crate::config::config_path().display()))
+                RichText::new(t!("Fixed keys: arrows, Home/End, Page Up/Down, Backspace, Delete, Enter, Tab, Escape, copy and paste."))
                     .small()
-                    .color(theme::FAINT_TEXT),
+                    .color(theme::MUTED_TEXT),
             );
-        },
-    );
+            let path = crate::config::config_path().display().to_string();
+            let path = match dirs::home_dir().map(|h| h.display().to_string()) {
+                Some(home) if path.starts_with(&home) => format!("~{}", &path[home.len()..]),
+                _ => path,
+            };
+            let text = t!("Saved in [keybindings] of {path}", path = path);
+            let format = egui::TextFormat { font_id: egui::FontId::proportional(11.0), color: theme::FAINT_TEXT, ..Default::default() };
+            let mut job = egui::text::LayoutJob::single_section(text, format);
+            // A path has no spaces to wrap at.
+            job.wrap = egui::text::TextWrapping { max_width: ui.available_width(), break_anywhere: true, ..Default::default() };
+            ui.label(job);
+        });
 
     match change {
         Some(Change::Record(recording)) => {
@@ -262,7 +275,10 @@ fn search_row(ui: &mut egui::Ui, state: &mut State) {
             let example = Chord::parse("Ctrl+Shift+P").map(|c| c.label().to_lowercase()).unwrap_or_default();
             t!("Search: name in English or Russian, id or keys ({example})", example = example)
         };
-        let edit = egui::TextEdit::singleline(&mut state.query).hint_text(hint).desired_width(ui.available_width());
+        // A fixed id: "×" appears before the box once a letter is typed,
+        // and an id taken from the position would lose the focus.
+        let edit =
+            egui::TextEdit::singleline(&mut state.query).id_salt("keybindings_search").hint_text(hint).desired_width(ui.available_width());
         let edit = ui.add_enabled(!state.search_by_keys, edit);
         if state.focus_search {
             edit.request_focus();
@@ -365,6 +381,23 @@ mod tests {
 
     fn chord(text: &str) -> Chord {
         Chord::parse(text).unwrap()
+    }
+
+    /// Regression: "×" appeared before the search box after the first letter
+    /// and the box lost the focus.
+    #[test]
+    fn search_box_keeps_the_focus_while_typing() {
+        let ctx = egui::Context::default();
+        let mut state = State { focus_search: true, ..Default::default() };
+        for text in ["", "a", "\u{431}", "c", "\u{432}"] {
+            let mut input = egui::RawInput::default();
+            if !text.is_empty() {
+                input.events.push(Event::Text(text.into()));
+            }
+            let mut output = ctx.run_ui(input, |ui| search_row(ui, &mut state));
+            output.textures_delta.clear();
+        }
+        assert_eq!(state.query, "a\u{431}c\u{432}");
     }
 
     #[test]

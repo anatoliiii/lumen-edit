@@ -287,7 +287,8 @@ pub struct Keymap {
 
 impl Keymap {
     /// Defaults with `overrides` (command id -> chords) on top. An override
-    /// replaces all default chords of its command; `[]` unbinds it.
+    /// replaces all default chords of its command; `[]` unbinds it. An
+    /// override none of whose chords can be read keeps the defaults.
     pub fn new(overrides: &BTreeMap<String, Vec<String>>) -> Keymap {
         let mut problems = Vec::new();
         for id in overrides.keys() {
@@ -298,20 +299,23 @@ impl Keymap {
         let bindings = ALL
             .iter()
             .map(|&command| {
-                let texts: Vec<&str> = match overrides.get(&command.id()) {
-                    Some(list) => list.iter().map(String::as_str).collect(),
-                    None => defaults(command).to_vec(),
+                let parse_defaults = || defaults(command).iter().filter_map(|text| Chord::parse(text)).collect();
+                let chords = match overrides.get(&command.id()) {
+                    Some(list) => {
+                        let chords: Vec<Chord> = list
+                            .iter()
+                            .filter_map(|text| {
+                                let chord = Chord::parse(text);
+                                if chord.is_none() {
+                                    problems.push(format!("[keybindings] {}: cannot read \"{text}\"", command.id()));
+                                }
+                                chord
+                            })
+                            .collect();
+                        if chords.is_empty() && !list.is_empty() { parse_defaults() } else { chords }
+                    }
+                    None => parse_defaults(),
                 };
-                let chords = texts
-                    .into_iter()
-                    .filter_map(|text| {
-                        let chord = Chord::parse(text);
-                        if chord.is_none() {
-                            problems.push(format!("[keybindings] {}: cannot read \"{text}\"", command.id()));
-                        }
-                        chord
-                    })
-                    .collect();
                 (command, chords)
             })
             .collect();
@@ -565,12 +569,19 @@ mod tests {
             ("quit".to_string(), vec![]),
             ("nope".to_string(), vec!["Ctrl+X".to_string()]),
             ("save".to_string(), vec!["Ctrl+Bogus".to_string()]),
+            // Left by the old recorder that took a modifier for the key.
+            ("new_terminal".to_string(), vec!["ControlLeft".to_string()]),
         ]);
         let keymap = Keymap::new(&overrides);
         assert_eq!(keymap.chords(Command::QuickOpen), [Chord::parse("Ctrl+E").unwrap()]);
         assert!(keymap.chords(Command::Quit).is_empty());
-        assert!(keymap.chords(Command::Save).is_empty());
-        assert_eq!(keymap.problems.len(), 2, "{:?}", keymap.problems);
+        // Nothing readable: the defaults stay.
+        assert_eq!(keymap.chords(Command::Save), [Chord::parse("Ctrl+S").unwrap()]);
+        assert_eq!(
+            keymap.chords(Command::NewTerminal),
+            defaults(Command::NewTerminal).iter().filter_map(|t| Chord::parse(t)).collect::<Vec<_>>()
+        );
+        assert_eq!(keymap.problems.len(), 3, "{:?}", keymap.problems);
         assert_eq!(keymap.chords(Command::CommandPalette), [Chord::parse("Ctrl+Shift+P").unwrap()]);
     }
 

@@ -54,7 +54,7 @@ pub fn file_icon(name: &str) -> (&'static str, Color32) {
         "toml" | "yaml" | "yml" | "ini" | "conf" | "cfg" => ("≡", Color32::from_rgb(160, 170, 185)),
         "md" | "markdown" | "txt" | "rst" => ("¶", Color32::from_rgb(110, 170, 230)),
         "sh" | "bash" | "zsh" | "fish" => ("$", Color32::from_rgb(130, 200, 120)),
-        "lock" => ("⚿", theme::MUTED_TEXT),
+        "lock" => ("⊡", theme::MUTED_TEXT),
         "png" | "jpg" | "jpeg" | "gif" | "svg" | "ico" | "webp" => ("▣", Color32::from_rgb(180, 120, 200)),
         "sql" => ("D", Color32::from_rgb(220, 160, 90)),
         _ => ("·", theme::MUTED_TEXT),
