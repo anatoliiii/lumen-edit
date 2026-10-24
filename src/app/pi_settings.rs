@@ -638,13 +638,11 @@ fn draw_models(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
             ui.text_edit_singleline(&mut state.model.name);
             ui.label(t!("API override (optional)"));
             ui.add(egui::TextEdit::singleline(&mut state.model.api).hint_text(t!("Inherit provider API")));
-            egui::Grid::new("pi_model_limits").num_columns(2).spacing([16.0, 12.0]).show(ui, |ui| {
-                ui.label(t!("Context window (tokens)"));
-                ui.add(egui::TextEdit::singleline(&mut state.model.context).desired_width(140.0));
-                ui.end_row();
-                ui.label(t!("Maximum output (tokens)"));
-                ui.add(egui::TextEdit::singleline(&mut state.model.max_tokens).desired_width(140.0));
-                ui.end_row();
+            super::settings_layout::row(ui, t!("Context window (tokens)"), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut state.model.context).desired_width(160.0));
+            });
+            super::settings_layout::row(ui, t!("Maximum output (tokens)"), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut state.model.max_tokens).desired_width(160.0));
             });
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut state.model.reasoning, t!("Reasoning"));
@@ -652,16 +650,16 @@ fn draw_models(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
                 ui.checkbox(&mut state.model.image_input, t!("Image input"));
             });
             egui::CollapsingHeader::new(t!("Pricing per million tokens (USD)")).show(ui, |ui| {
-                egui::Grid::new("pi_model_pricing").num_columns(2).spacing([16.0, 12.0]).show(ui, |ui| {
+                ui.vertical(|ui| {
                     for (label, value) in [
                         (t!("Input"), &mut state.model.input_cost),
                         (t!("Output"), &mut state.model.output_cost),
                         (t!("Cache read"), &mut state.model.cache_read_cost),
                         (t!("Cache write"), &mut state.model.cache_write_cost),
                     ] {
-                        ui.label(label);
-                        ui.add(egui::TextEdit::singleline(value).desired_width(140.0));
-                        ui.end_row();
+                        super::settings_layout::row(ui, label, |ui| {
+                            ui.add(egui::TextEdit::singleline(value).desired_width(160.0));
+                        });
                     }
                 });
             });
@@ -988,7 +986,7 @@ fn apply_pi_preferences(state: &mut PiSettingsUi) -> Result<(), String> {
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut App) {
-    let id = ui.make_persistent_id("pi_configuration_ui");
+    let id = egui::Id::unique("pi_configuration_ui");
     let mut state = ui.ctx().data_mut(|data| data.get_temp::<PiSettingsUi>(id)).unwrap_or_default();
     if !state.loaded {
         state = load_ui();
@@ -1016,11 +1014,13 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     if let Some((message, error)) = &state.message {
         ui.colored_label(if *error { theme::ERROR } else { theme::SUCCESS }, message);
     }
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match state.section {
-        Section::Providers => draw_providers(ui, &mut state),
-        Section::Models => draw_models(ui, &mut state),
-        Section::PiPreferences => draw_defaults(ui, &mut state, app),
-        Section::LumenAgent => draw_lumen_agent(ui, &mut state, app),
+    egui::ScrollArea::vertical().id_salt(("pi_settings", state.section as u8)).auto_shrink([false, false]).show(ui, |ui| {
+        match state.section {
+            Section::Providers => draw_providers(ui, &mut state),
+            Section::Models => draw_models(ui, &mut state),
+            Section::PiPreferences => draw_defaults(ui, &mut state, app),
+            Section::LumenAgent => draw_lumen_agent(ui, &mut state, app),
+        }
     });
     ui.ctx().data_mut(|data| data.insert_temp(id, state));
 }

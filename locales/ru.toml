@@ -870,3 +870,38 @@
 "Copy the retained terminal scrollback and visible output" = "Копировать историю прокрутки и видимый вывод терминала"
 "Copy last output" = "Копировать последний вывод"
 "Copy output since the most recent Enter" = "Копировать вывод после последнего Enter"
+
+"Session requests" = "Запросов за сессию"
+
+"Session spending" = "Расходы за сессию"
+
+"Reserved for pending requests" = "Зарезервировано для текущих запросов"
+
+"Successful completions" = "Успешных дополнений"
+
+"Accepted completions" = "Принято дополнений"
+
+"Completion errors" = "Ошибок дополнения"
+
+"Completion diagnostics" = "Подробная диагностика дополнения"
+
+"FIM requests / Next Edit requests" = "Запросы FIM / Next Edit"
+
+"Cache hits / dismissed" = "Из кэша / отклонено"
+
+"FIM latency: last / p50 / p95 (ms)" = "Задержка FIM: последняя / p50 / p95, мс"
+
+"Next Edit latency: last / p50 / p95 (ms)" = "Задержка Next Edit: последняя / p50 / p95, мс"
+
+"Debounce / queue / context (ms)" = "Ожидание ввода / очередь / контекст, мс"
+
+"HTTP / display (ms)" = "HTTP / отображение, мс"
+
+"FIM tokens: input / output / cached" = "Токены FIM: вход / выход / кэш"
+
+"Next Edit tokens: input / output / cached" = "Токены Next Edit: вход / выход / кэш"
+
+"Next Edit context / HTTP / diff (ms)" = "Next Edit: контекст / HTTP / различия, мс"
+
+"Temperature" = "Температура"
+"Max tokens" = "Максимум токенов"
