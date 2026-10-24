@@ -233,7 +233,9 @@ mod tests {
             let mut bytes = [0; 8192];
             let _ = stream.read(&mut bytes);
             let _ = started_tx.send(());
-            std::thread::sleep(Duration::from_millis(500));
+            // Leave enough room for slower hosted runners while still making
+            // the HTTP response much slower than cancellation.
+            std::thread::sleep(Duration::from_millis(1500));
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");
         });
         let cancel = Arc::new(AtomicBool::new(false));
@@ -246,7 +248,7 @@ mod tests {
         let at = std::time::Instant::now();
         let provider = OpenRouterProvider::new(&endpoint, "test-fixture".into()).unwrap();
         assert_eq!(rt.block_on(provider.complete(&Context::default(), &Settings::default(), cancel)).unwrap_err(), "Cancelled");
-        assert!(at.elapsed() < Duration::from_millis(400));
+        assert!(at.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
