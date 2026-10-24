@@ -190,27 +190,12 @@ fn verify_sha256(archive: &Path, manifest: &Path, name: &str) -> Result<(), Stri
 }
 
 fn sha256(path: &Path) -> Result<String, String> {
-    #[cfg(target_os = "windows")]
-    let output = {
-        let quoted = path.to_string_lossy().replace('\'', "''");
-        Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &format!("(Get-FileHash -Algorithm SHA256 -LiteralPath '{quoted}').Hash")])
-            .output()
-            .map_err(|e| format!("Could not verify Node.js download: {e}"))?
-    };
-    #[cfg(target_os = "macos")]
-    let output = Command::new("shasum").args(["-a", "256"]).arg(path).output().map_err(|e| e.to_string())?;
-    #[cfg(target_os = "linux")]
-    let output = Command::new("sha256sum").arg(path).output().map_err(|e| format!("Could not verify Node.js download: {e}"))?;
-    if !output.status.success() {
-        return Err("Could not verify Node.js archive checksum".into());
-    }
-    let result = String::from_utf8_lossy(&output.stdout);
-    result
-        .split_whitespace()
-        .find(|part| part.len() == 64 && part.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .map(str::to_ascii_lowercase)
-        .ok_or_else(|| "Could not parse Node.js archive checksum".into())
+    use sha2::{Digest, Sha256};
+
+    let mut archive = std::fs::File::open(path).map_err(|e| format!("Could not verify Node.js download: {e}"))?;
+    let mut digest = Sha256::new();
+    std::io::copy(&mut archive, &mut digest).map_err(|e| format!("Could not read Node.js archive: {e}"))?;
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 fn extract_archive(archive: &Path, destination: &Path) -> Result<(), String> {
@@ -267,12 +252,19 @@ mod tests {
     fn checksum_verification_requires_matching_archive_name() {
         let root = std::env::temp_dir().join(format!("pi-install-test-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let archive = root.join("fixture.tar.gz");
+        let archive = root.join("fixture with spaces 'quoted'.tar.gz");
         let manifest = root.join("SHASUMS256.txt");
         std::fs::write(&archive, b"fixture").unwrap();
-        std::fs::write(&manifest, format!("{}  fixture.tar.gz\n", sha256(&archive).unwrap())).unwrap();
+        // Known digest: do not generate the expected value with the code under test.
+        let expected = "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d";
+        assert_eq!(sha256(&archive).unwrap(), expected);
+        std::fs::write(&manifest, format!("{expected}  fixture.tar.gz\n")).unwrap();
         assert!(verify_sha256(&archive, &manifest, "fixture.tar.gz").is_ok());
         assert!(verify_sha256(&archive, &manifest, "other.tar.gz").is_err());
+        std::fs::write(&archive, b"corrupted").unwrap();
+        assert!(verify_sha256(&archive, &manifest, "fixture.tar.gz").unwrap_err().contains("mismatch"));
+        std::fs::remove_file(&archive).unwrap();
+        assert!(verify_sha256(&archive, &manifest, "fixture.tar.gz").is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 }

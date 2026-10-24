@@ -6,6 +6,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-24
+
 ### Added
 - Semantic inline completion: automatic 180 ms debounce, OpenRouter Codestral using Pi credentials, LSP/tree-sitter context, multiline ghost text, Tab acceptance and atomic Undo; explicit per-project cloud consent, bounded requests/cache and diagnostics.
 - Agent sessions now live inside the project workspace: session list and groups beside the selected chat, inline creation, searchable model selection and session actions.
@@ -15,6 +17,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 
 ### Fixed
+- Verify Node.js downloads with native SHA-256 on all platforms, without relying on PowerShell or external checksum commands.
 - Automatic inline completion no longer burns quota by repeatedly cancelling requests while typing; minute limits retry automatically, request accounting excludes pre-HTTP cancellation/cache, and the original overly small defaults are migrated.
 - Inline completion now anchors the current insertion scope and rejects syntax regressions or misplaced Rust match-arm fragments, including inside macro token trees.
 - Creating a background worker preserves the user's selected session and document.
@@ -74,6 +77,7 @@ First public version: a complete rewrite of the early prototype.
 - pi coding agent tab with sessions, model/mode pickers and bubblewrap sandbox.
 - About window, settings window, install script and desktop entry.
 
-[Unreleased]: https://github.com/anatoliiii/lumen-edit/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/anatoliiii/lumen-edit/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/anatoliiii/lumen-edit/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/anatoliiii/lumen-edit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/anatoliiii/lumen-edit/releases/tag/v0.2.0
