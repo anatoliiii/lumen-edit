@@ -385,6 +385,19 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                 app.panel_open = false;
             }
             if app.panel_tab == PanelTab::Terminal {
+                if ui.small_button(t!("Copy last output")).on_hover_text(t!("Copy output since the most recent Enter")).clicked()
+                    && app.active_terminal < app.terminals.len()
+                {
+                    app.terminals[app.active_terminal].copy_last_command(ui.ctx());
+                }
+                if ui
+                    .small_button(t!("Copy output"))
+                    .on_hover_text(t!("Copy the retained terminal scrollback and visible output"))
+                    .clicked()
+                    && app.active_terminal < app.terminals.len()
+                {
+                    app.terminals[app.active_terminal].copy_scrollback(ui.ctx());
+                }
                 if ui.small_button("🗑").on_hover_text(t!("Close terminal")).clicked() && app.active_terminal < app.terminals.len() {
                     app.terminals.remove(app.active_terminal);
                     app.active_terminal = app.active_terminal.saturating_sub(1);

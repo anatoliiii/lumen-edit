@@ -528,6 +528,7 @@ fn status_label(ui: &mut egui::Ui, text: &str) {
 enum SettingsTab {
     Editor,
     Ai,
+    Pi,
     Servers,
 }
 
@@ -535,14 +536,13 @@ fn tab_index(tab: &SettingsTab) -> usize {
     match tab {
         SettingsTab::Editor => 0,
         SettingsTab::Ai => 1,
-        SettingsTab::Servers => 2,
+        SettingsTab::Pi => 2,
+        SettingsTab::Servers => 3,
     }
 }
 
 fn settings_section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(8.0);
-    ui.label(RichText::new(title).strong().color(theme::ACCENT));
-    ui.separator();
+    super::settings_layout::section(ui, title);
 }
 
 /// A two-column table row: the label cell explains the setting, the control
@@ -560,68 +560,79 @@ fn editor_settings_ui(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
         let config = &mut app.config;
 
         settings_section(ui, t!("Appearance"));
-        egui::Grid::new("settings_editor_appearance").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
-            ui.label(t!("Language"));
-            let name = |code: &str| crate::i18n::SETTINGS.iter().find(|(c, _)| *c == code).map_or(code.to_string(), |(_, n)| n.to_string());
-            let auto = |label: String| if label == "Auto" { t!("Auto (system)").to_string() } else { label };
-            egui::ComboBox::from_id_salt("language").selected_text(auto(name(&config.language))).show_ui(ui, |ui| {
-                for (code, label) in crate::i18n::SETTINGS {
-                    if ui.selectable_label(config.language == *code, auto(label.to_string())).clicked() && config.language != *code {
-                        config.language = code.to_string();
-                        crate::i18n::set(crate::i18n::from_setting(code));
-                        *changed = true;
+        egui::Grid::new("settings_editor_appearance")
+            .num_columns(2)
+            .min_col_width((ui.available_width() * 0.38).min(260.0))
+            .max_col_width((ui.available_width() * 0.55).max(120.0))
+            .spacing([24.0, 14.0])
+            .show(ui, |ui| {
+                ui.label(t!("Language"));
+                let name =
+                    |code: &str| crate::i18n::SETTINGS.iter().find(|(c, _)| *c == code).map_or(code.to_string(), |(_, n)| n.to_string());
+                let auto = |label: String| if label == "Auto" { t!("Auto (system)").to_string() } else { label };
+                egui::ComboBox::from_id_salt("language").selected_text(auto(name(&config.language))).show_ui(ui, |ui| {
+                    for (code, label) in crate::i18n::SETTINGS {
+                        if ui.selectable_label(config.language == *code, auto(label.to_string())).clicked() && config.language != *code {
+                            config.language = code.to_string();
+                            crate::i18n::set(crate::i18n::from_setting(code));
+                            *changed = true;
+                        }
                     }
+                });
+                ui.end_row();
+
+                ui.label(t!("Interface font"));
+                let ui_font = ui.add(egui::Slider::new(&mut config.ui_font_size, 10.0..=20.0));
+                if ui_font.drag_stopped() || ui_font.lost_focus() {
+                    theme::apply(ui.ctx(), config.ui_font_size);
+                    *changed = true;
                 }
+                ui.end_row();
+
+                ui.label(t!("Editor font"));
+                *changed |= ui.add(egui::Slider::new(&mut config.editor_font_size, 9.0..=28.0)).changed();
+                ui.end_row();
+
+                ui.label(t!("Terminal font"));
+                *changed |= ui.add(egui::Slider::new(&mut config.terminal_font_size, 9.0..=28.0)).changed();
+                ui.end_row();
             });
-            ui.end_row();
-
-            ui.label(t!("Interface font"));
-            let ui_font = ui.add(egui::Slider::new(&mut config.ui_font_size, 10.0..=20.0));
-            if ui_font.drag_stopped() || ui_font.lost_focus() {
-                theme::apply(ui.ctx(), config.ui_font_size);
-                *changed = true;
-            }
-            ui.end_row();
-
-            ui.label(t!("Editor font"));
-            *changed |= ui.add(egui::Slider::new(&mut config.editor_font_size, 9.0..=28.0)).changed();
-            ui.end_row();
-
-            ui.label(t!("Terminal font"));
-            *changed |= ui.add(egui::Slider::new(&mut config.terminal_font_size, 9.0..=28.0)).changed();
-            ui.end_row();
-        });
 
         settings_section(ui, t!("Editing"));
-        egui::Grid::new("settings_editor_editing").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
-            ui.label(t!("Tab width"));
-            *changed |= ui.add(egui::Slider::new(&mut config.tab_size, 1..=8)).changed();
-            ui.end_row();
+        egui::Grid::new("settings_editor_editing")
+            .num_columns(2)
+            .min_col_width((ui.available_width() * 0.38).min(260.0))
+            .max_col_width((ui.available_width() * 0.55).max(120.0))
+            .spacing([24.0, 14.0])
+            .show(ui, |ui| {
+                ui.label(t!("Tab width"));
+                *changed |= ui.add(egui::Slider::new(&mut config.tab_size, 1..=8)).changed();
+                ui.end_row();
 
-            ui.label(t!("Indent with spaces"));
-            *changed |= settings_checkbox(ui, &mut config.insert_spaces, None);
-            ui.end_row();
+                ui.label(t!("Indent with spaces"));
+                *changed |= settings_checkbox(ui, &mut config.insert_spaces, None);
+                ui.end_row();
 
-            ui.label(t!("Format on save"));
-            *changed |= settings_checkbox(ui, &mut config.format_on_save, None);
-            ui.end_row();
+                ui.label(t!("Format on save"));
+                *changed |= settings_checkbox(ui, &mut config.format_on_save, None);
+                ui.end_row();
 
-            ui.label(t!("Auto save"));
-            *changed |= settings_checkbox(ui, &mut config.auto_save, None);
-            ui.end_row();
+                ui.label(t!("Auto save"));
+                *changed |= settings_checkbox(ui, &mut config.auto_save, None);
+                ui.end_row();
 
-            ui.label(t!("Show whitespace"));
-            *changed |= settings_checkbox(ui, &mut config.show_whitespace, None);
-            ui.end_row();
+                ui.label(t!("Show whitespace"));
+                *changed |= settings_checkbox(ui, &mut config.show_whitespace, None);
+                ui.end_row();
 
-            ui.label(t!("Line blame"));
-            *changed |= settings_checkbox(ui, &mut config.inline_blame, None);
-            ui.end_row();
+                ui.label(t!("Line blame"));
+                *changed |= settings_checkbox(ui, &mut config.inline_blame, None);
+                ui.end_row();
 
-            ui.label("git pull --rebase");
-            *changed |= settings_checkbox(ui, &mut config.pull_rebase, None);
-            ui.end_row();
-        });
+                ui.label("git pull --rebase");
+                *changed |= settings_checkbox(ui, &mut config.pull_rebase, None);
+                ui.end_row();
+            });
     });
 }
 
@@ -680,128 +691,144 @@ fn ai_settings_ui(ui: &mut egui::Ui, app: &mut App, completion_project: Option<&
         let config = &mut app.config;
 
         settings_section(ui, t!("Provider"));
-        egui::Grid::new("settings_ai_provider").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
-            ui.label(t!("Pause AI completion in all projects"));
-            *changed |= settings_checkbox(ui, &mut config.inline_completion.paused, None);
-            ui.end_row();
-
-            ui.label(t!("Allow cloud completion for this project"));
-            if let Some(key) = completion_project {
-                let mut enabled = config.inline_completion.projects.iter().any(|k| k == key);
-                if ui.checkbox(&mut enabled, "").changed() {
-                    config.inline_completion.projects.retain(|k| k != key);
-                    if enabled {
-                        config.inline_completion.projects.push(key.to_string());
-                    }
-                    *changed = true;
-                }
-            } else {
-                ui.label(RichText::new(t!("Open a local project to allow cloud completion.")).small().color(theme::MUTED_TEXT));
-            }
-            ui.end_row();
-
-            ui.label(t!("Provider"));
-            egui::ComboBox::from_id_salt("provider")
-                .selected_text(match config.inline_completion.provider {
-                    crate::inline_completion::ProviderMode::MercuryEdit2 => t!("Mercury Edit 2 · FIM"),
-                    crate::inline_completion::ProviderMode::OpenRouterChat => t!("OpenRouter · Chat fallback"),
-                })
-                .show_ui(ui, |ui| {
-                    *changed |= ui
-                        .selectable_value(
-                            &mut config.inline_completion.provider,
-                            crate::inline_completion::ProviderMode::MercuryEdit2,
-                            t!("Mercury Edit 2 · FIM"),
-                        )
-                        .changed();
-                    *changed |= ui
-                        .selectable_value(
-                            &mut config.inline_completion.provider,
-                            crate::inline_completion::ProviderMode::OpenRouterChat,
-                            t!("OpenRouter · Chat fallback"),
-                        )
-                        .changed();
-                });
-            ui.end_row();
-
-            if config.inline_completion.provider == crate::inline_completion::ProviderMode::MercuryEdit2 {
-                ui.label(t!("Model"));
-                ui.label(RichText::new("mercury-edit-2").monospace());
+        egui::Grid::new("settings_ai_provider")
+            .num_columns(2)
+            .min_col_width((ui.available_width() * 0.38).min(260.0))
+            .max_col_width((ui.available_width() * 0.55).max(120.0))
+            .spacing([24.0, 14.0])
+            .show(ui, |ui| {
+                ui.label(t!("Pause AI completion in all projects"));
+                *changed |= settings_checkbox(ui, &mut config.inline_completion.paused, None);
                 ui.end_row();
-                ui.label("");
-                ui.label(
-                    RichText::new(t!("FIM endpoint: FIM_PROVIDER + /v1/fim/completions · model mercury-edit-2"))
-                        .small()
-                        .color(theme::MUTED_TEXT),
-                );
-                ui.end_row();
-                ui.label("");
-                ui.label(
-                    RichText::new(t!("Key: INCEPTION_API_KEY from environment or project .env-fim; it is never copied."))
-                        .small()
-                        .color(theme::MUTED_TEXT),
-                );
-                ui.end_row();
-            } else {
-                ui.label(t!("Model"));
-                *changed |= ui.add(egui::TextEdit::singleline(&mut config.inline_completion.model).desired_width(220.0)).changed();
-                ui.end_row();
-                ui.label("");
-                ui.label(
-                    RichText::new(t!("OpenRouter key: Pi credentials, then OPENROUTER_API_KEY. No key is copied."))
-                        .small()
-                        .color(theme::MUTED_TEXT),
-                );
-                ui.end_row();
-            }
 
-            ui.label("Temperature");
-            *changed |= ui.add(egui::Slider::new(&mut config.inline_completion.temperature, 0.0..=1.0)).changed();
-            ui.end_row();
-
-            ui.label(t!("FIM length"));
-            ui.horizontal(|ui| {
-                use crate::inline_completion::FimProfile;
-                let current = FimProfile::of(config.inline_completion.max_tokens);
-                for profile in FimProfile::ALL {
-                    let label = match profile {
-                        FimProfile::Short => t!("Short hint"),
-                        FimProfile::MultiLine => t!("Several lines"),
-                    };
-                    if ui.selectable_label(current == Some(profile), format!("{label} · {}", profile.max_tokens())).clicked() {
-                        config.inline_completion.max_tokens = profile.max_tokens();
+                ui.label(t!("Allow cloud completion for this project"));
+                if let Some(key) = completion_project {
+                    let mut enabled = config.inline_completion.projects.iter().any(|k| k == key);
+                    if ui.checkbox(&mut enabled, "").changed() {
+                        config.inline_completion.projects.retain(|k| k != key);
+                        if enabled {
+                            config.inline_completion.projects.push(key.to_string());
+                        }
                         *changed = true;
                     }
+                } else {
+                    ui.label(
+                        RichText::new(t!("Open a local project to allow cloud completion."))
+                            .small()
+                            .color(super::settings_layout::HELP_TEXT),
+                    );
                 }
+                ui.end_row();
+
+                ui.label(t!("Provider"));
+                egui::ComboBox::from_id_salt("provider")
+                    .selected_text(match config.inline_completion.provider {
+                        crate::inline_completion::ProviderMode::MercuryEdit2 => t!("Mercury Edit 2 · FIM"),
+                        crate::inline_completion::ProviderMode::OpenRouterChat => t!("OpenRouter · Chat fallback"),
+                    })
+                    .show_ui(ui, |ui| {
+                        *changed |= ui
+                            .selectable_value(
+                                &mut config.inline_completion.provider,
+                                crate::inline_completion::ProviderMode::MercuryEdit2,
+                                t!("Mercury Edit 2 · FIM"),
+                            )
+                            .changed();
+                        *changed |= ui
+                            .selectable_value(
+                                &mut config.inline_completion.provider,
+                                crate::inline_completion::ProviderMode::OpenRouterChat,
+                                t!("OpenRouter · Chat fallback"),
+                            )
+                            .changed();
+                    });
+                ui.end_row();
+
+                if config.inline_completion.provider == crate::inline_completion::ProviderMode::MercuryEdit2 {
+                    ui.label(t!("Model"));
+                    ui.label(RichText::new("mercury-edit-2").monospace());
+                    ui.end_row();
+                    ui.label("");
+                    ui.label(
+                        RichText::new(t!("FIM endpoint: FIM_PROVIDER + /v1/fim/completions · model mercury-edit-2"))
+                            .small()
+                            .color(super::settings_layout::HELP_TEXT),
+                    );
+                    ui.end_row();
+                    ui.label("");
+                    ui.label(
+                        RichText::new(t!("Key: INCEPTION_API_KEY from environment or project .env-fim; it is never copied."))
+                            .small()
+                            .color(super::settings_layout::HELP_TEXT),
+                    );
+                    ui.end_row();
+                } else {
+                    ui.label(t!("Model"));
+                    *changed |= ui.add(egui::TextEdit::singleline(&mut config.inline_completion.model).desired_width(220.0)).changed();
+                    ui.end_row();
+                    ui.label("");
+                    ui.label(
+                        RichText::new(t!("OpenRouter key: Pi credentials, then OPENROUTER_API_KEY. No key is copied."))
+                            .small()
+                            .color(super::settings_layout::HELP_TEXT),
+                    );
+                    ui.end_row();
+                }
+
+                ui.label("Temperature");
+                *changed |= ui.add(egui::Slider::new(&mut config.inline_completion.temperature, 0.0..=1.0)).changed();
+                ui.end_row();
+
+                ui.label(t!("FIM length"));
+                ui.horizontal(|ui| {
+                    use crate::inline_completion::FimProfile;
+                    let current = FimProfile::of(config.inline_completion.max_tokens);
+                    for profile in FimProfile::ALL {
+                        let label = match profile {
+                            FimProfile::Short => t!("Short hint"),
+                            FimProfile::MultiLine => t!("Several lines"),
+                        };
+                        if ui.selectable_label(current == Some(profile), format!("{label} · {}", profile.max_tokens())).clicked() {
+                            config.inline_completion.max_tokens = profile.max_tokens();
+                            *changed = true;
+                        }
+                    }
+                });
+                ui.end_row();
+
+                ui.label("Max tokens");
+                *changed |=
+                    ui.add(egui::Slider::new(&mut config.inline_completion.max_tokens, 1..=crate::inline_completion::MAX_TOKENS)).changed();
+                ui.end_row();
+
+                ui.label(t!("Editable lines"));
+                *changed |= ui.add(egui::Slider::new(&mut config.next_edit_region_lines, 1..=15)).changed();
+                ui.end_row();
             });
-            ui.end_row();
-
-            ui.label("Max tokens");
-            *changed |=
-                ui.add(egui::Slider::new(&mut config.inline_completion.max_tokens, 1..=crate::inline_completion::MAX_TOKENS)).changed();
-            ui.end_row();
-
-            ui.label(t!("Editable lines"));
-            *changed |= ui.add(egui::Slider::new(&mut config.next_edit_region_lines, 1..=15)).changed();
-            ui.end_row();
-        });
 
         settings_section(ui, t!("Limits"));
-        ui.label(RichText::new(t!("Session limits below are shared by FIM and Next Edit.")).small().color(theme::MUTED_TEXT));
-        egui::Grid::new("settings_ai_limits").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
-            ui.label(t!("Requests / minute"));
-            *changed |= ui.add(egui::Slider::new(&mut config.inline_completion.requests_per_minute, 1..=60)).changed();
-            ui.end_row();
+        ui.label(
+            RichText::new(t!("Session limits below are shared by FIM and Next Edit.")).small().color(super::settings_layout::HELP_TEXT),
+        );
+        egui::Grid::new("settings_ai_limits")
+            .num_columns(2)
+            .min_col_width((ui.available_width() * 0.38).min(260.0))
+            .max_col_width((ui.available_width() * 0.55).max(120.0))
+            .spacing([24.0, 14.0])
+            .show(ui, |ui| {
+                ui.label(t!("Requests / minute"));
+                *changed |= ui.add(egui::Slider::new(&mut config.inline_completion.requests_per_minute, 1..=60)).changed();
+                ui.end_row();
 
-            ui.label(t!("Requests / session"));
-            *changed |= ui.add(egui::DragValue::new(&mut config.inline_completion.requests_per_session).range(1..=100_000)).changed();
-            ui.end_row();
+                ui.label(t!("Requests / session"));
+                *changed |= ui.add(egui::DragValue::new(&mut config.inline_completion.requests_per_session).range(1..=100_000)).changed();
+                ui.end_row();
 
-            ui.label(t!("Session budget, USD"));
-            *changed |=
-                ui.add(egui::DragValue::new(&mut config.inline_completion.session_budget_usd).range(0.0..=100.0).speed(0.1)).changed();
-            ui.end_row();
-        });
+                ui.label(t!("Session budget, USD"));
+                *changed |=
+                    ui.add(egui::DragValue::new(&mut config.inline_completion.session_budget_usd).range(0.0..=100.0).speed(0.1)).changed();
+                ui.end_row();
+            });
 
         settings_section(ui, t!("Status"));
         ui.label(RichText::new(ledger_line).monospace().small());
@@ -829,9 +856,9 @@ fn servers_settings_ui(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
         ui.label(
             RichText::new(t!("Disabled servers are not started. Add your own servers in config.toml ([[lsp]])."))
                 .small()
-                .color(theme::MUTED_TEXT),
+                .color(super::settings_layout::HELP_TEXT),
         );
-        egui::Grid::new("settings_servers").num_columns(3).spacing([12.0, 4.0]).show(ui, |ui| {
+        egui::Grid::new("settings_servers").num_columns(3).striped(true).spacing([24.0, 12.0]).show(ui, |ui| {
             for spec in crate::lsp::default_servers().into_iter().chain(config.lsp.clone()) {
                 let mut enabled = !config.disabled_servers.contains(&spec.name);
                 if ui.checkbox(&mut enabled, &spec.name).changed() {
@@ -843,41 +870,93 @@ fn servers_settings_ui(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
                     *changed = true;
                 }
                 ui.label(RichText::new(format!("{} {}", spec.command, spec.args.join(" "))).monospace().small());
-                ui.label(RichText::new(spec.languages.join(", ")).small().color(theme::MUTED_TEXT));
+                ui.label(RichText::new(spec.languages.join(", ")).small().color(super::settings_layout::HELP_TEXT));
                 ui.end_row();
             }
         });
 
         settings_section(ui, t!("pi agent"));
-        egui::Grid::new("settings_pi").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
-            ui.label(t!("pi agent: command"));
-            *changed |= ui.add(egui::TextEdit::singleline(&mut config.pi_command).desired_width(200.0)).lost_focus();
-            ui.end_row();
+        egui::Grid::new("settings_pi")
+            .num_columns(2)
+            .min_col_width((ui.available_width() * 0.38).min(260.0))
+            .max_col_width((ui.available_width() * 0.55).max(120.0))
+            .spacing([24.0, 14.0])
+            .show(ui, |ui| {
+                ui.label(t!("pi agent: command"));
+                let command_response = ui.add(egui::TextEdit::singleline(&mut config.pi_command).desired_width(200.0));
+                if command_response.changed() {
+                    config.pi_entry.clear();
+                    config.pi_runtime.clear();
+                }
+                *changed |= command_response.lost_focus();
+                ui.end_row();
 
-            ui.label(t!("pi agent: model"));
-            *changed |=
-                ui.add(egui::TextEdit::singleline(&mut config.agent_model).hint_text("provider/id").desired_width(260.0)).lost_focus();
-            ui.end_row();
+                ui.label(t!("pi agent: mode at start"));
+                *changed |= ui.add(egui::TextEdit::singleline(&mut config.agent_mode).hint_text("build").desired_width(120.0)).lost_focus();
+                ui.end_row();
 
-            ui.label(t!("pi agent: mode at start"));
-            *changed |= ui.add(egui::TextEdit::singleline(&mut config.agent_mode).hint_text("build").desired_width(120.0)).lost_focus();
-            ui.end_row();
+                ui.label(t!("pi agent: sandbox (bwrap)"));
+                *changed |=
+                    settings_checkbox(ui, &mut config.agent_sandbox, Some(t!("Write only to the project folder, ~/.pi and caches")));
+                ui.end_row();
+            });
 
-            ui.label(t!("pi agent: sandbox (bwrap)"));
-            *changed |= settings_checkbox(ui, &mut config.agent_sandbox, Some(t!("Write only to the project folder, ~/.pi and caches")));
-            ui.end_row();
+        let install_id = ui.make_persistent_id("pi_user_install_state");
+        let install_state =
+            ui.ctx().data_mut(|data| data.get_temp::<std::sync::Arc<std::sync::Mutex<crate::pi_install::InstallState>>>(install_id));
+        let installing = install_state
+            .as_ref()
+            .is_some_and(|state| matches!(&*state.lock().unwrap_or_else(|e| e.into_inner()), crate::pi_install::InstallState::Running(_)));
+        ui.horizontal(|ui| {
+            if ui.add_enabled(!installing, egui::Button::new(t!("Install Pi for this user"))).clicked() {
+                let state = crate::pi_install::start(ui.ctx().clone());
+                ui.ctx().data_mut(|data| data.insert_temp(install_id, state));
+            }
+            ui.label(
+                RichText::new(t!("Pi includes its own private Node.js runtime; no system Node.js or administrator rights are needed."))
+                    .small()
+                    .color(super::settings_layout::HELP_TEXT),
+            );
         });
+        if let Some(state) = install_state {
+            match state.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+                crate::pi_install::InstallState::Running(message) => {
+                    ui.label(RichText::new(message).small().color(super::settings_layout::HELP_TEXT));
+                }
+                crate::pi_install::InstallState::Finished(Ok(installed)) => {
+                    if config.pi_command != installed.node.to_string_lossy()
+                        || config.pi_entry != installed.entry.to_string_lossy()
+                        || config.pi_runtime != installed.runtime_dir.to_string_lossy()
+                    {
+                        config.pi_command = installed.node.to_string_lossy().into_owned();
+                        config.pi_entry = installed.entry.to_string_lossy().into_owned();
+                        config.pi_runtime = installed.runtime_dir.to_string_lossy().into_owned();
+                        *changed = true;
+                    }
+                    ui.label(RichText::new(t!("Pi is installed for this user.")).small().color(theme::SUCCESS));
+                }
+                crate::pi_install::InstallState::Finished(Err(error)) => {
+                    ui.label(RichText::new(t!("Pi installation failed: {error}", error = error)).small().color(theme::ERROR));
+                }
+            }
+        }
 
         settings_section(ui, t!("Remote"));
-        egui::Grid::new("settings_remote").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
-            ui.label(t!("Agent on SSH hosts"));
-            *changed |= settings_checkbox(ui, &mut config.use_agent, Some(t!("Fast search and file watching on the remote machine")));
-            ui.end_row();
+        egui::Grid::new("settings_remote")
+            .num_columns(2)
+            .min_col_width((ui.available_width() * 0.38).min(260.0))
+            .max_col_width((ui.available_width() * 0.55).max(120.0))
+            .spacing([24.0, 14.0])
+            .show(ui, |ui| {
+                ui.label(t!("Agent on SSH hosts"));
+                *changed |= settings_checkbox(ui, &mut config.use_agent, Some(t!("Fast search and file watching on the remote machine")));
+                ui.end_row();
 
-            ui.label(t!("Server Pulse"));
-            *changed |= settings_checkbox(ui, &mut config.pulse, Some(t!("CPU, memory and disk of the project host in the status bar")));
-            ui.end_row();
-        });
+                ui.label(t!("Server Pulse"));
+                *changed |=
+                    settings_checkbox(ui, &mut config.pulse, Some(t!("CPU, memory and disk of the project host in the status bar")));
+                ui.end_row();
+            });
     });
 }
 
@@ -888,28 +967,38 @@ pub fn settings_tab_ui(ui: &mut egui::Ui, app: &mut App) {
     let mut tab: SettingsTab = match ui.ctx().data_mut(|d| d.get_temp::<u8>(tab_id)) {
         Some(0) => SettingsTab::Editor,
         Some(1) => SettingsTab::Ai,
-        Some(2) => SettingsTab::Servers,
+        Some(2) => SettingsTab::Pi,
+        Some(3) => SettingsTab::Servers,
         _ => SettingsTab::Editor,
     };
 
-    ui.vertical(|ui| {
-        ui.horizontal(|ui| {
-            for (index, title) in [(0usize, t!("Editor")), (1, t!("AI Completion")), (2, t!("Servers & Agents"))] {
+    egui::Frame::new().inner_margin(24.0).show(ui, |ui| {
+        super::settings_layout::apply_style(ui);
+        ui.set_max_width(1040.0);
+        ui.heading(t!("Settings"));
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            for (index, title) in
+                [(0usize, t!("Editor")), (1, t!("AI Completion")), (2, t!("Pi Models & Settings")), (3, t!("Servers & Agents"))]
+            {
                 if ui.selectable_label(tab_index(&tab) == index, title).clicked() {
                     tab = match index {
                         0 => SettingsTab::Editor,
                         1 => SettingsTab::Ai,
+                        2 => SettingsTab::Pi,
                         _ => SettingsTab::Servers,
                     };
                 }
             }
         });
         ui.separator();
-        match tab {
+        let content_height = (ui.available_height() - 52.0).max(100.0);
+        ui.allocate_ui(egui::vec2(ui.available_width(), content_height), |ui| match tab {
             SettingsTab::Editor => editor_settings_ui(ui, app, &mut changed),
             SettingsTab::Ai => ai_settings_ui(ui, app, completion_project.as_deref(), &mut changed),
+            SettingsTab::Pi => super::pi_settings::show(ui, app),
             SettingsTab::Servers => servers_settings_ui(ui, app, &mut changed),
-        }
+        });
         ui.separator();
         ui.horizontal(|ui| {
             if ui.button(t!("Keyboard Shortcuts…")).clicked() {
@@ -917,7 +1006,9 @@ pub fn settings_tab_ui(ui: &mut egui::Ui, app: &mut App) {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new(t!("Settings file: {n1}", n1 = crate::config::config_path().display())).small().color(theme::FAINT_TEXT),
+                    RichText::new(t!("Settings file: {n1}", n1 = crate::config::config_path().display()))
+                        .small()
+                        .color(super::settings_layout::HELP_TEXT),
                 );
             });
         });

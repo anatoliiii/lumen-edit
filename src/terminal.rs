@@ -64,6 +64,8 @@ pub struct Terminal {
     scrollback: usize,
     selection: Option<(Cell, Cell)>,
     selecting: bool,
+    command_markers: Vec<u16>,
+    command_input: bool,
     skip_text: bool,
     scroll_accum: f32,
 }
@@ -152,6 +154,8 @@ impl Terminal {
             scrollback: 0,
             selection: None,
             selecting: false,
+            command_markers: Vec::new(),
+            command_input: false,
             skip_text: false,
             scroll_accum: 0.0,
         })
@@ -190,6 +194,7 @@ impl Terminal {
     }
 
     fn paste(&mut self, text: &str) {
+        self.command_input |= !text.is_empty();
         let bracketed = self.parser.lock().unwrap_or_else(|e| e.into_inner()).screen().bracketed_paste();
         let text = text.replace("\r\n", "\r").replace('\n', "\r");
         if bracketed {
@@ -207,11 +212,36 @@ impl Terminal {
         }
     }
 
-    fn selected_text(&self) -> Option<String> {
+    fn mark_command_start(&mut self) {
+        if !self.command_input {
+            return;
+        }
+        self.command_input = false;
+        let mut parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
+        let (alternate, mouse_mode, cursor_row) = {
+            let screen = parser.screen();
+            let (row, _) = screen.cursor_position();
+            (screen.alternate_screen(), screen.mouse_protocol_mode(), row)
+        };
+        if alternate || mouse_mode != vt100::MouseProtocolMode::None {
+            return;
+        }
+        let history_rows = screen_history_rows(parser.screen_mut());
+        let marker = history_rows.saturating_add(cursor_row as usize).saturating_add(1).min(u16::MAX as usize) as u16;
+        drop(parser);
+        if self.command_markers.last().copied() != Some(marker) {
+            self.command_markers.push(marker);
+            if self.command_markers.len() > 500 {
+                self.command_markers.remove(0);
+            }
+        }
+    }
+
+    fn selected_text(&mut self) -> Option<String> {
         let (a, b) = self.selection?;
         let (start, end) = if a <= b { (a, b) } else { (b, a) };
-        let parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
-        let text = parser.screen().contents_between(start.row, start.col, end.row, end.col + 1);
+        let mut parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
+        let text = extract_rows(parser.screen_mut(), start, end, &self.command_markers);
         (!text.is_empty()).then_some(text)
     }
 
@@ -238,16 +268,25 @@ impl Terminal {
             });
         }
 
-        let (mouse_mode, mouse_encoding, alternate) = {
-            let parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
-            let screen = parser.screen();
-            (screen.mouse_protocol_mode(), screen.mouse_protocol_encoding(), screen.alternate_screen())
+        let (mouse_mode, mouse_encoding, alternate, visible_base) = {
+            let mut parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
+            let (mouse_mode, mouse_encoding, alternate) = {
+                let screen = parser.screen();
+                (screen.mouse_protocol_mode(), screen.mouse_protocol_encoding(), screen.alternate_screen())
+            };
+            let history_rows = screen_history_rows(parser.screen_mut());
+            (mouse_mode, mouse_encoding, alternate, history_rows.saturating_sub(parser.screen().scrollback()))
         };
 
-        let cell_at = |pos: Pos2| -> Cell {
+        let visible_cell_at = |pos: Pos2| -> Cell {
             let col = ((pos.x - inner.left()) / char_w).floor().clamp(0.0, (cols - 1) as f32) as u16;
             let row = ((pos.y - inner.top()) / row_h).floor().clamp(0.0, (rows - 1) as f32) as u16;
             Cell { row, col }
+        };
+        let logical_cell_at = |pos: Pos2, base: usize| -> Cell {
+            let mut cell = visible_cell_at(pos);
+            cell.row = base.saturating_add(cell.row as usize).min(u16::MAX as usize) as u16;
+            cell
         };
 
         // ---- mouse
@@ -255,7 +294,7 @@ impl Terminal {
         let app_mouse = mouse_mode != vt100::MouseProtocolMode::None && !shift_held;
         if app_mouse {
             if let Some(pos) = response.interact_pointer_pos() {
-                let cell = cell_at(pos);
+                let cell = visible_cell_at(pos);
                 if response.drag_started() || response.clicked() {
                     self.send_mouse(0, cell, true, mouse_encoding);
                 }
@@ -271,7 +310,7 @@ impl Terminal {
             if response.drag_started()
                 && let Some(pos) = response.interact_pointer_pos()
             {
-                let cell = cell_at(pos);
+                let cell = logical_cell_at(pos, visible_base);
                 self.selection = Some((cell, cell));
                 self.selecting = true;
             }
@@ -279,7 +318,35 @@ impl Terminal {
                 && let Some(pos) = response.interact_pointer_pos()
                 && let Some(selection) = &mut self.selection
             {
-                selection.1 = cell_at(pos);
+                selection.1 = logical_cell_at(pos, visible_base);
+            }
+            // Continue a drag beyond the viewport by scrolling one or more
+            // rows per frame and moving the logical selection endpoint with it.
+            if self.selecting
+                && response.dragged()
+                && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+            {
+                let direction = if pos.y < inner.top() {
+                    1i64
+                } else if pos.y > inner.bottom() {
+                    -1
+                } else {
+                    0
+                };
+                if direction != 0 {
+                    let distance = if direction > 0 { inner.top() - pos.y } else { pos.y - inner.bottom() };
+                    let step = (distance / row_h).ceil().clamp(1.0, rows as f32) as i64;
+                    let mut parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
+                    let target = (self.scrollback as i64 + direction * step).max(0) as usize;
+                    parser.screen_mut().set_scrollback(target);
+                    self.scrollback = parser.screen().scrollback();
+                    let history_rows = screen_history_rows(parser.screen_mut());
+                    let base = history_rows.saturating_sub(self.scrollback);
+                    if let Some(selection) = &mut self.selection {
+                        selection.1 = logical_cell_at(pos, base);
+                    }
+                    ui.ctx().request_repaint();
+                }
             }
             if response.drag_stopped() {
                 self.selecting = false;
@@ -289,7 +356,7 @@ impl Terminal {
                 if ui.input(|i| i.modifiers.command)
                     && let Some(pos) = response.interact_pointer_pos()
                 {
-                    output.open_location = self.location_at(cell_at(pos));
+                    output.open_location = self.location_at(visible_cell_at(pos));
                 }
             }
         }
@@ -303,7 +370,7 @@ impl Terminal {
                     if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
                         let button = if lines > 0 { 64 } else { 65 };
                         for _ in 0..lines.unsigned_abs().min(5) {
-                            self.send_mouse(button, cell_at(pos), true, mouse_encoding);
+                            self.send_mouse(button, visible_cell_at(pos), true, mouse_encoding);
                         }
                     }
                 } else if alternate {
@@ -332,8 +399,10 @@ impl Terminal {
         // ---- paint
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, theme::TERMINAL_BACKGROUND);
-        let parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
+        let mut parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
+        let history_rows = screen_history_rows(parser.screen_mut());
         let screen = parser.screen();
+        let visible_base = history_rows.saturating_sub(screen.scrollback());
         let selection = self.selection.map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
         for row in 0..rows.min(screen.size().0) {
             let y = inner.top() + row as f32 * row_h;
@@ -358,7 +427,8 @@ impl Terminal {
                 if cell.dim() {
                     fg = fg.gamma_multiply(0.6);
                 }
-                let selected = selection.is_some_and(|(a, b)| Cell { row, col } >= a && Cell { row, col } <= b);
+                let absolute = Cell { row: visible_base.saturating_add(row as usize).min(u16::MAX as usize) as u16, col };
+                let selected = selection.is_some_and(|(a, b)| absolute >= a && absolute <= b);
                 let width = if cell.is_wide() { 2.0 } else { 1.0 };
                 let cell_rect = Rect::from_min_size(Pos2::new(inner.left() + col as f32 * char_w, y), Vec2::new(char_w * width, row_h));
                 if selected {
@@ -383,6 +453,16 @@ impl Terminal {
             painter.galley(Pos2::new(inner.left(), y), galley, theme::TERMINAL_FOREGROUND);
         }
 
+        for marker in &self.command_markers {
+            let row = *marker as usize;
+            if row >= visible_base && row < visible_base + rows as usize {
+                let y = inner.top() + (row - visible_base) as f32 * row_h;
+                painter.line_segment(
+                    [Pos2::new(inner.left(), y + 1.0), Pos2::new(inner.right(), y + 1.0)],
+                    Stroke::new(1.0, theme::MUTED_TEXT.gamma_multiply(0.65)),
+                );
+            }
+        }
         if self.scrollback == 0 && !screen.hide_cursor() {
             let (row, col) = screen.cursor_position();
             let cursor = Rect::from_min_size(
@@ -422,6 +502,41 @@ impl Terminal {
                 true
             }
             None => false,
+        }
+    }
+
+    /// Copies output following the most recently submitted command.
+    pub fn copy_last_command(&mut self, ctx: &egui::Context) -> bool {
+        let Some(start_row) = self.command_markers.last().copied() else { return false };
+        let mut parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
+        let screen = parser.screen_mut();
+        let (rows, cols) = screen.size();
+        let history_rows = screen_history_rows(screen);
+        let end_row = history_rows.saturating_add(rows as usize).saturating_sub(1).min(u16::MAX as usize) as u16;
+        let text = extract_rows(screen, Cell { row: start_row, col: 0 }, Cell { row: end_row, col: cols.saturating_sub(1) }, &[]);
+        drop(parser);
+        if text.trim().is_empty() {
+            false
+        } else {
+            ctx.copy_text(text.trim().to_string());
+            true
+        }
+    }
+
+    /// Copies the complete retained terminal history and visible screen.
+    pub fn copy_scrollback(&mut self, ctx: &egui::Context) -> bool {
+        let mut parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
+        let screen = parser.screen_mut();
+        let (rows, cols) = screen.size();
+        let history_rows = screen_history_rows(screen);
+        let end_row = history_rows.saturating_add(rows as usize).saturating_sub(1).min(u16::MAX as usize) as u16;
+        let text = extract_rows(screen, Cell { row: 0, col: 0 }, Cell { row: end_row, col: cols.saturating_sub(1) }, &self.command_markers);
+        drop(parser);
+        if text.is_empty() {
+            false
+        } else {
+            ctx.copy_text(text.trim_end().to_string());
+            true
         }
     }
 
@@ -468,6 +583,7 @@ impl Terminal {
         match event {
             egui::Event::Text(text) => {
                 if !self.skip_text {
+                    self.command_input |= !text.is_empty();
                     self.write(text.as_bytes());
                     self.scroll_to_bottom();
                 }
@@ -485,6 +601,9 @@ impl Terminal {
             egui::Event::Cut => self.write(b"\x18"),
             egui::Event::Paste(text) => self.paste(text),
             egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                if *key == Key::Enter && !modifiers.shift {
+                    self.mark_command_start();
+                }
                 let app_cursor = self.parser.lock().unwrap_or_else(|e| e.into_inner()).screen().application_cursor();
                 if let Some(bytes) = key_bytes(*key, *modifiers, app_cursor) {
                     self.skip_text = modifiers.alt && !modifiers.ctrl;
@@ -533,6 +652,65 @@ impl Terminal {
         }
         None
     }
+}
+
+/// Returns the number of populated scrollback rows. vt100::Screen::scrollback_len
+/// reports the configured limit, so probe the clamped offset and restore it.
+fn screen_history_rows(screen: &mut vt100::Screen) -> usize {
+    let old_offset = screen.scrollback();
+    screen.set_scrollback(usize::MAX);
+    let history_rows = screen.scrollback();
+    screen.set_scrollback(old_offset);
+    history_rows
+}
+
+/// Reads an arbitrary range of logical rows by paging the vt100 screen through
+/// its scrollback, then restores the user's current viewport.
+fn extract_rows(screen: &mut vt100::Screen, start: Cell, end: Cell, command_markers: &[u16]) -> String {
+    let (start, end) = if start <= end { (start, end) } else { (end, start) };
+    let (height, width) = screen.size();
+    if height == 0 || width == 0 {
+        return String::new();
+    }
+    let old_offset = screen.scrollback();
+    let history_rows = screen_history_rows(screen);
+    let max_row = history_rows.saturating_add(height as usize).saturating_sub(1);
+    let first = start.row as usize;
+    let last = (end.row as usize).min(max_row);
+    if first > last {
+        screen.set_scrollback(old_offset);
+        return String::new();
+    }
+
+    let mut text = String::new();
+    let mut row = first;
+    while row <= last {
+        if command_markers.contains(&(row.min(u16::MAX as usize) as u16)) {
+            text.push_str("\n────────── command output ──────────\n");
+        }
+        let base = if row < history_rows { (row / height as usize) * height as usize } else { history_rows };
+        screen.set_scrollback(history_rows.saturating_sub(base));
+        let visible_base = history_rows.saturating_sub(screen.scrollback());
+        let local_start = row.saturating_sub(visible_base).min(height as usize - 1) as u16;
+        let page_last = last.min(visible_base + height as usize - 1).min(
+            command_markers
+                .iter()
+                .map(|marker| *marker as usize)
+                .filter(|marker| *marker > row)
+                .min()
+                .map_or(usize::MAX, |marker| marker - 1),
+        );
+        let local_end = page_last.saturating_sub(visible_base) as u16;
+        let start_col = if row == first { start.col.min(width - 1) } else { 0 };
+        let end_col = if page_last == end.row as usize { end.col.saturating_add(1).min(width) } else { width };
+        text.push_str(&screen.contents_between(local_start, start_col, local_end, end_col));
+        if page_last >= last {
+            break;
+        }
+        row = page_last + 1;
+    }
+    screen.set_scrollback(old_offset);
+    text
 }
 
 impl Drop for Terminal {
@@ -664,5 +842,56 @@ pub fn indexed_color(index: u8) -> Color32 {
             let gray = 8 + (index - 232) * 10;
             Color32::from_rgb(gray, gray, gray)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn screen_with_history() -> vt100::Screen {
+        let mut parser = vt100::Parser::new(2, 12, 32);
+        parser.process(b"first\r\nsecond\r\nthird\r\nfourth");
+        parser.screen().clone()
+    }
+
+    #[test]
+    fn extracts_selection_across_scrollback_pages_and_restores_view() {
+        let mut screen = screen_with_history();
+        let full_len = screen_history_rows(&mut screen);
+        let offset = full_len.min(1);
+        screen.set_scrollback(offset);
+        let original_offset = screen.scrollback();
+        let text = extract_rows(&mut screen, Cell { row: 0, col: 0 }, Cell { row: full_len as u16 + 1, col: 11 }, &[]);
+        assert!(text.contains("first"), "{text:?}");
+        assert!(text.contains("second"), "{text:?}");
+        assert!(text.contains("third"), "{text:?}");
+        assert!(text.contains("fourth"), "{text:?}");
+        assert_eq!(screen.scrollback(), original_offset);
+    }
+
+    #[test]
+    fn inserts_command_separator_between_output_sections() {
+        let mut screen = screen_with_history();
+        let end_row = screen_history_rows(&mut screen) as u16 + 1;
+        let text = extract_rows(&mut screen, Cell { row: 0, col: 0 }, Cell { row: end_row, col: 11 }, &[2]);
+        let separator = text.find("command output").expect("separator is included");
+        let before = text.find("second").expect("first output section is present");
+        let after = text.find("third").expect("second output section is present");
+        assert_eq!(text.matches("first").count(), 1, "{text:?}");
+        assert!(before < separator && separator < after, "{text:?}");
+        let last_command = extract_rows(&mut screen, Cell { row: 2, col: 0 }, Cell { row: end_row, col: 11 }, &[]);
+        assert!(last_command.contains("third"), "{last_command:?}");
+        assert!(last_command.contains("fourth"), "{last_command:?}");
+        assert!(!last_command.contains("first"), "{last_command:?}");
+    }
+
+    #[test]
+    fn extracts_a_partial_selection_inside_a_scrolled_line() {
+        let mut screen = screen_with_history();
+        let offset = screen_history_rows(&mut screen);
+        screen.set_scrollback(offset);
+        let text = extract_rows(&mut screen, Cell { row: 0, col: 1 }, Cell { row: 0, col: 3 }, &[]);
+        assert_eq!(text, "irs");
     }
 }

@@ -11,7 +11,7 @@ use team::{Role, Task, TaskStatus};
 
 use std::{
     collections::BTreeMap,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Cursor, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{Arc, Mutex},
@@ -23,6 +23,27 @@ use serde_json::{Value, json};
 
 use super::{App, Bus, Msg, editor::render_markdown, util};
 use crate::{host::Host, theme};
+
+#[derive(Clone)]
+struct ClipboardImage {
+    data: String,
+    mime_type: String,
+    name: String,
+}
+
+impl ClipboardImage {
+    fn rpc_content(&self) -> Value {
+        json!({ "type": "image", "data": self.data, "mimeType": self.mime_type })
+    }
+}
+
+fn prompt_command(kind: &str, text: String, images: &[ClipboardImage]) -> Value {
+    let mut command = json!({ "type": kind, "message": text });
+    if !images.is_empty() {
+        command["images"] = Value::Array(images.iter().map(ClipboardImage::rpc_content).collect());
+    }
+    command
+}
 
 pub enum Item {
     User(String),
@@ -62,7 +83,8 @@ pub struct AgentTab {
     generation: u64,
     ready: bool,
     history_loading: bool,
-    startup_prompt: Option<String>,
+    startup_prompt: Option<(String, Vec<ClipboardImage>)>,
+    pending_images: Vec<ClipboardImage>,
     pub title: String,
     child: Option<Child>,
     stdin: Option<Arc<Mutex<ChildStdin>>>,
@@ -198,7 +220,7 @@ mod tests {
         agent.compacting = true;
         agent.steering_queue.push("queued".into());
         agent.follow_up_queue.push("later".into());
-        agent.startup_prompt = Some("unsent".into());
+        agent.startup_prompt = Some(("unsent".into(), Vec::new()));
         agent.handle(serde_json::json!({ "type": "__exit" }));
         assert!(agent.exited.is_some());
         assert!(!agent.busy(), "exit must clear transient state so restart is available");
@@ -227,6 +249,49 @@ mod tests {
         agent.expire_requests(&eframe::egui::Context::default());
         assert_eq!(agent.requests.len(), 1);
         assert_eq!(agent.requests[0].id, "live");
+    }
+
+    #[test]
+    fn prompt_command_includes_clipboard_images_for_pi_rpc() {
+        let image = super::ClipboardImage { data: "cG5n".into(), mime_type: "image/png".into(), name: "clipboard.png".into() };
+        let command = super::prompt_command("prompt", "Inspect this".into(), &[image]);
+        assert_eq!(command["type"], "prompt");
+        assert_eq!(command["message"], "Inspect this");
+        assert_eq!(command["images"][0]["type"], "image");
+        assert_eq!(command["images"][0]["data"], "cG5n");
+        assert_eq!(command["images"][0]["mimeType"], "image/png");
+    }
+
+    #[test]
+    fn clipboard_file_uri_becomes_a_file_path() {
+        let Ok(cwd) = std::env::current_dir() else { panic!("current directory is unavailable") };
+        let path = cwd.join("Cargo.toml");
+        let Ok(uri) = url::Url::from_file_path(path.clone()) else { panic!("test path cannot be encoded as a file URL") };
+        let text = format!("copy\n{}", uri);
+        assert_eq!(super::clipboard_file_paths(&text, &cwd.to_string_lossy()), Some(vec![path.to_string_lossy().into_owned()]));
+    }
+
+    #[test]
+    fn clipboard_pixels_are_encoded_as_png_image_content() {
+        let image = super::encode_clipboard_image(1, 1, vec![255, 0, 128, 255]);
+        assert!(image.is_some(), "valid one-pixel image should encode");
+        let Some(image) = image else { return };
+        assert_eq!(image.mime_type, "image/png");
+        assert!(image.data.starts_with("iVBORw0KGgo"));
+        assert_eq!(image.name, "clipboard.png");
+        assert!(super::encode_clipboard_image(0, 1, Vec::new()).is_none());
+    }
+
+    #[test]
+    fn assistant_text_joins_text_blocks_and_excludes_thinking() {
+        use super::Block;
+        let blocks = [
+            (0, Block::Text("First paragraph".into())),
+            (1, Block::Thinking("private reasoning".into())),
+            (2, Block::Text("Second paragraph".into())),
+        ]
+        .into();
+        assert_eq!(super::assistant_text(&blocks), "First paragraph\nSecond paragraph");
     }
 
     #[test]
@@ -428,6 +493,8 @@ pub fn ensure_pi_mcp_entry() -> Result<bool, String> {
 
 pub struct LaunchOptions {
     pub pi_command: String,
+    pub pi_entry: String,
+    pub pi_runtime: String,
     pub sandbox: bool,
     pub extra_args: Vec<String>,
     pub resume: bool,
@@ -444,6 +511,8 @@ impl LaunchOptions {
     pub fn from_config(config: &crate::config::Config, resume: bool) -> Self {
         Self {
             pi_command: config.pi_command.clone(),
+            pi_entry: config.pi_entry.clone(),
+            pi_runtime: config.pi_runtime.clone(),
             sandbox: config.agent_sandbox,
             extra_args: config.pi_args.clone(),
             resume,
@@ -819,6 +888,7 @@ impl AgentTab {
             ready: false,
             history_loading: options.session.is_some(),
             startup_prompt: None,
+            pending_images: Vec::new(),
             title: t!("π Agent").into(),
             child: None,
             stdin: None,
@@ -949,16 +1019,27 @@ impl AgentTab {
             tab.sandboxed = true;
             let mut command = Command::new(bwrap);
             command.args(sandbox_args(&cwd));
-            command.arg("--").arg(&pi).args(&pi_args);
+            command.arg("--").arg(&pi);
+            if !options.pi_entry.is_empty() {
+                command.arg(&options.pi_entry);
+            }
+            command.args(&pi_args);
             command
         } else {
             let mut command = Command::new(&pi);
+            if !options.pi_entry.is_empty() {
+                command.arg(&options.pi_entry);
+            }
             command.args(&pi_args);
             command
         };
+        let mut path = crate::host::local_path();
+        if !options.pi_runtime.is_empty() {
+            path = format!("{}{}{}", options.pi_runtime, crate::platform::PATH_SEPARATOR, path);
+        }
         command
             .current_dir(&cwd)
-            .env("PATH", crate::host::local_path())
+            .env("PATH", path)
             .env("LUMEN_PROJECT_ROOT", root)
             .env("LUMEN_AGENT_ID", id.to_string())
             .stdin(Stdio::piped())
@@ -1214,6 +1295,10 @@ impl AgentTab {
     }
 
     pub fn prompt(&mut self, text: String) {
+        self.prompt_with_images(text, Vec::new());
+    }
+
+    fn prompt_with_images(&mut self, text: String, images: Vec<ClipboardImage>) {
         if self.team_paused {
             self.items.push(Item::Notice { text: t!("Resume the group before assigning work").into(), error: true });
             return;
@@ -1227,11 +1312,11 @@ impl AgentTab {
         }
         if !self.ready {
             if self.startup_prompt.is_none() {
-                self.startup_prompt = Some(text);
+                self.startup_prompt = Some((text, images));
             }
             return;
         }
-        let mut command = json!({ "type": "prompt", "message": text });
+        let mut command = prompt_command("prompt", text, &images);
         if self.streaming {
             command["streamingBehavior"] = json!("steer");
         }
@@ -1246,6 +1331,10 @@ impl AgentTab {
     fn model_label(model: &Value) -> String {
         let name = model.get("name").and_then(Value::as_str).or(model.get("id").and_then(Value::as_str)).unwrap_or("?");
         name.to_string()
+    }
+
+    pub(crate) fn available_models(&self) -> &[Value] {
+        &self.models
     }
 
     /// Applies one record from pi's stdout. Returns true when a tool that
@@ -1346,12 +1435,12 @@ impl AgentTab {
                     _ => {}
                 }
                 if self.ready
-                    && let Some(text) = self.startup_prompt.take()
+                    && let Some((text, images)) = self.startup_prompt.take()
                 {
                     if let Some(task) = self.task.as_mut().filter(|t| t.status == TaskStatus::Pending) {
                         task.start_item = self.items.len();
                     }
-                    self.prompt(text);
+                    self.prompt_with_images(text, images);
                 }
             }
             "agent_start" => {
@@ -1675,6 +1764,87 @@ fn sandbox_args(project: &Path) -> Vec<String> {
     args
 }
 
+fn clipboard_image() -> Option<ClipboardImage> {
+    let mut clipboard = arboard::Clipboard::new().ok()?;
+    let image = clipboard.get_image().ok()?;
+    encode_clipboard_image(image.width, image.height, image.bytes.into_owned())
+}
+
+fn encode_clipboard_image(width: usize, height: usize, pixels: Vec<u8>) -> Option<ClipboardImage> {
+    let width = u32::try_from(width).ok()?;
+    let height = u32::try_from(height).ok()?;
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 20_000_000 {
+        return None;
+    }
+    let rgba = image::RgbaImage::from_raw(width, height, pixels)?;
+    let mut encoded = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(rgba).write_to(&mut encoded, image::ImageFormat::Png).ok()?;
+    if encoded.get_ref().len() > 25 * 1024 * 1024 {
+        return None;
+    }
+    Some(ClipboardImage {
+        data: crate::control::mcp::base64(encoded.get_ref()),
+        mime_type: "image/png".into(),
+        name: "clipboard.png".into(),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn clipboard_file_list() -> Option<String> {
+    for (program, args) in [
+        ("wl-paste", &["--no-newline", "--type", "text/uri-list"][..]),
+        ("xclip", &["-selection", "clipboard", "-o", "-t", "text/uri-list"][..]),
+        ("xclip", &["-selection", "clipboard", "-o", "-t", "x-special/gnome-copied-files"][..]),
+    ] {
+        let Ok(output) = Command::new(program).args(args).output() else { continue };
+        if output.status.success()
+            && output.stdout.len() <= 1024 * 1024
+            && let Ok(text) = String::from_utf8(output.stdout)
+            && !text.trim().is_empty()
+        {
+            return Some(text);
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn clipboard_file_list() -> Option<String> {
+    None
+}
+
+fn clipboard_file_paths(text: &str, cwd: &str) -> Option<Vec<String>> {
+    let mut paths = Vec::new();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')) {
+        if matches!(line, "copy" | "cut") {
+            continue;
+        }
+        let path = if line.starts_with("file://") {
+            url::Url::parse(line).ok()?.to_file_path().ok()?
+        } else {
+            let path = PathBuf::from(line.trim_matches(['"', '\'']));
+            let candidate = if path.is_absolute() { path } else { Path::new(cwd).join(path) };
+            if !candidate.is_file() {
+                continue;
+            }
+            candidate
+        };
+        paths.push(path.to_string_lossy().into_owned());
+    }
+    (!paths.is_empty()).then_some(paths)
+}
+
+fn attach_path_to_input(agent: &mut AgentTab, path: &str) {
+    let path = PathBuf::from(path);
+    let path = std::fs::canonicalize(&path).unwrap_or(path);
+    let display = path.strip_prefix(&agent.cwd).unwrap_or(&path).to_string_lossy().replace('`', "\\`");
+    if !agent.input.is_empty() && !agent.input.ends_with(' ') && !agent.input.ends_with('\n') {
+        agent.input.push(' ');
+    }
+    agent.input.push_str(&format!("`{display}` "));
+    agent.focus_input = true;
+}
+
 fn content_text(content: &Value) -> String {
     match content {
         Value::String(s) => s.clone(),
@@ -1689,6 +1859,17 @@ fn content_text(content: &Value) -> String {
             .join("\n"),
         _ => String::new(),
     }
+}
+
+fn assistant_text(blocks: &BTreeMap<usize, Block>) -> String {
+    blocks
+        .values()
+        .filter_map(|block| match block {
+            Block::Text(text) if !text.trim().is_empty() => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn assistant_blocks(message: &Value) -> (BTreeMap<usize, Block>, Option<String>) {
@@ -1742,6 +1923,7 @@ enum Action {
     SetThinking(String),
     OpenFile(String),
     OpenLink(String),
+    AttachFiles(Vec<String>),
     RunInTerminal(String),
     ToggleDock,
     Hide,
@@ -2003,11 +2185,19 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                             .inner_margin(egui::Margin::symmetric(12, 8))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                ui.label(RichText::new(text.as_str()).color(theme::TEXT));
+                                ui.add(egui::Label::new(RichText::new(text.as_str()).color(theme::TEXT)).selectable(true));
                             });
                     }
                     Item::Assistant { blocks, error } => {
+                        let response_text = assistant_text(blocks);
                         egui::Frame::new().inner_margin(egui::Margin::symmetric(12, 6)).show(ui, |ui| {
+                            if !response_text.trim().is_empty() {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button(t!("Copy response")).clicked() {
+                                        ui.ctx().copy_text(response_text.clone());
+                                    }
+                                });
+                            }
                             for block in blocks.values() {
                                 match block {
                                     Block::Text(text) if !text.trim().is_empty() => {
@@ -2019,14 +2209,19 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                                         egui::CollapsingHeader::new(RichText::new(t!("thinking")).small().color(theme::FAINT_TEXT))
                                             .id_salt(("thinking", agent.id, i))
                                             .show(ui, |ui| {
-                                                ui.label(RichText::new(text.as_str()).small().italics().color(theme::MUTED_TEXT));
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new(text.as_str()).small().italics().color(theme::MUTED_TEXT),
+                                                    )
+                                                    .selectable(true),
+                                                );
                                             });
                                     }
                                     _ => {}
                                 }
                             }
                             if let Some(error) = error {
-                                ui.label(RichText::new(error.as_str()).color(theme::ERROR));
+                                ui.add(egui::Label::new(RichText::new(error.as_str()).color(theme::ERROR)).selectable(true));
                             }
                         });
                     }
@@ -2092,11 +2287,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                                     };
                                     let start = if tool.done { 0 } else { lines.len() - shown };
                                     let text = lines[start..start + shown].join("\n");
-                                    ui.label(RichText::new(text).monospace().size(font_size - 2.5).color(if tool.is_error {
-                                        theme::ERROR
-                                    } else {
-                                        theme::MUTED_TEXT
-                                    }));
+                                    ui.add(
+                                        egui::Label::new(RichText::new(text).monospace().size(font_size - 2.5).color(if tool.is_error {
+                                            theme::ERROR
+                                        } else {
+                                            theme::MUTED_TEXT
+                                        }))
+                                        .selectable(true),
+                                    );
                                     if lines.len() > shown {
                                         let label = t!("… {n1} more lines", n1 = lines.len() - shown);
                                         if ui
@@ -2119,7 +2317,14 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                     Item::Notice { text, error } => {
                         ui.horizontal(|ui| {
                             ui.add_space(12.0);
-                            ui.label(RichText::new(text.as_str()).small().color(if *error { theme::ERROR } else { theme::MUTED_TEXT }));
+                            ui.add(
+                                egui::Label::new(RichText::new(text.as_str()).small().color(if *error {
+                                    theme::ERROR
+                                } else {
+                                    theme::MUTED_TEXT
+                                }))
+                                .selectable(true),
+                            );
                         });
                     }
                 }
@@ -2137,7 +2342,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.add_space(12.0);
-                    ui.label(RichText::new(reason.as_str()).color(theme::ERROR));
+                    ui.add(egui::Label::new(RichText::new(reason.as_str()).color(theme::ERROR)).selectable(true));
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(12.0);
@@ -2171,25 +2376,51 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
         agent.answer(0, response);
     }
 
-    // Slash command suggestions.
-    let mut insert_command = None;
-    if agent.input.starts_with('/') && !agent.input.contains(' ') && !agent.commands.is_empty() {
-        let filter = agent.input[1..].to_lowercase();
-        let matches: Vec<&(String, String)> = agent.commands.iter().filter(|(n, _)| n.to_lowercase().contains(&filter)).take(6).collect();
-        for (name, description) in matches {
-            let response = ui
-                .add(egui::Button::new(RichText::new(format!("/{name}  {}", util::truncate_middle(description, 70))).small()).frame(false));
-            if response.clicked() {
-                insert_command = Some(format!("/{name} "));
+    let running = agent.is_running() && agent.ready && agent.requests.is_empty();
+    let input_id = egui::Id::unique(("agent_input", agent.id));
+    if ui.ctx().memory(|memory| memory.has_focus(input_id)) {
+        let paste_shortcut = ui.input(|input| {
+            input.events.iter().any(
+                |event| matches!(event, egui::Event::Key { key: Key::V, pressed: true, repeat: false, modifiers, .. } if modifiers.command),
+            )
+        });
+        let mut consume_paste = false;
+        if paste_shortcut && let Some(image) = clipboard_image() {
+            agent.pending_images.push(image);
+            consume_paste = true;
+        }
+        if !consume_paste
+            && paste_shortcut
+            && let Some(text) = clipboard_file_list()
+            && let Some(paths) = clipboard_file_paths(&text, &agent.cwd)
+        {
+            for path in paths {
+                attach_path_to_input(agent, &path);
+            }
+            consume_paste = true;
+        }
+        if !consume_paste {
+            let pasted_text: Vec<String> = ui.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .filter_map(|event| match event {
+                        egui::Event::Paste(text) => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            });
+            if let Some(paths) = pasted_text.iter().find_map(|text| clipboard_file_paths(text, &agent.cwd)) {
+                for path in paths {
+                    attach_path_to_input(agent, &path);
+                }
+                consume_paste = true;
             }
         }
+        if consume_paste {
+            ui.ctx().input_mut(|input| input.events.retain(|event| !matches!(event, egui::Event::Paste(_))));
+        }
     }
-    if let Some(command) = insert_command {
-        agent.input = command;
-        agent.focus_input = true;
-    }
-
-    let running = agent.is_running() && agent.ready && agent.requests.is_empty();
     let hint = if agent.streaming {
         t!("Steer while it works (Enter), Alt+Enter — after it finishes")
     } else {
@@ -2197,12 +2428,40 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
     };
     let editor = ui.add_enabled(
         running,
-        egui::TextEdit::multiline(&mut agent.input)
-            .hint_text(hint)
-            .desired_rows(3)
-            .desired_width(f32::INFINITY)
-            .id(egui::Id::unique(("agent_input", agent.id))),
+        egui::TextEdit::multiline(&mut agent.input).hint_text(hint).desired_rows(3).desired_width(f32::INFINITY).id(input_id),
     );
+
+    // Keep command suggestions in a foreground popup so they don't consume the
+    // composer's fixed height and push the input field off the bottom.
+    let suggestions: Vec<(String, String)> = if agent.input.starts_with('/') && !agent.input.contains(' ') {
+        let filter = agent.input[1..].to_lowercase();
+        agent.commands.iter().filter(|(name, _)| name.to_lowercase().contains(&filter)).take(6).cloned().collect()
+    } else {
+        Vec::new()
+    };
+    if !suggestions.is_empty() {
+        let mut insert_command = None;
+        let editor_rect = editor.rect;
+        egui::Area::new(egui::Id::unique(("agent_slash_commands", agent.id)))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .fixed_pos(egui::pos2(editor_rect.left(), editor_rect.top() - 4.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(editor_rect.width().max(180.0));
+                    for (name, description) in &suggestions {
+                        let label = format!("/{name}  {}", util::truncate_middle(description, 70));
+                        if ui.add(egui::Button::new(RichText::new(label).small()).frame(false)).clicked() {
+                            insert_command = Some(format!("/{name} "));
+                        }
+                    }
+                });
+            });
+        if let Some(command) = insert_command {
+            agent.input = command;
+            agent.focus_input = true;
+        }
+    }
     if agent.focus_input {
         editor.request_focus();
         agent.focus_input = false;
@@ -2223,12 +2482,34 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
             actions.push(Action::Abort);
         }
     }
+    if !agent.pending_images.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            let mut remove = None;
+            for (index, image) in agent.pending_images.iter().enumerate() {
+                ui.label(RichText::new(format!("📎 {}", image.name)).small());
+                if ui.small_button("×").on_hover_text(t!("Remove attachment")).clicked() {
+                    remove = Some(index);
+                }
+            }
+            if let Some(index) = remove {
+                agent.pending_images.remove(index);
+            }
+        });
+    }
     ui.horizontal(|ui| {
+        if ui.small_button(t!("Attach file…")).clicked()
+            && let Some(paths) = rfd::FileDialog::new().set_directory(&agent.cwd).pick_files()
+        {
+            actions.push(Action::AttachFiles(paths.into_iter().map(|path| path.to_string_lossy().into_owned()).collect()));
+        }
         if agent.streaming {
             if ui.button(RichText::new(t!("■ Stop")).color(theme::ERROR)).on_hover_text("Esc").clicked() {
                 actions.push(Action::Abort);
             }
-        } else if ui.add_enabled(running && !agent.input.trim().is_empty(), egui::Button::new(t!("Send ⏎"))).clicked() {
+        } else if ui
+            .add_enabled(running && (!agent.input.trim().is_empty() || !agent.pending_images.is_empty()), egui::Button::new(t!("Send ⏎")))
+            .clicked()
+        {
             let text = std::mem::take(&mut agent.input);
             actions.push(Action::Send(text));
         }
@@ -2293,12 +2574,28 @@ fn apply(app: &mut App, loc: Loc, action: Action) {
             app.agent_dock_open = false;
             return;
         }
+        Action::AttachFiles(paths) => {
+            if let Some(agent) = at(app, loc) {
+                for path in paths {
+                    attach_path_to_input(agent, &path);
+                }
+            }
+            return;
+        }
         _ => {}
     }
     let Some(agent) = at(app, loc) else { return };
     match action {
-        Action::Send(text) => agent.prompt(text),
-        Action::FollowUp(text) => agent.send(json!({ "type": "follow_up", "message": text })),
+        Action::Send(text) => {
+            let images = std::mem::take(&mut agent.pending_images);
+            let text = if text.trim().is_empty() && !images.is_empty() { t!("Please inspect the attached image.").into() } else { text };
+            agent.prompt_with_images(text, images);
+        }
+        Action::FollowUp(text) => {
+            let images = std::mem::take(&mut agent.pending_images);
+            let text = if text.trim().is_empty() && !images.is_empty() { t!("Please inspect the attached image.").into() } else { text };
+            agent.send(prompt_command("follow_up", text, &images));
+        }
         Action::Abort => agent.abort(),
         Action::RenameSession(name) => agent.send(json!({ "type": "set_session_name", "name": name })),
         Action::Compact => agent.send(json!({ "type": "compact" })),
