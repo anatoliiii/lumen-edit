@@ -1,7 +1,7 @@
 use crate::{
     inline_completion::{
-        Context, Settings,
-        provider::{CompletionProvider, OpenRouterProvider, Output},
+        Context, ProviderMode, Settings,
+        provider::{CompletionProvider, InceptionFimProvider, OpenRouterProvider, Output},
         semantic::{self, Snapshot},
     },
     text::{Buffer, Selection},
@@ -60,7 +60,15 @@ pub struct Metrics {
     pub cost_usd: f64,
     pub reserved_usd: f64,
     pub latency_ms: u128,
+    pub debounce_ms: u128,
+    pub context_prepare_ms: u128,
+    pub http_request_ms: u128,
+    pub total_latency_ms: u128,
+    pub display_ms: u128,
+    pub cached_tokens: u64,
     pub cache_hits: u64,
+    pub rejection_reason: String,
+    latency_samples: VecDeque<u128>,
 }
 struct Done {
     identity: Identity,
@@ -68,6 +76,8 @@ struct Done {
     context: Option<Context>,
     result: Result<Output, String>,
     latency: Duration,
+    debounce_ms: u128,
+    context_prepare_ms: u128,
     charged: bool,
 }
 struct Active {
@@ -96,6 +106,7 @@ impl CompletionCache {
         context.prefix.hash(&mut hash);
         context.suffix.hash(&mut hash);
         settings.model.hash(&mut hash);
+        settings.provider.hash(&mut hash);
         settings.temperature.to_bits().hash(&mut hash);
         settings.max_tokens.hash(&mut hash);
         hash.finish()
@@ -167,12 +178,9 @@ impl Controller {
             if self.observed.as_ref().map(|i| &i.project) != identity.as_ref().map(|i| &i.project) {
                 self.cache.entries.clear();
             }
-            // Finish an already-started request while typing in this document.
-            // Its serial is invalidated below; the result cannot be displayed.
-            // Closing/changing documents or revoking consent still cancels it.
-            let same_document =
-                self.observed.as_ref().zip(identity.as_ref()).is_some_and(|(old, new)| old.project == new.project && old.doc == new.doc);
-            if !same_document && let Some(active) = &self.active {
+            // Any cursor, document or buffer identity change cancels the active
+            // request; the serial check independently rejects late responses.
+            if let Some(active) = &self.active {
                 active.cancel.store(true, Ordering::Relaxed);
             }
             self.serial += 1;
@@ -227,7 +235,19 @@ impl Controller {
             if done.serial != self.serial && self.status == "AI completion…" {
                 self.status.clear();
             }
-            self.metrics.latency_ms = done.latency.as_millis();
+            let total_latency_ms = done.debounce_ms + done.latency.as_millis();
+            self.metrics.latency_ms = total_latency_ms;
+            self.metrics.total_latency_ms = total_latency_ms;
+            self.metrics.display_ms = total_latency_ms;
+            self.metrics.debounce_ms = done.debounce_ms;
+            self.metrics.context_prepare_ms = done.context_prepare_ms;
+            self.metrics.http_request_ms = match &done.result {
+                Ok(output) => output.http_request_ms,
+                Err(_) if done.charged => done.latency.as_millis().saturating_sub(done.context_prepare_ms),
+                Err(_) => 0,
+            };
+            self.metrics.latency_samples.push_back(total_latency_ms);
+            self.metrics.latency_samples.truncate(128);
             if !done.charged {
                 self.recent.retain(|(serial, _)| *serial != done.serial);
             }
@@ -243,6 +263,7 @@ impl Controller {
                     }
                     self.metrics.input_tokens += output.input_tokens;
                     self.metrics.output_tokens += output.output_tokens;
+                    self.metrics.cached_tokens += output.cached_tokens;
                     if let Some(cost) = output.cost {
                         self.metrics.cost_usd += cost;
                         if done.charged {
@@ -255,7 +276,10 @@ impl Controller {
                         }
                         self.status.clear();
                         if !output.text.is_empty() {
+                            self.metrics.rejection_reason.clear();
                             ghost = Some(Ghost { identity: done.identity, text: output.text });
+                        } else {
+                            self.metrics.rejection_reason = output.rejection_reason.unwrap_or_else(|| "empty FIM response".into());
                         }
                     }
                 }
@@ -268,6 +292,7 @@ impl Controller {
                         self.metrics.errors += 1;
                     }
                     if done.serial == self.serial {
+                        self.metrics.rejection_reason = error.clone();
                         self.status = error;
                     }
                 }
@@ -305,13 +330,21 @@ impl Controller {
         let tx = self.tx.clone();
         self.serial += 1;
         let serial = self.serial;
+        let debounce_ms = self.since.elapsed().as_millis();
         self.recent.push_back((serial, Instant::now()));
         self.status = "AI completion…".into();
         std::thread::spawn(move || {
             let started = Instant::now();
+            let context_started = Instant::now();
             let mut context = None;
             let mut charged = false;
-            let result = semantic::collect(&snapshot, &cancel)
+            let collected = if settings.provider == ProviderMode::OpenRouterChat {
+                semantic::collect(&snapshot, &cancel)
+            } else {
+                semantic::collect_local(&snapshot)
+            };
+            let context_prepare_ms = context_started.elapsed().as_millis();
+            let result = collected
                 .and_then(|collected| {
                     if cancel.load(Ordering::Relaxed) {
                         return Err("Cancelled".into());
@@ -321,7 +354,10 @@ impl Controller {
                         context = Some(collected);
                         return Ok(Output { text: text.clone(), ..Default::default() });
                     }
-                    let provider = OpenRouterProvider::from_env()?;
+                    let provider: Box<dyn CompletionProvider> = match settings.provider {
+                        ProviderMode::MercuryEdit2 => Box::new(InceptionFimProvider::from_project(&snapshot.root)?),
+                        ProviderMode::OpenRouterChat => Box::new(OpenRouterProvider::from_env()?),
+                    };
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
@@ -337,13 +373,27 @@ impl Controller {
                     output.text = super::validation::normalize(snapshot.lang, &source, at, &output.text);
                     if !super::validation::acceptable(snapshot.lang, &source, at, &output.text) {
                         output.text.clear();
+                        output.rejection_reason = Some("completion failed syntax validation".into());
                     }
                     output
                 });
-            let _ = tx.send(Done { identity, serial, context, result, latency: started.elapsed(), charged });
+            let _ =
+                tx.send(Done { identity, serial, context, result, latency: started.elapsed(), debounce_ms, context_prepare_ms, charged });
             busy.store(false, Ordering::Release);
             ctx.request_repaint();
         });
+    }
+}
+
+impl Metrics {
+    pub fn latency_percentiles(&self) -> (u128, u128) {
+        if self.latency_samples.is_empty() {
+            return (0, 0);
+        }
+        let mut values: Vec<_> = self.latency_samples.iter().copied().collect();
+        values.sort_unstable();
+        let at = |p: usize| values[((values.len() - 1) * p).div_ceil(100)];
+        (at(50), at(95))
     }
 }
 impl Drop for Controller {
@@ -399,6 +449,8 @@ mod tests {
             context: None,
             result: Ok(Output { text: "late".into(), ..Default::default() }),
             latency: Duration::ZERO,
+            debounce_ms: 0,
+            context_prepare_ms: 0,
             charged: false,
         })
         .unwrap();
@@ -439,7 +491,7 @@ mod tests {
         assert!(!c.ready(&settings, true));
     }
     #[test]
-    fn typing_keeps_network_request_but_discards_its_stale_answer() {
+    fn typing_cancels_request_and_discards_its_stale_answer() {
         let b = Buffer::new("client.");
         let old = identity(&b);
         let mut next = old.clone();
@@ -452,13 +504,15 @@ mod tests {
         let busy = Arc::new(AtomicBool::new(true));
         c.active = Some(Active { cancel: cancel.clone(), busy: busy.clone() });
         c.observe(Some(next), true);
-        assert!(!cancel.load(Ordering::Relaxed));
+        assert!(cancel.load(Ordering::Relaxed));
         c.tx.send(Done {
             identity: old,
             serial,
             context: None,
             result: Ok(Output { text: "stale()".into(), cost: Some(0.001), ..Default::default() }),
             latency: Duration::ZERO,
+            debounce_ms: 0,
+            context_prepare_ms: 0,
             charged: true,
         })
         .unwrap();
@@ -500,8 +554,17 @@ mod tests {
         c.observe(Some(id.clone()), true);
         let serial = c.serial;
         c.recent.push_back((serial, Instant::now()));
-        c.tx.send(Done { identity: id, serial, context: None, result: Err("Cancelled".into()), latency: Duration::ZERO, charged: false })
-            .unwrap();
+        c.tx.send(Done {
+            identity: id,
+            serial,
+            context: None,
+            result: Err("Cancelled".into()),
+            latency: Duration::ZERO,
+            debounce_ms: 0,
+            context_prepare_ms: 0,
+            charged: false,
+        })
+        .unwrap();
         c.poll(&Settings::default());
         assert!(c.recent.is_empty());
         assert_eq!(c.metrics.requests, 0);

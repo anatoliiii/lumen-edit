@@ -2,3 +2,4 @@
 /dist
 *.swp
 *.tmp
+.env-fim

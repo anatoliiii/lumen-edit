@@ -606,7 +606,7 @@ pub fn settings_window(ctx: &egui::Context, app: &mut App) {
         ui.separator();
         ui.collapsing(t!("AI Inline Completion"), |ui| {
             changed |= ui.checkbox(&mut config.inline_completion.paused, t!("Pause AI completion in all projects")).changed();
-            ui.label(t!("Code context is sent to OpenRouter only for allowed projects."));
+            ui.label(t!("Code context is sent only to the selected provider for allowed projects."));
             if let Some(key) = &completion_project {
                 let mut enabled = config.inline_completion.projects.contains(key);
                 if ui.checkbox(&mut enabled, t!("Allow cloud completion for this project")).changed() {
@@ -615,18 +615,46 @@ pub fn settings_window(ctx: &egui::Context, app: &mut App) {
                     changed = true;
                 }
             } else {ui.label(t!("Open a local project to allow cloud completion."));}
-            ui.label(t!("OpenRouter key: Pi credentials, then OPENROUTER_API_KEY. No key is copied."));
+            egui::ComboBox::from_label(t!("Provider")).selected_text(match config.inline_completion.provider {
+                crate::inline_completion::ProviderMode::MercuryEdit2 => t!("Mercury Edit 2 · FIM"),
+                crate::inline_completion::ProviderMode::OpenRouterChat => t!("OpenRouter · Chat fallback"),
+            }).show_ui(ui, |ui| {
+                changed |= ui.selectable_value(&mut config.inline_completion.provider, crate::inline_completion::ProviderMode::MercuryEdit2, t!("Mercury Edit 2 · FIM")).changed();
+                changed |= ui.selectable_value(&mut config.inline_completion.provider, crate::inline_completion::ProviderMode::OpenRouterChat, t!("OpenRouter · Chat fallback")).changed();
+            });
+            if config.inline_completion.provider == crate::inline_completion::ProviderMode::MercuryEdit2 {
+                ui.label(t!("FIM endpoint: FIM_PROVIDER + /v1/fim/completions · model mercury-edit-2"));
+                ui.label(t!("Key: INCEPTION_API_KEY from environment or project .env-fim; it is never copied."));
+            } else {
+                ui.label(t!("OpenRouter key: Pi credentials, then OPENROUTER_API_KEY. No key is copied."));
+            }
             egui::Grid::new("inline_completion_settings").num_columns(2).show(ui, |ui| {
-                ui.label(t!("Model"));changed |= ui.text_edit_singleline(&mut config.inline_completion.model).changed();ui.end_row();
+                if config.inline_completion.provider == crate::inline_completion::ProviderMode::MercuryEdit2 {
+                    ui.label(t!("Model")); ui.label("mercury-edit-2"); ui.end_row();
+                } else {
+                    ui.label(t!("Model"));changed |= ui.text_edit_singleline(&mut config.inline_completion.model).changed();ui.end_row();
+                }
                 ui.label("Temperature");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.temperature,0.0..=1.0)).changed();ui.end_row();
-                ui.label("Max tokens");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.max_tokens,16..=512)).changed();ui.end_row();
+                ui.label("Max tokens");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.max_tokens,1..=32)).changed();ui.end_row();
                 ui.label("Requests / minute");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.requests_per_minute,1..=60)).changed();ui.end_row();
                 ui.label("Session budget, USD");changed |= ui.add(egui::DragValue::new(&mut config.inline_completion.session_budget_usd).range(0.0..=100.0).speed(0.1)).changed();ui.end_row();
             });
             ui.label(t!("Tab accepts; Esc dismisses; Ctrl+Alt+Space requests AI completion."));
             let m=&app.inline_completion.metrics;
-            ui.label(format!("Requests {} · success {} · errors {} · cache {} · latency {} ms\nAccepted {} · rejected {} · tokens {} / {}\nCost ${:.4} · reserved ${:.4}",m.requests,m.success,m.errors,m.cache_hits,m.latency_ms,m.accepted,m.rejected,m.input_tokens,m.output_tokens,m.cost_usd,m.reserved_usd));
+            let (p50, p95) = m.latency_percentiles();
+            ui.label(format!("Requests {} · success {} · errors {} · cache {}\nDebounce {} ms · context {} ms · HTTP {} ms · display {} ms\nTotal {} ms · p50 {} ms · p95 {} ms\nAccepted {} · rejected {} · tokens {} / {} (cached {})\nCost ${:.4} · reserved ${:.4}",m.requests,m.success,m.errors,m.cache_hits,m.debounce_ms,m.context_prepare_ms,m.http_request_ms,m.display_ms,m.total_latency_ms,p50,p95,m.accepted,m.rejected,m.input_tokens,m.output_tokens,m.cached_tokens,m.cost_usd,m.reserved_usd));
+            if !m.rejection_reason.is_empty() { ui.label(t!("Last completion: {reason}", reason = m.rejection_reason)); }
             if !app.inline_completion.status.is_empty() {ui.label(&app.inline_completion.status);}
+            ui.separator();
+            ui.label(t!("Next Edit Predictions"));
+            ui.label(t!("Manual request: Ctrl+Alt+E. Results open in a review preview; Tab remains FIM."));
+            changed |= ui.add(egui::Slider::new(&mut config.next_edit_region_lines,1..=15).text(t!("Editable lines"))).changed();
+            if !app.next_edit.status.is_empty() { ui.label(&app.next_edit.status); }
+            let (p50,p95)=app.next_edit.metrics.percentiles();
+            ui.small(format!("Next Edit requests {} · errors {} · context {} ms · HTTP {} ms · diff {} ms · total {} ms · p50 {} / p95 {} ms · tokens {} / {} (cached {})",
+                app.next_edit.metrics.requests,app.next_edit.metrics.errors,app.next_edit.metrics.latest.context_prepare_ms,app.next_edit.metrics.latest.http_latency_ms,
+                app.next_edit.metrics.latest.diff_prepare_ms,app.next_edit.metrics.latest.total_latency_ms,p50,p95,app.next_edit.metrics.latest.prompt_tokens,
+                app.next_edit.metrics.latest.completion_tokens,app.next_edit.metrics.latest.cached_tokens));
         });
         ui.separator();
         ui.label(RichText::new(t!("Language servers")).strong());

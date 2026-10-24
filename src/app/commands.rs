@@ -52,6 +52,9 @@ pub enum Command {
     Format,
     TriggerSuggest,
     TriggerInlineCompletion,
+    TriggerNextEdit,
+    AcceptNextEdit,
+    DismissNextEdit,
     ShowHover,
     Undo,
     Redo,
@@ -153,6 +156,9 @@ pub const ALL: &[Command] = &[
     Command::Format,
     Command::TriggerSuggest,
     Command::TriggerInlineCompletion,
+    Command::TriggerNextEdit,
+    Command::AcceptNextEdit,
+    Command::DismissNextEdit,
     Command::ShowHover,
     Command::Undo,
     Command::Redo,
@@ -278,6 +284,9 @@ impl Command {
             Command::CodeActions => t_key!("Quick Fixes…"),
             Command::Format => t_key!("Format Document"),
             Command::TriggerInlineCompletion => t_key!("Request AI Inline Completion"),
+            Command::TriggerNextEdit => t_key!("Request Next Edit Preview"),
+            Command::AcceptNextEdit => t_key!("Accept Next Edit"),
+            Command::DismissNextEdit => t_key!("Dismiss Next Edit"),
             Command::TriggerSuggest => t_key!("Trigger Suggestions"),
             Command::ShowHover => t_key!("Show Hover"),
             Command::Undo => t_key!("Undo"),
@@ -346,6 +355,9 @@ impl Command {
             | Command::CodeActions
             | Command::Format
             | Command::TriggerInlineCompletion
+            | Command::TriggerNextEdit
+            | Command::AcceptNextEdit
+            | Command::DismissNextEdit
             | Command::TriggerSuggest
             | Command::ShowHover
             | Command::Undo

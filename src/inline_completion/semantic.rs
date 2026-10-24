@@ -211,6 +211,19 @@ pub struct Snapshot {
 pub fn collect(snapshot: &Snapshot, cancel: &AtomicBool) -> Result<Context, String> {
     collect_with_budget(snapshot, cancel, Duration::from_millis(650), Duration::from_millis(90))
 }
+
+/// Minimal inline path used by FIM: local safety checks and bounded text only.
+/// It deliberately performs no LSP requests and does not wait for diagnostics.
+pub fn collect_local(snapshot: &Snapshot) -> Result<Context, String> {
+    if !safe_path(&snapshot.root, Path::new(&snapshot.path)) {
+        return Err("File is outside the project or excluded".into());
+    }
+    let context = window(&snapshot.buffer, snapshot.cursor, snapshot.lang.lsp_id());
+    if sensitive(&context.prefix) || sensitive(&context.suffix) {
+        return Err("Possible secret in code context; completion suppressed".into());
+    }
+    Ok(context)
+}
 fn collect_with_budget(snapshot: &Snapshot, cancel: &AtomicBool, budget: Duration, per_method: Duration) -> Result<Context, String> {
     if !safe_path(&snapshot.root, Path::new(&snapshot.path)) {
         return Err("File is outside the project or excluded".into());
@@ -296,6 +309,28 @@ mod tests {
         assert_eq!(c.prefix, b.slice(0..at));
         assert_eq!(c.suffix, b.slice(at..b.len_chars()));
         assert_eq!(lsp::from_position(&b, &lsp::to_position(&b, at, false), false), at);
+    }
+    #[test]
+    fn local_fim_context_preserves_both_sides_without_lsp() {
+        let root = std::env::temp_dir().join(format!("lumen-fim-fast-path-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("main.rs");
+        std::fs::write(&path, "fn f() { let value = ; }").unwrap();
+        let buffer = Buffer::new("fn f() { let value = ; }");
+        let cursor = buffer.text().find("; ").unwrap();
+        let snapshot = Snapshot {
+            buffer,
+            lang: Lang::Rust,
+            cursor,
+            path: path.to_string_lossy().into_owned(),
+            root: root.clone(),
+            clients: Vec::new(),
+            related: Vec::new(),
+        };
+        let context = collect_local(&snapshot).unwrap();
+        assert_eq!(context.prefix, "fn f() { let value = ");
+        assert_eq!(context.suffix, "; }");
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn rank_and_budget() {

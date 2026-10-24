@@ -22,6 +22,7 @@ pub struct Config {
     /// Interface language: `auto` (system locale), `en` or `ru`.
     pub language: String,
     pub inline_completion: crate::inline_completion::Settings,
+    pub next_edit_region_lines: usize,
     pub ui_font_size: f32,
     pub editor_font_size: f32,
     pub terminal_font_size: f32,
@@ -68,6 +69,7 @@ impl Default for Config {
         Self {
             language: "auto".into(),
             inline_completion: Default::default(),
+            next_edit_region_lines: 15,
             ui_font_size: 13.5,
             editor_font_size: 14.0,
             terminal_font_size: 13.5,

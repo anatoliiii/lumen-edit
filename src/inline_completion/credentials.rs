@@ -59,6 +59,71 @@ pub fn openrouter_key() -> Result<String, String> {
         .unwrap_or_else(|| home.join(".pi/agent"));
     from_directory(&dir, |name| std::env::var(name).ok())
 }
+
+/// Resolve Mercury FIM settings without copying them into editor config.
+/// Environment wins per-variable; missing values are read from project-root
+/// `.env-fim`. Values are returned only to the request worker.
+pub fn inception_settings(project_root: &Path) -> Result<(String, String), String> {
+    let file = std::fs::read_to_string(project_root.join(".env-fim")).unwrap_or_default();
+    inception_settings_from(&file, |name| std::env::var(name).ok())
+}
+
+/// Resolve the shared Inception base and append a specialized API route.
+/// This keeps the existing FIM URL semantics while avoiding duplicated `/v1`.
+pub fn inception_route(project_root: &Path, route: &str) -> Result<(String, String), String> {
+    let (fim, key) = inception_settings(project_root)?;
+    Ok((route_from_fim_endpoint(&fim, route), key))
+}
+
+fn route_from_fim_endpoint(fim: &str, route: &str) -> String {
+    let base = fim.strip_suffix("/v1/fim/completions").unwrap_or(fim);
+    let route = format!("/{}/", route.trim_matches('/'));
+    let route = route.trim_end_matches('/');
+    format!("{base}{route}")
+}
+
+fn inception_settings_from(file: &str, env: impl Fn(&str) -> Option<String>) -> Result<(String, String), String> {
+    let mut values = std::collections::HashMap::new();
+    for line in file.lines() {
+        let Some((name, value)) = line.split_once('=') else { continue };
+        let name = name.trim();
+        if !matches!(name, "FIM_PROVIDER" | "INCEPTION_API_KEY") {
+            continue;
+        }
+        let mut value = value.trim();
+        if value.len() >= 2 && ((value.starts_with('"') && value.ends_with('"')) || (value.starts_with('\'') && value.ends_with('\''))) {
+            value = &value[1..value.len() - 1];
+        }
+        values.insert(name.to_string(), value.to_string());
+    }
+    let base = env("FIM_PROVIDER")
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .or_else(|| values.get("FIM_PROVIDER").cloned())
+        .ok_or("FIM_PROVIDER is missing")?;
+    let key = env("INCEPTION_API_KEY")
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .or_else(|| values.get("INCEPTION_API_KEY").cloned())
+        .ok_or("INCEPTION_API_KEY is missing")?;
+    Ok((fim_endpoint(&base)?, key))
+}
+
+fn fim_endpoint(base: &str) -> Result<String, String> {
+    let mut base = base.trim().trim_end_matches('/').to_string();
+    if base.ends_with("/v1/fim/completions") {
+        base.truncate(base.len() - "/v1/fim/completions".len());
+    }
+    if base.ends_with("/v1") {
+        base.truncate(base.len() - 3);
+    }
+    let url = format!("{}/v1/fim/completions", base.trim_end_matches('/'));
+    let parsed = reqwest::Url::parse(&url).map_err(|_| "FIM_PROVIDER is not a valid URL")?;
+    if parsed.scheme() != "https" && parsed.host_str() != Some("127.0.0.1") && parsed.host_str() != Some("localhost") {
+        return Err("FIM_PROVIDER must use HTTPS".into());
+    }
+    Ok(url)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,5 +151,35 @@ mod tests {
             "environment-fixture"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn fim_endpoint_avoids_duplicate_v1() {
+        assert_eq!(fim_endpoint("https://api.inceptionlabs.ai").unwrap(), "https://api.inceptionlabs.ai/v1/fim/completions");
+        assert_eq!(fim_endpoint("https://api.inceptionlabs.ai/v1/").unwrap(), "https://api.inceptionlabs.ai/v1/fim/completions");
+        assert_eq!(
+            fim_endpoint("https://api.inceptionlabs.ai/v1/fim/completions").unwrap(),
+            "https://api.inceptionlabs.ai/v1/fim/completions"
+        );
+        assert!(fim_endpoint("http://example.com").is_err());
+    }
+    #[test]
+    fn fim_environment_overrides_env_file_without_mutating_it() {
+        let file = "FIM_PROVIDER=https://file.example/v1\nINCEPTION_API_KEY=file-secret-fixture\n";
+        let resolved = inception_settings_from(file, |name| match name {
+            "FIM_PROVIDER" => Some("https://env.example".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(resolved.0, "https://env.example/v1/fim/completions");
+        assert_eq!(resolved.1, "file-secret-fixture");
+        assert_eq!(file, "FIM_PROVIDER=https://file.example/v1\nINCEPTION_API_KEY=file-secret-fixture\n");
+    }
+
+    #[test]
+    fn edit_endpoint_reuses_provider_base_without_duplicate_v1() {
+        for base in ["https://api.inceptionlabs.ai", "https://api.inceptionlabs.ai/v1/"] {
+            let fim = fim_endpoint(base).unwrap();
+            assert_eq!(route_from_fim_endpoint(&fim, "/v1/edit/completions"), "https://api.inceptionlabs.ai/v1/edit/completions");
+        }
     }
 }

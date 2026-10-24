@@ -46,6 +46,7 @@ pub struct Document {
     pub media_zoom: Option<f32>,
     /// Parsed CSV rows for the table view, by buffer version.
     pub csv: Option<(u64, std::sync::Arc<Vec<Vec<String>>>)>,
+    pub next_edit_history: std::collections::VecDeque<crate::inline_completion::next_edit::EditHistoryEntry>,
 }
 
 impl Document {
@@ -91,6 +92,7 @@ impl Document {
             media_uri: None,
             media_zoom: None,
             csv: None,
+            next_edit_history: std::collections::VecDeque::new(),
         }
     }
 
@@ -105,6 +107,39 @@ impl Document {
     /// Moves highlight spans and diagnostics along with edits made since the
     /// last frame so they stay in place until fresh results arrive.
     pub fn absorb_edits(&mut self) {
+        for event in self.buffer.take_user_edit_events() {
+            if let Some(last) = self.next_edit_history.back_mut() {
+                if event.typing
+                    && event.before.is_empty()
+                    && !last.after.is_empty()
+                    && event.start == last.start + last.after.chars().count()
+                {
+                    last.after.push_str(&event.after);
+                    continue;
+                }
+                if event.deleting
+                    && event.after.is_empty()
+                    && !last.before.is_empty()
+                    && event.start + event.before.chars().count() == last.start
+                {
+                    last.before = format!("{}{}", event.before, last.before);
+                    last.start = event.start;
+                    continue;
+                }
+            }
+            self.next_edit_history.push_back(crate::inline_completion::next_edit::EditHistoryEntry {
+                start: event.start,
+                before: event.before,
+                after: event.after,
+            });
+            while self.next_edit_history.len() > 5 {
+                self.next_edit_history.pop_front();
+            }
+            let total: usize = self.next_edit_history.iter().map(|e| e.before.len() + e.after.len()).sum();
+            while total > 16 * 1024 && self.next_edit_history.len() > 1 {
+                self.next_edit_history.pop_front();
+            }
+        }
         let byte_edits = self.buffer.take_byte_edits();
         let char_edits = self.buffer.take_char_edits();
         if byte_edits.is_empty() && char_edits.is_empty() {

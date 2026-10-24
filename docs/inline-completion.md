@@ -39,18 +39,30 @@ executed; supply the environment key in that case. Project `.pi` files and
 custom provider endpoints are not read. No credential appears in config.toml,
 completion diagnostics, prompt logs or normal error messages.
 
-The default model is `mistralai/codestral-2508`. Requests use the documented
-[OpenRouter Chat Completions API](https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request),
-without FIM tokens, streaming, tools or agent editing. Temperature and maximum
-output tokens can be changed in Settings. Further defaults in config.toml:
+The default provider is Inception Mercury Edit 2 using its dedicated FIM API.
+For each request Lumen sends the bounded code prefix as `prompt` and the code
+after the cursor as `suffix`; it does not add model tokens or chat messages.
+The configured `FIM_PROVIDER` value is a base URL, so both the host and a host
+ending in `/v1` resolve to `/v1/fim/completions`. Environment variables override
+the same names from the project-root `.env-fim`. The file is ignored by Git and
+its key is never copied into Lumen settings. If the FIM key is missing or the
+service fails, Lumen reports the error; it does not send code to another provider.
+
+OpenRouter Chat Completions remains available only after explicitly selecting
+**OpenRouter · Chat fallback** in Settings. Its model value and OpenRouter key
+are used only in that mode. FIM sends local prefix/suffix without waiting for
+LSP; it does not collect project files or wait for semantic queries.
+Temperature and maximum output tokens can be changed in Settings; FIM output is
+capped at 32 tokens. Further defaults in config.toml:
 
 ```toml
 [inline_completion]
 projects = [] # prefer the per-project consent checkbox
 paused = false
-model = "mistralai/codestral-2508"
+provider = "mercury_edit2"
+model = "mistralai/codestral-2508" # only used by explicit OpenRouter chat fallback
 temperature = 0.1
-max_tokens = 96
+max_tokens = 32
 timeout_ms = 6000
 debounce_ms = 180
 requests_per_minute = 60
@@ -68,9 +80,11 @@ on their usual path. `Ctrl+Space` remains LSP; the separate
 rebound in Keyboard Shortcuts. An explicit AI request closes the LSP popup.
 
 The status bar's **AI** indicator opens settings; **AI …** means a request is
-running, **AI !** exposes the last error on hover. Metrics are available there
-and through the read-only `state.inline_completion` control response. They store
-counts, latency, token usage and cost, never source or generated suggestions.
+running, **AI !** exposes the last error on hover. Settings and the read-only
+`state.inline_completion` control response expose debounce, local context
+preparation, HTTP request, total and display latency, rolling p50/p95, token
+usage, cache hits and the last rejection reason. Metrics never store source,
+generated suggestions or credentials.
 Rejection counts represent explicit Escape dismissal/cancellation.
 
 ## Semantic context actually supplied

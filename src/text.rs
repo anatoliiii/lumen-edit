@@ -1,7 +1,7 @@
 //! Text model of an open document: a rope, multiple selections and undo
 //! history. Positions are char indices into the rope.
 
-use std::{ops::Range, time::Instant};
+use std::{collections::VecDeque, ops::Range, time::Instant};
 
 use ropey::Rope;
 
@@ -43,6 +43,7 @@ struct Transaction {
     after: Vec<Selection>,
     revision_before: u64,
     revision_after: u64,
+    user_history: bool,
 }
 
 /// An edit in byte coordinates, for incremental consumers (highlighting).
@@ -58,6 +59,17 @@ enum EditKind {
     Typing,
     Deleting,
     Other,
+    External,
+    Prediction,
+}
+
+#[derive(Clone, Debug)]
+pub struct UserEditEvent {
+    pub start: usize,
+    pub before: String,
+    pub after: String,
+    pub typing: bool,
+    pub deleting: bool,
 }
 
 pub struct Buffer {
@@ -81,6 +93,7 @@ pub struct Buffer {
     pub insert_spaces: bool,
     pub line_comment: Option<&'static str>,
     pub crlf: bool,
+    user_edit_events: VecDeque<UserEditEvent>,
 }
 
 impl Buffer {
@@ -105,6 +118,7 @@ impl Buffer {
             insert_spaces: indent.map(|(spaces, _)| spaces).unwrap_or(true),
             line_comment: None,
             crlf,
+            user_edit_events: VecDeque::new(),
         }
     }
 
@@ -298,6 +312,18 @@ impl Buffer {
             let end = range.end.min(self.rope.len_chars());
             let start = range.start.min(end);
             let removed = self.rope.slice(start..end).to_string();
+            if !matches!(kind, EditKind::External | EditKind::Prediction) {
+                self.user_edit_events.push_back(UserEditEvent {
+                    start,
+                    before: removed.clone(),
+                    after: text.clone(),
+                    typing: kind == EditKind::Typing,
+                    deleting: kind == EditKind::Deleting,
+                });
+                while self.user_edit_events.len() > 32 {
+                    self.user_edit_events.pop_front();
+                }
+            }
             self.record_byte_edit(start, end, text);
             self.rope.remove(start..end);
             self.rope.insert(start, text);
@@ -312,7 +338,7 @@ impl Buffer {
         let after = self.selections.clone();
 
         let now = Instant::now();
-        let merge = kind != EditKind::Other
+        let merge = matches!(kind, EditKind::Typing | EditKind::Deleting)
             && self.last_edit.is_some_and(|(last, at)| last == kind && now.duration_since(at).as_millis() < 1000)
             && self.redo.is_empty()
             && self.undo.last().is_some_and(|t| t.revision_after == revision_before)
@@ -324,7 +350,14 @@ impl Buffer {
             last.after = after;
             last.revision_after = self.revision;
         } else {
-            self.undo.push(Transaction { changes, before, after, revision_before, revision_after: self.revision });
+            self.undo.push(Transaction {
+                changes,
+                before,
+                after,
+                revision_before,
+                revision_after: self.revision,
+                user_history: !matches!(kind, EditKind::External | EditKind::Prediction),
+            });
             if self.undo.len() > 2000 {
                 self.undo.remove(0);
             }
@@ -341,15 +374,34 @@ impl Buffer {
 
     /// Public entry for edits coming from LSP or tools.
     pub fn apply_edits(&mut self, edits: Vec<(Range<usize>, String)>) {
-        self.apply(edits, EditKind::Other, None);
+        self.apply(edits, EditKind::External, None);
     }
 
     pub fn apply_edits_with_selection(&mut self, edits: Vec<(Range<usize>, String)>, selections: Vec<Selection>) {
         self.apply(edits, EditKind::Other, Some(selections));
     }
 
+    pub fn apply_prediction_mapped(&mut self, edits: Vec<(Range<usize>, String)>) {
+        self.apply(edits, EditKind::Prediction, None);
+    }
+
+    pub fn take_user_edit_events(&mut self) -> Vec<UserEditEvent> {
+        self.user_edit_events.drain(..).collect()
+    }
+
     pub fn undo(&mut self) {
         let Some(transaction) = self.undo.pop() else { return };
+        if transaction.user_history {
+            for change in transaction.changes.iter().rev() {
+                self.user_edit_events.push_back(UserEditEvent {
+                    start: change.start,
+                    before: change.inserted.clone(),
+                    after: change.removed.clone(),
+                    typing: false,
+                    deleting: false,
+                });
+            }
+        }
         for change in transaction.changes.iter().rev() {
             let end = change.start + change.inserted.chars().count();
             self.record_byte_edit(change.start, end, &change.removed);
@@ -365,6 +417,17 @@ impl Buffer {
 
     pub fn redo(&mut self) {
         let Some(transaction) = self.redo.pop() else { return };
+        if transaction.user_history {
+            for change in &transaction.changes {
+                self.user_edit_events.push_back(UserEditEvent {
+                    start: change.start,
+                    before: change.removed.clone(),
+                    after: change.inserted.clone(),
+                    typing: false,
+                    deleting: false,
+                });
+            }
+        }
         for change in &transaction.changes {
             let end = change.start + change.removed.chars().count();
             self.record_byte_edit(change.start, end, &change.inserted);

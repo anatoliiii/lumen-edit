@@ -1,6 +1,15 @@
 //! Inline completion: editor identity and permissions stay outside the provider.
+pub mod next_edit;
 pub mod provider;
 use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderMode {
+    #[default]
+    MercuryEdit2,
+    OpenRouterChat,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -8,6 +17,7 @@ pub struct Settings {
     #[serde(default)]
     pub limits_version: u8,
     pub paused: bool,
+    pub provider: ProviderMode,
     pub model: String,
     pub temperature: f32,
     pub max_tokens: u32,
@@ -25,9 +35,10 @@ impl Default for Settings {
             projects: Vec::new(),
             limits_version: 1,
             paused: false,
+            provider: ProviderMode::MercuryEdit2,
             model: "mistralai/codestral-2508".into(),
             temperature: 0.1,
-            max_tokens: 96,
+            max_tokens: 32,
             timeout_ms: 6000,
             debounce_ms: 180,
             requests_per_minute: 60,
@@ -154,7 +165,7 @@ pub fn tick(app: &mut crate::app::App, ctx: &eframe::egui::Context) {
         if let Some(delay) = app.inline_completion.wake_after(&app.config.inline_completion) {
             ctx.request_repaint_after(delay);
         }
-        if app.inline_completion.ready(&app.config.inline_completion, manual) {
+        if app.inline_completion.ready(&app.config.inline_completion, manual) && !app.next_edit.busy {
             let Some(Tab::Doc(doc)) = app.active_tab.and_then(|i| app.tabs.get_mut(i)) else { return };
             if doc.view.completion.is_some() || doc.view.rename.is_some() || doc.view.code_actions.is_some() || doc.view.find.is_some() {
                 return;
@@ -188,6 +199,75 @@ pub fn tick(app: &mut crate::app::App, ctx: &eframe::egui::Context) {
             app.inline_completion.launch(snapshot, app.config.inline_completion.clone(), ctx.clone());
         }
     }
+}
+
+impl next_edit::Controller {
+    // Keeps preview identity tied to the foreground document and serializes
+    // explicit Next Edit calls with the existing FIM worker.
+    pub fn tick(&mut self, app: &mut crate::app::App, ctx: &eframe::egui::Context) {
+        use crate::app::Tab;
+        let active = app.active_tab.and_then(|i| app.tabs.get(i));
+        let identity =
+            active.and_then(|t| if let Tab::Doc(d) = t { Some((d.id, d.buffer.version, d.buffer.primary().head)) } else { None });
+        if self.busy && self.pending_identity != identity {
+            self.invalidate();
+            self.status = "Next Edit cancelled: active document or cursor changed".into();
+        }
+        if let Some(preview) = self.poll(identity) {
+            if let Some(Tab::Doc(doc)) = app.active_tab.and_then(|i| app.tabs.get_mut(i)) {
+                doc.view.next_edit_preview = Some(preview);
+            }
+            ctx.request_repaint();
+        }
+        for (index, tab) in app.tabs.iter_mut().enumerate() {
+            if let Tab::Doc(doc) = tab {
+                let ident = (doc.id, doc.buffer.version, doc.buffer.primary().head);
+                if doc.view.next_edit_preview.is_some() && (Some(ident) != identity || Some(index) != app.active_tab) {
+                    doc.view.next_edit_preview = None;
+                }
+                if Some(index) != app.active_tab && doc.view.next_edit_requested {
+                    doc.view.next_edit_requested = false;
+                }
+            }
+        }
+        let Some(index) = app.active_tab else {
+            return;
+        };
+        let Some(Tab::Doc(doc)) = app.tabs.get_mut(index) else {
+            return;
+        };
+        if !doc.view.next_edit_requested {
+            return;
+        }
+        if app.inline_completion.busy() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(40));
+            return;
+        }
+        doc.view.next_edit_requested = false;
+        let Some(workspace) = app.workspace.as_ref().filter(|w| !w.host.is_remote()) else {
+            self.status = "Next Edit requires a local workspace".into();
+            return;
+        };
+        let key = workspace.session_key();
+        if app.config.inline_completion.paused || !app.config.inline_completion.projects.contains(&key) {
+            self.status = "Allow cloud completion for this project in Settings first".into();
+            return;
+        }
+        if doc.view.completion.is_some() || doc.view.rename.is_some() || doc.view.code_actions.is_some() || doc.view.find.is_some() {
+            self.status = "Close the active editor popup before requesting Next Edit".into();
+            return;
+        }
+        let root = workspace.root.clone();
+        let history = doc.next_edit_history.iter().cloned().collect::<Vec<_>>();
+        self.launch(std::path::Path::new(&root), &doc.path, doc.id, &doc.buffer, &history, app.config.next_edit_region_lines);
+        ctx.request_repaint_after(std::time::Duration::from_millis(30));
+    }
+}
+
+pub fn tick_next_edit(app: &mut crate::app::App, ctx: &eframe::egui::Context) {
+    let mut controller = std::mem::take(&mut app.next_edit);
+    controller.tick(app, ctx);
+    app.next_edit = controller;
 }
 
 #[cfg(test)]

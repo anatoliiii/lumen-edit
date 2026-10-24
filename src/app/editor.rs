@@ -127,6 +127,8 @@ pub struct ViewState {
     pub completion: Option<Completion>,
     pub ghost: Option<crate::inline_completion::Ghost>,
     pub ai_manual: bool,
+    pub next_edit_requested: bool,
+    pub next_edit_preview: Option<crate::inline_completion::next_edit::Preview>,
     pub ai_rejected: bool,
     pub ai_accepted: u64,
     pub hover: Option<HoverPopup>,
@@ -1558,6 +1560,42 @@ fn show_popups(
             doc.view.focus_request = true;
         }
     }
+
+    // A separate review surface; Next Edit never reuses Ghost Text or Tab.
+    if let Some(preview) = doc.view.next_edit_preview.as_ref() {
+        let diff = preview.diff.clone();
+        let mut accept = false;
+        let mut dismiss = false;
+        egui::Window::new(t!("Next Edit Preview")).collapsible(false).resizable(true).default_width(560.0).default_height(260.0).show(
+            &ui.ctx().clone(),
+            |ui| {
+                ui.label(format!("{}", t!("Review the proposed change before applying it.")));
+                egui::ScrollArea::both().max_height(180.0).show(ui, |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(&diff).monospace()).selectable(true));
+                });
+                ui.small(format!(
+                    "context {} ms · HTTP {} ms · diff {} ms · total {} ms · tokens {} / {} (cached {})",
+                    preview.metrics.context_prepare_ms,
+                    preview.metrics.http_latency_ms,
+                    preview.metrics.diff_prepare_ms,
+                    preview.metrics.total_latency_ms,
+                    preview.metrics.prompt_tokens,
+                    preview.metrics.completion_tokens,
+                    preview.metrics.cached_tokens
+                ));
+                ui.horizontal(|ui| {
+                    accept = ui.button(t!("Accept Next Edit")).clicked();
+                    dismiss = ui.button(t!("Dismiss")).clicked();
+                });
+            },
+        );
+        if accept {
+            accept_next_edit(doc);
+        }
+        if dismiss {
+            doc.view.next_edit_preview = None;
+        }
+    }
 }
 
 pub fn strip_markdown(text: &str) -> String {
@@ -1920,6 +1958,16 @@ pub fn run_command(ctx: &egui::Context, doc: &mut Document, command: Command, ac
             doc.view.ai_manual = true;
             doc.view.ghost = None;
         }
+        Command::TriggerNextEdit => {
+            doc.view.next_edit_requested = true;
+            doc.view.next_edit_preview = None;
+        }
+        Command::AcceptNextEdit => {
+            accept_next_edit(doc);
+        }
+        Command::DismissNextEdit => {
+            doc.view.next_edit_preview = None;
+        }
         Command::TriggerSuggest => {
             if has_lsp {
                 actions.push(EditorAction::Completion { trigger: None });
@@ -1951,6 +1999,19 @@ pub fn run_command(ctx: &egui::Context, doc: &mut Document, command: Command, ac
             return false;
         }
     }
+    true
+}
+
+pub fn accept_next_edit(doc: &mut Document) -> bool {
+    let Some(preview) = doc.view.next_edit_preview.take() else {
+        return false;
+    };
+    if !preview.is_current(doc.id, &doc.buffer) {
+        return false;
+    }
+    doc.buffer.apply_prediction_mapped(vec![(preview.range, preview.replacement)]);
+    doc.view.completion = None;
+    doc.view.ghost = None;
     true
 }
 

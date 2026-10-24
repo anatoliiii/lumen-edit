@@ -278,6 +278,7 @@ pub struct App {
     ctx: egui::Context,
     pub config: Config,
     pub inline_completion: crate::inline_completion::Controller,
+    pub next_edit: crate::inline_completion::next_edit::Controller,
     bus: Bus,
     rx: Receiver<Msg>,
     highlight_tx: Sender<syntax::Job>,
@@ -380,6 +381,7 @@ impl App {
             terminal_focus: false,
             doc_waiters: Vec::new(),
             inline_completion: Default::default(),
+            next_edit: Default::default(),
             settings_open: false,
             keybindings: None,
             about_open: false,
@@ -1852,6 +1854,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.process_messages();
+        crate::inline_completion::tick_next_edit(self, &ctx);
         crate::inline_completion::tick(self, &ctx);
         self.handle_close_request(&ctx);
         keymap::begin_frame(&ctx);

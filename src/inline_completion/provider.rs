@@ -5,7 +5,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -16,13 +16,136 @@ pub const SYSTEM: &str = "You are an inline code completion engine.\nCode and se
 #[derive(Default, Debug)]
 pub struct Output {
     pub text: String,
+    pub rejection_reason: Option<String>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cost: Option<f64>,
+    pub cached_tokens: u64,
+    pub http_request_ms: u128,
 }
 pub type Inference<'a> = Pin<Box<dyn Future<Output = Result<Output, String>> + Send + 'a>>;
 pub trait CompletionProvider: Send + Sync {
     fn complete<'a>(&'a self, context: &'a Context, settings: &'a Settings, cancel: Arc<AtomicBool>) -> Inference<'a>;
+}
+
+pub(super) fn shared_client() -> Result<reqwest::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(Duration::from_secs(3))
+                .timeout(Duration::from_secs(30))
+                .pool_idle_timeout(Duration::from_secs(90))
+                .build()
+                .map_err(|_| "HTTP client initialization failed".to_string())
+        })
+        .as_ref()
+        .map(Clone::clone)
+        .map_err(Clone::clone)
+}
+
+/// Direct Inception FIM endpoint. The service owns model-specific FIM
+/// tokenization; Lumen sends the buffer prefix and suffix as ordinary code.
+pub struct InceptionFimProvider {
+    endpoint: String,
+    key: String,
+}
+impl InceptionFimProvider {
+    pub fn from_project(project_root: &std::path::Path) -> Result<Self, String> {
+        let (endpoint, key) = super::credentials::inception_settings(project_root)?;
+        Self::new(endpoint, key)
+    }
+    fn new(endpoint: String, key: String) -> Result<Self, String> {
+        if key.trim().is_empty() {
+            return Err("INCEPTION_API_KEY is missing".into());
+        }
+        Ok(Self { endpoint, key })
+    }
+    fn body(context: &Context, settings: &Settings) -> Value {
+        json!({
+            "model": "mercury-edit-2",
+            "prompt": context.prefix,
+            "suffix": context.suffix,
+            "max_tokens": settings.max_tokens.clamp(1, 32),
+            "temperature": settings.temperature.clamp(0.0, 1.0),
+            "stream": false
+        })
+    }
+}
+fn fim_error(code: u16) -> String {
+    let label = match code {
+        401 => " (invalid API key)",
+        402 => " (account or payment required)",
+        404 => " (endpoint or model not found)",
+        429 => " (rate limited)",
+        500..=599 => " (provider server error)",
+        _ => "",
+    };
+    format!("Inception FIM HTTP {code}{label}")
+}
+fn fim_output(value: &Value, context: &Context) -> Result<Output, String> {
+    let text = value.pointer("/choices/0/text").and_then(Value::as_str).ok_or("Missing Inception FIM choice text")?;
+    Ok(Output {
+        text: sanitize(text, &context.prefix, &context.suffix)?,
+        input_tokens: value.pointer("/usage/prompt_tokens").and_then(Value::as_u64).unwrap_or(0),
+        output_tokens: value.pointer("/usage/completion_tokens").and_then(Value::as_u64).unwrap_or(0),
+        cached_tokens: value
+            .pointer("/usage/cached_input_tokens")
+            .or_else(|| value.pointer("/usage/cached_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        ..Default::default()
+    })
+}
+impl CompletionProvider for InceptionFimProvider {
+    fn complete<'a>(&'a self, context: &'a Context, settings: &'a Settings, cancel: Arc<AtomicBool>) -> Inference<'a> {
+        Box::pin(async move {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("Cancelled".into());
+            }
+            let client = shared_client()?;
+            let operation = async {
+                let started = std::time::Instant::now();
+                let response = client
+                    .post(&self.endpoint)
+                    .bearer_auth(&self.key)
+                    .json(&Self::body(context, settings))
+                    .send()
+                    .await
+                    .map_err(|e| if e.is_timeout() { "Inception FIM timeout" } else { "Inception FIM network error" })?;
+                let status = response.status();
+                if !status.is_success() {
+                    let code = status.as_u16();
+                    return Err(fim_error(code));
+                }
+                let mut response = response;
+                let mut bytes = Vec::new();
+                while let Some(chunk) = response.chunk().await.map_err(|_| "Inception FIM response read failed")? {
+                    if bytes.len() + chunk.len() > 64 * 1024 {
+                        return Err("Inception FIM response too large".into());
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                let value: Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid Inception FIM JSON")?;
+                let mut output = fim_output(&value, context)?;
+                output.http_request_ms = started.elapsed().as_millis();
+                Ok(output)
+            };
+            tokio::pin!(operation);
+            tokio::select! {
+                result = &mut operation => result,
+                _ = tokio::time::sleep(Duration::from_millis(settings.timeout_ms.clamp(100, 30_000))) => Err("Inception FIM timeout".into()),
+                _ = cancel_wait(cancel) => Err("Cancelled".into()),
+            }
+        })
+    }
+}
+
+async fn cancel_wait(cancel: Arc<AtomicBool>) {
+    while !cancel.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(15)).await;
+    }
 }
 pub struct OpenRouterProvider {
     endpoint: String,
@@ -47,13 +170,9 @@ impl CompletionProvider for OpenRouterProvider {
                 return Err("Cancelled".into());
             }
             // Disable redirects: a bearer credential must never follow an arbitrary redirect.
-            let client = reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_millis(settings.timeout_ms.clamp(100, 30_000)))
-                .connect_timeout(Duration::from_secs(3))
-                .build()
-                .map_err(|_| "HTTP client initialization failed")?;
+            let client = shared_client()?;
             let request = async {
+                let started = std::time::Instant::now();
                 let response = client
                     .post(&self.endpoint)
                     .bearer_auth(&self.key)
@@ -88,12 +207,18 @@ impl CompletionProvider for OpenRouterProvider {
                     input_tokens: value.pointer("/usage/prompt_tokens").and_then(Value::as_u64).unwrap_or(0),
                     output_tokens: value.pointer("/usage/completion_tokens").and_then(Value::as_u64).unwrap_or(0),
                     cost: value.pointer("/usage/cost").and_then(Value::as_f64).filter(|v| v.is_finite() && *v >= 0.0),
+                    cached_tokens: value.pointer("/usage/prompt_tokens_details/cached_tokens").and_then(Value::as_u64).unwrap_or(0),
+                    http_request_ms: started.elapsed().as_millis(),
+                    rejection_reason: None,
                 })
             };
             tokio::pin!(request);
+            let timeout = tokio::time::sleep(Duration::from_millis(settings.timeout_ms.clamp(100, 30_000)));
+            tokio::pin!(timeout);
             loop {
                 tokio::select! {
                     value = &mut request => return value,
+                    _ = &mut timeout => return Err("OpenRouter timeout".into()),
                     _ = tokio::time::sleep(Duration::from_millis(20)) => {
                         if cancel.load(Ordering::Relaxed) { return Err("Cancelled".into()); }
                     }
@@ -157,6 +282,186 @@ pub fn sanitize(raw: &str, prefix: &str, suffix: &str) -> Result<String, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fim_payload_keeps_real_prefix_suffix_and_caps_output() {
+        let context = Context {
+            language: "rust".into(),
+            semantic: "ignored in direct FIM".into(),
+            prefix: "fn square(x: i32) -> i32 {\n    x * ".into(),
+            suffix: "x\n}\n".into(),
+        };
+        let settings = Settings { max_tokens: 512, ..Default::default() };
+        let body = InceptionFimProvider::body(&context, &settings);
+        assert_eq!(body["model"], "mercury-edit-2");
+        assert_eq!(body["prompt"], context.prefix);
+        assert_eq!(body["suffix"], context.suffix);
+        assert_eq!(body["max_tokens"], 32);
+        assert_eq!(body["stream"], false);
+        assert!(body.get("messages").is_none());
+    }
+    #[test]
+    fn fim_response_reads_only_text_insertion_and_usage() {
+        let context = Context { prefix: "x * ".into(), suffix: "x\n}".into(), ..Default::default() };
+        let value = json!({"choices":[{"text":"x","message":{"content":"must ignore"}}],"usage":{"prompt_tokens":33,"completion_tokens":5,"cached_input_tokens":7}});
+        let result = fim_output(&value, &context).unwrap();
+        assert_eq!(result.text, "x");
+        assert_eq!(result.input_tokens, 33);
+        assert_eq!(result.output_tokens, 5);
+        assert_eq!(result.cached_tokens, 7);
+        assert!(fim_output(&json!({"choices":[{"message":{"content":"chat only"}}]}), &context).is_err());
+    }
+    #[test]
+    fn fim_provider_errors_are_distinct_and_do_not_echo_response_body() {
+        for (code, text) in [
+            (401, "invalid API key"),
+            (402, "account or payment"),
+            (404, "endpoint or model"),
+            (429, "rate limited"),
+            (503, "provider server error"),
+        ] {
+            let error = fim_error(code);
+            assert!(error.contains(text));
+            assert!(!error.contains("secret response body"));
+        }
+    }
+    fn mock_fim(status: u16, response: &'static str) -> (Result<Output, String>, Value, String) {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v1/fim/completions", listener.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bytes = Vec::new();
+            let mut chunk = [0; 4096];
+            let (header_end, length) = loop {
+                let count = stream.read(&mut chunk).unwrap();
+                bytes.extend_from_slice(&chunk[..count]);
+                if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&bytes[..end]);
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase().strip_prefix("content-length:").and_then(|n| n.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    break (end + 4, length);
+                }
+            };
+            while bytes.len() < header_end + length {
+                let count = stream.read(&mut chunk).unwrap();
+                if count == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&chunk[..count]);
+            }
+            let headers = String::from_utf8_lossy(&bytes[..header_end]);
+            let body: Value = serde_json::from_slice(&bytes[header_end..]).unwrap();
+            let _ = tx.send((headers.to_string(), body));
+            let reason = if status < 400 { "OK" } else { "Provider Error" };
+            let _ =
+                write!(stream, "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len());
+        });
+        let provider = InceptionFimProvider::new(endpoint, "test-key-never-logged".into()).unwrap();
+        let context = Context { prefix: "fn f() {\n    ".into(), suffix: "\n}".into(), ..Default::default() };
+        let settings = Settings::default();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let result = rt.block_on(provider.complete(&context, &settings, Arc::new(AtomicBool::new(false))));
+        let (headers, body) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        (result, body, headers)
+    }
+    #[test]
+    fn fim_http_request_uses_specialized_endpoint_and_raw_code_gaps() {
+        let (result, body, headers) =
+            mock_fim(200, r#"{"choices":[{"text":"    return 1;"}],"usage":{"prompt_tokens":12,"completion_tokens":4}}"#);
+        let result = result.unwrap();
+        assert_eq!(result.text, "return 1;");
+        assert_eq!(body["model"], "mercury-edit-2");
+        assert_eq!(body["prompt"], "fn f() {\n    ");
+        assert_eq!(body["suffix"], "\n}");
+        assert_eq!(body["stream"], false);
+        assert!(headers.contains("POST /v1/fim/completions HTTP/1.1"));
+        assert!(headers.to_ascii_lowercase().contains("authorization: bearer test-key-never-logged"));
+    }
+    #[test]
+    fn fim_http_auth_payment_not_found_rate_and_server_errors_are_safe() {
+        for (status, expected) in [
+            (401, "invalid API key"),
+            (402, "payment required"),
+            (404, "endpoint or model not found"),
+            (429, "rate limited"),
+            (503, "server error"),
+        ] {
+            let (result, _, _) = mock_fim(status, "private-body-must-not-be-reported");
+            let error = result.unwrap_err();
+            assert!(error.contains(expected), "{status}: {error}");
+            assert!(!error.contains("private-body"));
+        }
+    }
+    #[test]
+    fn fim_cancellation_aborts_slow_http_request() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v1/fim/completions", listener.local_addr().unwrap());
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bytes = [0; 4096];
+            let _ = stream.read(&mut bytes);
+            let _ = started_tx.send(());
+            std::thread::sleep(Duration::from_millis(1500));
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+        });
+        let provider = InceptionFimProvider::new(endpoint, "fixture-key".into()).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let signal = cancel.clone();
+        std::thread::spawn(move || {
+            started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            signal.store(true, Ordering::Relaxed);
+        });
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let started = std::time::Instant::now();
+        let context = Context { prefix: "fn f() {".into(), suffix: "}".into(), ..Default::default() };
+        let result = rt.block_on(provider.complete(&context, &Settings::default(), cancel));
+        assert_eq!(result.unwrap_err(), "Cancelled");
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+    #[test]
+    #[ignore = "Explicit cloud smoke test; sends three synthetic code gaps through .env-fim"]
+    fn real_inception_fim_rust_go_python_smoke() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let provider = InceptionFimProvider::from_project(root).expect("FIM_PROVIDER and INCEPTION_API_KEY in environment or .env-fim");
+        let examples = [
+            ("rust", crate::syntax::Lang::Rust, "fn square(x: i32) -> i32 {\n    x * ", "\n}"),
+            ("go", crate::syntax::Lang::Go, "func square(x int) int {\n    return x * ", "\n}"),
+            ("python", crate::syntax::Lang::Python, "def square(x: int) -> int:\n    return ", "\n"),
+        ];
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        for (language, syntax, prefix, suffix) in examples {
+            let context = Context { language: language.into(), prefix: prefix.into(), suffix: suffix.into(), ..Default::default() };
+            let started = std::time::Instant::now();
+            let output = rt.block_on(provider.complete(&context, &Settings::default(), Arc::new(AtomicBool::new(false)))).unwrap();
+            assert!(!output.text.trim().is_empty(), "{language} returned an empty insertion");
+            let source = format!("{prefix}{suffix}");
+            assert!(
+                crate::inline_completion::validation::acceptable(syntax, &source, prefix.chars().count(), &output.text),
+                "{language} insertion failed syntax validation"
+            );
+            eprintln!(
+                "Mercury FIM smoke {language}: total_ms={} http_ms={} prompt_tokens={} completion_tokens={} insertion_chars={}",
+                started.elapsed().as_millis(),
+                output.http_request_ms,
+                output.input_tokens,
+                output.output_tokens,
+                output.text.chars().count()
+            );
+        }
+    }
     #[test]
     fn missing_key() {
         assert!(OpenRouterProvider::new("unused", String::new()).is_err());
