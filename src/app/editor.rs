@@ -1653,16 +1653,12 @@ fn handle_keyboard(
     if moved {
         doc.view.hover = None;
         // Leaving the completed word closes the list.
-        if let Some(completion) = &doc.view.completion {
+        if let Some(completion) = doc.view.completion.as_mut() {
             let head = doc.buffer.primary().head;
             if head < completion.anchor || !doc.buffer.slice(completion.anchor..head).chars().all(is_word) {
                 doc.view.completion = None;
             } else {
-                let prefix = doc.buffer.slice(completion.anchor..head);
-                match doc.view.completion.as_mut() {
-                    Some(completion) => completion.refilter(&prefix),
-                    None => unreachable!("the outer match guarantees completion is present"),
-                }
+                completion.refilter(&doc.buffer.slice(completion.anchor..head));
             }
         }
     }
@@ -2058,11 +2054,9 @@ mod tests {
         doc.buffer.set_cursor(7, false);
         attach_ghost(&mut doc, "hallucinated()");
         let items = lsp::parse_completions(serde_json::json!([{"label":"send","insertText":"send()"}]), "fixture");
-        doc.view.completion = Some(Completion::new(items, 7));
-        match doc.view.completion.as_mut() {
-            Some(completion) => completion.refilter(""),
-            None => unreachable!("completion was just assigned"),
-        }
+        let mut completion = Completion::new(items, 7);
+        completion.refilter("");
+        doc.view.completion = Some(completion);
         handle_key(&ctx, &mut doc, Key::Tab, None, Modifiers::NONE, &mut actions, 20, 4, &settings);
         assert_eq!(doc.buffer.text(), "client.send()");
         assert_eq!(doc.view.ai_accepted, 0);
@@ -2087,7 +2081,7 @@ mod tests {
         let ctx = egui::Context::default();
         let source = "fn main() {\n    client.;\n    next();\n}\n";
         let mut doc = Document::new(1, "test.rs".into(), source, 4, true);
-        let at = source.find(".;").unwrap_or_else(|| panic!("expected \".;\"")) + 1;
+        let at = source.find(".;").unwrap() + 1;
         doc.buffer.set_cursor(at, false);
         attach_ghost(&mut doc, "send(\n        value\n    )");
         for size in [12.0, 20.0] {
@@ -2103,9 +2097,8 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            let ghost_y = labels.iter().find(|(_, text)| text.contains("send(")).unwrap_or_else(|| panic!("Ghost text is painted")).0;
-            let next_y =
-                labels.iter().find(|(_, text)| text.contains("next();")).unwrap_or_else(|| panic!("Existing text remains painted")).0;
+            let ghost_y = labels.iter().find(|(_, text)| text.contains("send(")).unwrap().0;
+            let next_y = labels.iter().find(|(_, text)| text.contains("next();")).unwrap().0;
             assert!(next_y > ghost_y + size * 3.0, "virtual rows must move following code");
             assert_eq!(doc.buffer.text(), source);
             assert_eq!(doc.buffer.version, 0);

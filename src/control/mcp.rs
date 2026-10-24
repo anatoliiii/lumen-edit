@@ -154,8 +154,10 @@ pub fn tools() -> Vec<Value> {
             let mut properties = serde_json::Map::new();
             let mut required: Vec<&str> = Vec::new();
             let mut lines = Vec::new();
+            let mut single_description = "";
             for (action, method_name) in actions.iter() {
-                let method = methods::find(method_name).unwrap_or_else(|| panic!("grouped method {method_name} missing"));
+                // `grouped_methods_exist` keeps GROUPS in sync with METHODS.
+                let Some(method) = methods::find(method_name) else { continue };
                 let schema = methods::input_schema(method);
                 if let Some(props) = schema["properties"].as_object() {
                     for (key, value) in props {
@@ -163,6 +165,7 @@ pub fn tools() -> Vec<Value> {
                     }
                 }
                 if single {
+                    single_description = method.description;
                     required.extend(method.params.iter().filter(|p| p.required).map(|p| p.name));
                 } else {
                     let args: Vec<String> =
@@ -171,11 +174,7 @@ pub fn tools() -> Vec<Value> {
                 }
             }
             let description = if single {
-                let method = match methods::find(actions[0].1) {
-                    Some(method) => method,
-                    None => unreachable!("action method was validated above"),
-                };
-                format!("{description} {}", method.description)
+                format!("{description} {single_description}")
             } else {
                 let names: Vec<&str> = actions.iter().map(|(a, _)| *a).collect();
                 properties.insert("action".into(), json!({ "type": "string", "enum": names }));
@@ -253,10 +252,7 @@ fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Val
                 Err(error) => return tool_error(error),
             }
         }
-        let client_ref = match client.as_mut() {
-            Some(client) => client,
-            None => unreachable!("client was connected above or this call would have returned"),
-        };
+        let Some(client_ref) = client.as_mut() else { continue };
         match client_ref.call(method, arguments.clone()) {
             Err(error) if error.contains(t!("closed")) || error.contains("Broken pipe") => *client = None,
             other => {
@@ -327,6 +323,15 @@ mod tests {
     }
 
     #[test]
+    fn grouped_methods_exist() {
+        for (_, _, actions) in super::GROUPS {
+            for (_, name) in actions.iter() {
+                assert!(crate::control::methods::find(name).is_some(), "grouped method {name} missing");
+            }
+        }
+    }
+
+    #[test]
     fn grouped_tools_cover_every_method() {
         let tools = super::tools();
         assert!(tools.len() <= 12, "catalog too large: {}", tools.len());
@@ -340,7 +345,7 @@ mod tests {
                 method.name
             );
         }
-        let json = serde_json::to_string(&tools).unwrap_or_else(|e| panic!("serialize failed: {e}"));
+        let json = serde_json::to_string(&tools).unwrap();
         // Keep the tool catalog well under ~10k tokens.
         assert!(json.len() < 24_000, "catalog is {} bytes", json.len());
     }
@@ -348,8 +353,8 @@ mod tests {
     #[test]
     fn resolves_actions() {
         use serde_json::json;
-        assert_eq!(super::resolve("file", &json!({ "action": "read" })).unwrap_or_else(|e| panic!("{e}")), "read_file");
-        assert_eq!(super::resolve("exec", &json!({})).unwrap_or_else(|e| panic!("{e}")), "exec");
+        assert_eq!(super::resolve("file", &json!({ "action": "read" })).unwrap(), "read_file");
+        assert_eq!(super::resolve("exec", &json!({})).unwrap(), "exec");
         assert!(super::resolve("git", &json!({ "action": "nope" })).is_err());
     }
 }

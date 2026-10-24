@@ -130,44 +130,34 @@ mod tests {
     #[test]
     fn reuse_pi_key_without_executing_commands_or_mutation() {
         let dir = std::env::temp_dir().join(format!("lumen-inline-credentials-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
+        std::fs::create_dir_all(&dir).unwrap();
         let auth = dir.join("auth.json");
         let original = r#"{"openrouter":{"type":"api_key","key":"stored-fixture-key"}}"#;
-        std::fs::write(&auth, original).unwrap_or_else(|e| panic!("write failed: {e}"));
+        std::fs::write(&auth, original).unwrap();
         assert_eq!(
-            from_directory(&dir, |name| (name == "OPENROUTER_API_KEY").then(|| "environment-fixture".into()))
-                .unwrap_or_else(|e| panic!("{e}")),
+            from_directory(&dir, |name| (name == "OPENROUTER_API_KEY").then(|| "environment-fixture".into())).unwrap(),
             "stored-fixture-key"
         );
-        assert_eq!(std::fs::read_to_string(&auth).unwrap_or_else(|e| panic!("read failed: {e}")), original);
-        std::fs::write(&auth, r#"{"openrouter":{"type":"api_key","key":"KEY_NAME","env":{"KEY_NAME":"provider-fixture"}}}"#)
-            .unwrap_or_else(|e| panic!("write failed: {e}"));
-        assert_eq!(from_directory(&dir, |_| None).unwrap_or_else(|e| panic!("{e}")), "provider-fixture");
-        std::fs::write(&auth, r#"{"openrouter":{"type":"api_key","key":"!touch should-never-exist"}}"#)
-            .unwrap_or_else(|e| panic!("write failed: {e}"));
+        assert_eq!(std::fs::read_to_string(&auth).unwrap(), original);
+        std::fs::write(&auth, r#"{"openrouter":{"type":"api_key","key":"KEY_NAME","env":{"KEY_NAME":"provider-fixture"}}}"#).unwrap();
+        assert_eq!(from_directory(&dir, |_| None).unwrap(), "provider-fixture");
+        std::fs::write(&auth, r#"{"openrouter":{"type":"api_key","key":"!touch should-never-exist"}}"#).unwrap();
         assert!(from_directory(&dir, |_| None).is_err());
         assert!(!dir.join("should-never-exist").exists());
-        std::fs::remove_file(auth).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
+        std::fs::remove_file(auth).unwrap();
         assert!(from_directory(&dir, |_| None).is_err());
         assert_eq!(
-            from_directory(&dir, |name| (name == "OPENROUTER_API_KEY").then(|| "environment-fixture".into()))
-                .unwrap_or_else(|e| panic!("{e}")),
+            from_directory(&dir, |name| (name == "OPENROUTER_API_KEY").then(|| "environment-fixture".into())).unwrap(),
             "environment-fixture"
         );
-        std::fs::remove_dir_all(dir).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn fim_endpoint_avoids_duplicate_v1() {
+        assert_eq!(fim_endpoint("https://api.inceptionlabs.ai").unwrap(), "https://api.inceptionlabs.ai/v1/fim/completions");
+        assert_eq!(fim_endpoint("https://api.inceptionlabs.ai/v1/").unwrap(), "https://api.inceptionlabs.ai/v1/fim/completions");
         assert_eq!(
-            fim_endpoint("https://api.inceptionlabs.ai").unwrap_or_else(|e| panic!("{e}")),
-            "https://api.inceptionlabs.ai/v1/fim/completions"
-        );
-        assert_eq!(
-            fim_endpoint("https://api.inceptionlabs.ai/v1/").unwrap_or_else(|e| panic!("{e}")),
-            "https://api.inceptionlabs.ai/v1/fim/completions"
-        );
-        assert_eq!(
-            fim_endpoint("https://api.inceptionlabs.ai/v1/fim/completions").unwrap_or_else(|e| panic!("{e}")),
+            fim_endpoint("https://api.inceptionlabs.ai/v1/fim/completions").unwrap(),
             "https://api.inceptionlabs.ai/v1/fim/completions"
         );
         assert!(fim_endpoint("http://example.com").is_err());
@@ -179,7 +169,7 @@ mod tests {
             "FIM_PROVIDER" => Some("https://env.example".into()),
             _ => None,
         })
-        .unwrap_or_else(|e| panic!("{e}"));
+        .unwrap();
         assert_eq!(resolved.0, "https://env.example/v1/fim/completions");
         assert_eq!(resolved.1, "file-secret-fixture");
         assert_eq!(file, "FIM_PROVIDER=https://file.example/v1\nINCEPTION_API_KEY=file-secret-fixture\n");
@@ -188,7 +178,7 @@ mod tests {
     #[test]
     fn edit_endpoint_reuses_provider_base_without_duplicate_v1() {
         for base in ["https://api.inceptionlabs.ai", "https://api.inceptionlabs.ai/v1/"] {
-            let fim = fim_endpoint(base).unwrap_or_else(|e| panic!("{e}"));
+            let fim = fim_endpoint(base).unwrap();
             assert_eq!(route_from_fim_endpoint(&fim, "/v1/edit/completions"), "https://api.inceptionlabs.ai/v1/edit/completions");
         }
     }

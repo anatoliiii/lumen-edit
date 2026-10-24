@@ -62,12 +62,12 @@ pub struct Output {
 
 /// Inline code that names a file, optionally with `:line`, `:line-line` or
 /// `:line:col` (e.g. `make.bash:76`, `src/main.rs:10-20`).
+#[allow(clippy::expect_used, reason = "a literal pattern compiles either always or never")]
 pub fn looks_like_location(text: &str) -> bool {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| {
-        // The pattern is a literal in this source; a failure is a build-time bug.
         regex::Regex::new(r"^(?:\.{0,2}/|~/)?[\w.\-/]*[A-Za-z_][\w\-]*\.[A-Za-z][\w]{0,7}(?::\d+(?:-\d+)?(?::\d+)?)?$")
-            .unwrap_or_else(|e| panic!("invalid location regex: {e}"))
+            .expect("valid location regex")
     });
     !text.contains(' ') && re.is_match(text)
 }

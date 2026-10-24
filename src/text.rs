@@ -166,10 +166,8 @@ impl Buffer {
     }
 
     pub fn primary(&self) -> Selection {
-        match self.selections.last() {
-            Some(selection) => *selection,
-            None => unreachable!("a buffer always has at least one selection"),
-        }
+        // A buffer always keeps at least one selection.
+        self.selections.last().copied().unwrap_or(Selection::cursor(0))
     }
 
     pub fn len_chars(&self) -> usize {
@@ -348,12 +346,7 @@ impl Buffer {
             && self.undo.last().is_some_and(|t| t.revision_after == revision_before)
             && self.saved_revision != revision_before;
         self.redo.clear();
-        if merge {
-            // `merge` is only true when `self.undo` has a matching last entry.
-            let last = match self.undo.last_mut() {
-                Some(last) => last,
-                None => unreachable!("merge requires an existing undo transaction"),
-            };
+        if merge && let Some(last) = self.undo.last_mut() {
             last.changes.extend(changes);
             last.after = after;
             last.revision_after = self.revision;
@@ -783,11 +776,10 @@ impl Buffer {
         while i > 0 && self.char(i - 1).is_some_and(|c| c.is_whitespace() && c != '\n') {
             i -= 1;
         }
-        if i > 0 {
-            let class = char_class(match self.char(i - 1) {
-                Some(c) => c,
-                None => unreachable!("index verified in bounds"),
-            });
+        if i > 0
+            && let Some(c) = self.char(i - 1)
+        {
+            let class = char_class(c);
             while i > 0 && self.char(i - 1).is_some_and(|c| char_class(c) == class && c != '\n') {
                 i -= 1;
             }
@@ -801,11 +793,10 @@ impl Buffer {
         while i < len && self.char(i).is_some_and(|c| c.is_whitespace() && c != '\n') {
             i += 1;
         }
-        if i < len {
-            let class = char_class(match self.char(i) {
-                Some(c) => c,
-                None => unreachable!("index verified in bounds"),
-            });
+        if i < len
+            && let Some(c) = self.char(i)
+        {
+            let class = char_class(c);
             while i < len && self.char(i).is_some_and(|c| char_class(c) == class && c != '\n') {
                 i += 1;
             }

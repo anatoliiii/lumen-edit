@@ -692,24 +692,19 @@ mod tests {
         let base = std::env::temp_dir().join(format!("lumen-teleport-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let src = base.join("src");
-        std::fs::create_dir_all(src.join("tree/deep")).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
-        std::fs::write(src.join("tree/deep/data.bin"), vec![7u8; 300_000]).unwrap_or_else(|e| panic!("write failed: {e}"));
-        std::fs::write(src.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap_or_else(|e| panic!("write failed: {e}"));
-        std::fs::set_permissions(src.join("run.sh"), std::fs::Permissions::from_mode(0o755))
-            .unwrap_or_else(|e| panic!("chmod failed: {e}"));
-        std::os::unix::fs::symlink("run.sh", src.join("link")).unwrap_or_else(|e| panic!("symlink failed: {e}"));
+        std::fs::create_dir_all(src.join("tree/deep")).unwrap();
+        std::fs::write(src.join("tree/deep/data.bin"), vec![7u8; 300_000]).unwrap();
+        std::fs::write(src.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::set_permissions(src.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink("run.sh", src.join("link")).unwrap();
         let dst = base.join("dst");
         let done = AtomicU64::new(0);
         let cancel = AtomicBool::new(false);
         let list = ["tree", "run.sh", "link"].iter().map(|n| shell_quote(n)).collect::<Vec<_>>().join(" ");
-        pipe(&Host::Local, &src.to_string_lossy(), &list, &Host::Local, &dst.to_string_lossy(), &done, &cancel)
-            .unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(std::fs::read(dst.join("tree/deep/data.bin")).unwrap_or_else(|e| panic!("read failed: {e}")).len(), 300_000);
-        assert_eq!(
-            std::fs::metadata(dst.join("run.sh")).unwrap_or_else(|e| panic!("metadata failed: {e}")).permissions().mode() & 0o777,
-            0o755
-        );
-        assert_eq!(std::fs::read_link(dst.join("link")).unwrap_or_else(|e| panic!("read_link failed: {e}")).to_string_lossy(), "run.sh");
+        pipe(&Host::Local, &src.to_string_lossy(), &list, &Host::Local, &dst.to_string_lossy(), &done, &cancel).unwrap();
+        assert_eq!(std::fs::read(dst.join("tree/deep/data.bin")).unwrap().len(), 300_000);
+        assert_eq!(std::fs::metadata(dst.join("run.sh")).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(std::fs::read_link(dst.join("link")).unwrap().to_string_lossy(), "run.sh");
         assert!(done.load(Ordering::Relaxed) >= 300_000);
         // Cancelled transfers report an error.
         cancel.store(true, Ordering::Relaxed);

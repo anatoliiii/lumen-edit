@@ -513,15 +513,13 @@ impl Terminal {
         }
     }
 
+    #[allow(clippy::expect_used, reason = "a literal pattern compiles either always or never")]
     fn location_at(&self, cell: Cell) -> Option<(String, usize, usize)> {
         let parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
         let row_text = parser.screen().contents_between(cell.row, 0, cell.row, self.size.1);
         drop(parser);
         static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-        let re = RE.get_or_init(|| {
-            // The pattern is a literal in this source; a failure is a build-time bug.
-            regex::Regex::new(r"([A-Za-z0-9_./~+-]+\.[A-Za-z0-9]+):(\d+)(?::(\d+))?").unwrap_or_else(|e| panic!("invalid link regex: {e}"))
-        });
+        let re = RE.get_or_init(|| regex::Regex::new(r"([A-Za-z0-9_./~+-]+\.[A-Za-z0-9]+):(\d+)(?::(\d+))?").expect("valid link regex"));
         let col = cell.col as usize;
         for found in re.captures_iter(&row_text) {
             let Some(whole) = found.get(0) else { continue };

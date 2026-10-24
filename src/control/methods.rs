@@ -370,17 +370,15 @@ pub fn parse_cli_params(method: &Method, args: &[String]) -> Result<Value, Strin
             }
             continue;
         }
-        let (name, raw) = match arg.split_once('=') {
-            Some((name, raw)) if method.params.iter().any(|p| p.name == name) => (name.to_string(), raw.to_string()),
-            _ => {
+        let named = arg.split_once('=').and_then(|(name, raw)| method.params.iter().find(|p| p.name == name).map(|p| (p, raw.to_string())));
+        let (param, raw) = match named {
+            Some(named) => named,
+            None => {
                 let param = positional.find(|p| !params.contains_key(p.name)).ok_or_else(|| t!("unexpected argument: {arg}", arg = arg))?;
-                (param.name.to_string(), arg.clone())
+                (param, arg.clone())
             }
         };
-        let param = match method.params.iter().find(|p| p.name == name) {
-            Some(param) => param,
-            None => unreachable!("the argument was positioned from this parameter list"),
-        };
+        let name = param.name.to_string();
         let value = match param.kind {
             Str => json!(raw),
             Int => json!(raw.parse::<i64>().map_err(|_| t!("{name}: expected a number", name = name))?),

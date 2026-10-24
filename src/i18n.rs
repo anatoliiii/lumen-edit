@@ -42,10 +42,10 @@ pub fn from_setting(setting: &str) -> Lang {
     }
 }
 
+#[allow(clippy::expect_used, reason = "the table is embedded at build time and parsed by the i18n tests")]
 fn russian() -> &'static HashMap<&'static str, &'static str> {
     RU.get_or_init(|| {
-        let table: toml::Table =
-            toml::from_str(include_str!("../locales/ru.toml")).unwrap_or_else(|e| panic!("locales/ru.toml is invalid TOML: {e}"));
+        let table: toml::Table = toml::from_str(include_str!("../locales/ru.toml")).expect("locales/ru.toml is valid TOML");
         table
             .into_iter()
             .filter_map(|(key, value)| {
@@ -148,15 +148,14 @@ mod tests {
     /// Cyrillic text is left outside the catalog.
     #[test]
     fn sources_are_fully_translated() {
-        let literal =
-            regex::Regex::new(r#"\bt(?:_key)?!\(\s*"((?:[^"\\]|\\.)*)""#).unwrap_or_else(|e| panic!("invalid literal regex: {e}"));
-        let cyrillic = regex::Regex::new(r#""[^"\n]*[А-Яа-яЁё][^"\n]*""#).unwrap_or_else(|e| panic!("invalid cyrillic regex: {e}"));
+        let literal = regex::Regex::new(r#"\bt(?:_key)?!\(\s*"((?:[^"\\]|\\.)*)""#).unwrap();
+        let cyrillic = regex::Regex::new(r#""[^"\n]*[А-Яа-яЁё][^"\n]*""#).unwrap();
         let mut missing = Vec::new();
         let mut untranslated = Vec::new();
         let mut used = std::collections::HashSet::new();
         let mut stack = vec![std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))];
         while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read_dir failed: {e}")).flatten() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
                 let path = entry.path();
                 if path.is_dir() {
                     stack.push(path);
@@ -165,13 +164,10 @@ mod tests {
                 if path.extension().is_none_or(|e| e != "rs") || path.ends_with("i18n.rs") {
                     continue;
                 }
-                let source = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read failed: {e}"));
+                let source = std::fs::read_to_string(&path).unwrap();
                 for capture in literal.captures_iter(&source) {
-                    let key: String = toml::from_str::<toml::Table>(&format!("k = \"{}\"", &capture[1]))
-                        .unwrap_or_else(|e| panic!("parse failed: {e}"))["k"]
-                        .as_str()
-                        .unwrap_or_else(|| panic!("expected string value"))
-                        .into();
+                    let key: String =
+                        toml::from_str::<toml::Table>(&format!("k = \"{}\"", &capture[1])).unwrap()["k"].as_str().unwrap().into();
                     if !russian().contains_key(key.as_str()) {
                         missing.push(format!("{}: {key}", path.display()));
                     }

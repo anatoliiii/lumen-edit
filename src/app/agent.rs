@@ -144,7 +144,7 @@ mod tests {
                 }
             }
         }
-        let pos = yes.unwrap_or_else(|| panic!("confirmation button must be painted"));
+        let pos = yes.unwrap();
         let mut answer = None;
         for pressed in [true, false] {
             let mut output = ctx.run_ui(
@@ -238,7 +238,7 @@ mod tests {
         agent.items.push(Item::Assistant { blocks: Default::default(), error: Some("transient error".into()) });
         agent.items.push(Item::Assistant { blocks: [(0, Block::Text("new result".into()))].into(), error: None });
         agent.handle(serde_json::json!({ "type": "agent_settled" }));
-        let task = agent.task.as_ref().unwrap_or_else(|| panic!("expected a task"));
+        let task = agent.task.as_ref().unwrap();
         assert_eq!(task.status, TaskStatus::Completed);
         assert_eq!(task.result.as_deref(), Some("new result"));
     }
@@ -248,23 +248,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "lumen-history-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_else(|e| panic!("clock skew: {e}")).as_nanos()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
-        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
+        std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("session.jsonl");
         let entries = [
             serde_json::json!({ "type": "session_info", "name": "old name" }),
             serde_json::json!({ "type": "message", "message": { "role": "user", "content": "first task" } }),
             serde_json::json!({ "type": "session_info", "name": "" }),
         ];
-        let text = entries
-            .iter()
-            .map(|e| serde_json::to_string(e).unwrap_or_else(|err| panic!("serialize failed: {err}")).replace(":", ": "))
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(&path, text).unwrap_or_else(|e| panic!("write failed: {e}"));
+        let text = entries.iter().map(|e| serde_json::to_string(e).unwrap().replace(":", ": ")).collect::<Vec<_>>().join("\n");
+        std::fs::write(&path, text).unwrap();
         let sessions = super::read_sessions(&dir);
-        std::fs::remove_dir_all(&dir).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
+        std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(sessions.len(), 1);
         assert!(sessions[0].name.is_none());
         assert_eq!(sessions[0].messages, 1);
@@ -974,18 +970,12 @@ impl AgentTab {
 
         match command.spawn() {
             Ok(mut child) => {
-                let stdout = match child.stdout.take() {
-                    Some(stdout) => stdout,
-                    None => unreachable!("stdout was piped at spawn"),
+                let (Some(stdout), Some(stderr), Some(stdin)) = (child.stdout.take(), child.stderr.take(), child.stdin.take()) else {
+                    let _ = child.kill();
+                    tab.exited = Some(t!("could not start {n1}: {error}", n1 = options.pi_command, error = "no stdio pipes"));
+                    return tab;
                 };
-                let stderr = match child.stderr.take() {
-                    Some(stderr) => stderr,
-                    None => unreachable!("stderr was piped at spawn"),
-                };
-                tab.stdin = Some(Arc::new(Mutex::new(match child.stdin.take() {
-                    Some(stdin) => stdin,
-                    None => unreachable!("stdin was piped at spawn"),
-                })));
+                tab.stdin = Some(Arc::new(Mutex::new(stdin)));
                 tab.child = Some(child);
                 let reader_bus = bus.clone();
                 let generation = options.generation;

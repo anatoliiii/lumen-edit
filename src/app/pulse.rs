@@ -345,15 +345,10 @@ fn sparkline(ui: &mut egui::Ui, values: &VecDeque<f32>, color: Color32, height: 
         .enumerate()
         .map(|(i, v)| pos2(rect.left() + (offset + i) as f32 * step, rect.bottom() - rect.height() * v / 100.0))
         .collect();
+    let (Some(first), Some(last)) = (points.first().copied(), points.last().copied()) else { return };
     let mut fill = points.clone();
-    fill.push(pos2(
-        match points.last() {
-            Some(point) => point.x,
-            None => unreachable!("graph points were just collected"),
-        },
-        rect.bottom(),
-    ));
-    fill.push(pos2(points[0].x, rect.bottom()));
+    fill.push(pos2(last.x, rect.bottom()));
+    fill.push(pos2(first.x, rect.bottom()));
     painter.add(Shape::convex_polygon(fill, color.gamma_multiply(0.15), Stroke::NONE));
     painter.add(Shape::line(points, Stroke::new(1.5, color)));
 }
@@ -517,7 +512,7 @@ mod tests {
         assert_eq!(sample.cores, 8);
         assert_eq!(sample.load, [0.5, 0.4, 0.3]);
         assert_eq!(sample.disks.len(), 1);
-        assert_eq!(sample.project_disk.as_ref().unwrap_or_else(|| panic!("expected project disk")).percent(), 80.0);
+        assert_eq!(sample.project_disk.as_ref().unwrap().percent(), 80.0);
         assert_eq!(sample.processes[0].name, "cargo");
         assert_eq!(sample.hostname, "box");
     }
@@ -541,7 +536,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn parses_real_host() {
-        let output = std::process::Command::new("sh").arg("-c").arg(SCRIPT).output().unwrap_or_else(|e| panic!("script failed: {e}"));
+        let output = std::process::Command::new("sh").arg("-c").arg(SCRIPT).output().unwrap();
         // The editor treats a failing script as an error, so it must succeed.
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         let sample = parse(&String::from_utf8_lossy(&output.stdout));

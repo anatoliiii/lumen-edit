@@ -117,8 +117,9 @@ pub fn drive_root(parent: &str) -> Option<String> {
 
 /// `file://` URI of a host path. Local paths are `C:/…`; paths of a Linux
 /// project over SSH stay `/…`, which `Url::from_file_path` rejects here.
+#[allow(clippy::expect_used, reason = "a constant URL that always parses")]
 pub fn path_to_uri(path: &str) -> String {
-    let mut url = url::Url::parse("file:///").unwrap_or_else(|e| panic!("invalid file:// base: {e}"));
+    let mut url = url::Url::parse("file:///").expect("file:/// parses");
     let path = if is_drive_path(path) { format!("/{}", path.replace('\\', "/")) } else { path.to_string() };
     url.set_path(&path);
     url.to_string()

@@ -367,15 +367,14 @@ mod tests {
     #[ignore]
     fn lsp_completion_with_rust_analyzer() {
         let dir = std::env::temp_dir().join(format!("lumen-lsp-test-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("src")).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
-        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
-            .unwrap_or_else(|e| panic!("write failed: {e}"));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
         let text = "fn main() {\n    let v: Vec<i32> = Vec::new();\n    v.\n}\n";
         let file = dir.join("src/main.rs");
-        std::fs::write(&file, text).unwrap_or_else(|e| panic!("write failed: {e}"));
+        std::fs::write(&file, text).unwrap();
         let root = dir.to_string_lossy().into_owned();
         let (tx, rx) = crossbeam_channel::unbounded();
-        let client = LspClient::start(&Host::Local, &root, "rust-analyzer", "rust-analyzer", &[], tx).unwrap_or_else(|e| panic!("{e}"));
+        let client = LspClient::start(&Host::Local, &root, "rust-analyzer", "rust-analyzer", &[], tx).unwrap();
         let uri = crate::lsp::path_to_uri(&file.to_string_lossy());
         client.notify("textDocument/didOpen", json!({ "textDocument": { "uri": uri, "languageId": "rust", "version": 1, "text": text } }));
         let mut labels = Vec::new();

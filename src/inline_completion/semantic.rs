@@ -58,12 +58,12 @@ pub fn safe_path(root: &Path, path: &Path) -> bool {
     })
 }
 /// A conservative extra guard, not a claim that arbitrary secrets are detectable.
+#[allow(clippy::expect_used, reason = "a literal pattern compiles either always or never")]
 pub fn sensitive(text: &str) -> bool {
     static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     PATTERN.get_or_init(|| {
-        // The pattern is a literal in this source; a failure is a build-time bug.
         regex::Regex::new(r#"(?im)(-----BEGIN [A-Z ]*PRIVATE KEY|\b(?:[a-z0-9_]+_)?(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|authorization|password|secret)\s*[:=]\s*["']?[^\s"']{8,}|\b(?:sk-or-v1-|sk-proj-|ghp_|github_pat_|AKIA)[A-Za-z0-9_-]{12,})"#)
-            .unwrap_or_else(|e| panic!("invalid secret regex: {e}"))
+            .expect("valid secret regex")
     })
     .is_match(text)
 }
@@ -318,11 +318,11 @@ mod tests {
     #[test]
     fn local_fim_context_preserves_both_sides_without_lsp() {
         let root = std::env::temp_dir().join(format!("lumen-fim-fast-path-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
+        std::fs::create_dir_all(&root).unwrap();
         let path = root.join("main.rs");
-        std::fs::write(&path, "fn f() { let value = ; }").unwrap_or_else(|e| panic!("write failed: {e}"));
+        std::fs::write(&path, "fn f() { let value = ; }").unwrap();
         let buffer = Buffer::new("fn f() { let value = ; }");
-        let cursor = buffer.text().find("; ").unwrap_or_else(|| panic!("expected \"; \""));
+        let cursor = buffer.text().find("; ").unwrap();
         let snapshot = Snapshot {
             buffer,
             lang: Lang::Rust,
@@ -332,10 +332,10 @@ mod tests {
             clients: Vec::new(),
             related: Vec::new(),
         };
-        let context = collect_local(&snapshot).unwrap_or_else(|e| panic!("{e}"));
+        let context = collect_local(&snapshot).unwrap();
         assert_eq!(context.prefix, "fn f() { let value = ");
         assert_eq!(context.suffix, "; }");
-        std::fs::remove_dir_all(root).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn rank_and_budget() {
@@ -362,7 +362,7 @@ mod tests {
                 "hidden",
             ),
         ] {
-            let at = text.rfind("client.").unwrap_or_else(|| panic!("expected client.")) + 7;
+            let at = text.rfind("client.").unwrap() + 7;
             let mut r = Ranked::default();
             syntax_context(lang, text, at, &mut r);
             let out = r.finish(4000);
@@ -380,22 +380,22 @@ mod tests {
     #[test]
     fn project_boundary_and_symlinks() {
         let dir = std::env::temp_dir().join(format!("lumen-inline-boundary-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
-        std::fs::write(dir.join("code.rs"), "fn main() {}").unwrap_or_else(|e| panic!("write failed: {e}"));
-        std::fs::write(dir.join(".env.local"), "secret").unwrap_or_else(|e| panic!("write failed: {e}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("code.rs"), "fn main() {}").unwrap();
+        std::fs::write(dir.join(".env.local"), "secret").unwrap();
         assert!(safe_path(&dir, &dir.join("code.rs")));
         assert!(!safe_path(&dir, &dir.join(".env.local")));
         assert!(!safe_path(&dir, Path::new(file!())));
         #[cfg(unix)]
         {
             let outside = dir.with_extension("outside");
-            std::fs::write(&outside, "secret").unwrap_or_else(|e| panic!("write failed: {e}"));
+            std::fs::write(&outside, "secret").unwrap();
             let _ = std::fs::remove_file(dir.join("link.rs"));
-            std::os::unix::fs::symlink(&outside, dir.join("link.rs")).unwrap_or_else(|e| panic!("symlink failed: {e}"));
+            std::os::unix::fs::symlink(&outside, dir.join("link.rs")).unwrap();
             assert!(!safe_path(&dir, &dir.join("link.rs")));
-            std::fs::remove_file(outside).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
+            std::fs::remove_file(outside).unwrap();
         }
-        std::fs::remove_dir_all(dir).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn lsp_semantic_context_uses_capabilities_and_project_definitions() {
@@ -405,13 +405,13 @@ mod tests {
             return;
         }
         let dir = std::env::temp_dir().join(format!("lumen-inline-lsp-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
+        std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("main.rs");
         let related = dir.join("api.rs");
         let log = dir.join("calls.jsonl");
         let text = "fn main() { let client: ApiClient = make(); client. }";
-        std::fs::write(&path, text).unwrap_or_else(|e| panic!("write failed: {e}"));
-        std::fs::write(&related,"pub struct ApiClient;\nimpl ApiClient {\n    pub fn send(&self, request: Request) -> Response {}\n}\nfn example(client: ApiClient) { client.send(request); }\n").unwrap_or_else(|e| panic!("write failed: {e}"));
+        std::fs::write(&path, text).unwrap();
+        std::fs::write(&related,"pub struct ApiClient;\nimpl ApiClient {\n    pub fn send(&self, request: Request) -> Response {}\n}\nfn example(client: ApiClient) { client.send(request); }\n").unwrap();
         let script = dir.join("lsp.py");
         std::fs::write(&script,r#"
 import sys,json,pathlib
@@ -435,7 +435,7 @@ while True:
         result=[{'uri':(root/'api.rs').as_uri(),'range':{'start':{'line':0,'character':0},'end':{'line':0,'character':20}}}, {'uri':(root.parent/'outside.rs').as_uri(),'range':{'start':{'line':0,'character':0},'end':{'line':0,'character':1}}}]
     elif method=='textDocument/documentSymbol':result=[{'name':'main','kind':12}]
     send({'jsonrpc':'2.0','id':msg['id'],'result':result})
-"#).unwrap_or_else(|e| panic!("write failed: {e}"));
+"#).unwrap();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let client = LspClient::start(
             &Host::Local,
@@ -445,8 +445,8 @@ while True:
             &[script.to_string_lossy().into(), dir.to_string_lossy().into()],
             tx,
         )
-        .unwrap_or_else(|e| panic!("LSP start failed: {e}"));
-        let cursor = text.find("client. }").unwrap_or_else(|| panic!("expected client. }}")) + 7;
+        .unwrap();
+        let cursor = text.find("client. }").unwrap() + 7;
         let snapshot = Snapshot {
             buffer: Buffer::new(text),
             lang: Lang::Rust,
@@ -458,8 +458,7 @@ while True:
         };
         // Test semantic extraction independently of the production latency
         // cutoff: parallel CI workers can be descheduled beyond 90 ms.
-        let context = collect_with_budget(&snapshot, &AtomicBool::new(false), Duration::from_secs(6), Duration::from_secs(1))
-            .unwrap_or_else(|e| panic!("{e}"));
+        let context = collect_with_budget(&snapshot, &AtomicBool::new(false), Duration::from_secs(6), Duration::from_secs(1)).unwrap();
         client.shutdown();
         assert!(context.semantic.contains("client: ApiClient"), "{}", context.semantic);
         assert!(context.semantic.contains("fn send(&self, request: Request) -> Response"), "{}", context.semantic);
@@ -467,20 +466,13 @@ while True:
         assert!(context.semantic.contains("client.send(request)"));
         assert!(context.semantic.len() <= 4000);
         assert!(context.prompt().len() < 13000);
-        let calls = std::fs::read_to_string(log).unwrap_or_else(|e| panic!("read failed: {e}"));
-        let methods: Vec<_> = calls
-            .lines()
-            .map(|line| {
-                serde_json::from_str::<Value>(line).unwrap_or_else(|e| panic!("call log line invalid: {e}"))["method"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string()
-            })
-            .collect();
+        let calls = std::fs::read_to_string(log).unwrap();
+        let methods: Vec<_> =
+            calls.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()["method"].as_str().unwrap_or("").to_string()).collect();
         assert!(!methods.iter().any(|m| m == "textDocument/signatureHelp"), "unsupported methods must not be requested");
         for method in ["hover", "completion", "definition", "typeDefinition", "documentSymbol", "references"] {
             assert!(calls.contains(&format!("textDocument/{method}")));
         }
-        std::fs::remove_dir_all(dir).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

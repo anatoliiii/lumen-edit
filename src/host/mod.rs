@@ -341,26 +341,26 @@ mod tests {
 
     fn exercise(host: &Host, dir: &str) {
         let file = join(dir, "hello.txt");
-        host.create_dir(&join(dir, "sub")).unwrap_or_else(|e| panic!("{e}"));
-        host.write_file(&file, b"hello\nworld\n").unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(host.read_file(&file).unwrap_or_else(|e| panic!("{e}")), b"hello\nworld\n");
-        let entries = host.read_dir(dir).unwrap_or_else(|e| panic!("{e}"));
+        host.create_dir(&join(dir, "sub")).unwrap();
+        host.write_file(&file, b"hello\nworld\n").unwrap();
+        assert_eq!(host.read_file(&file).unwrap(), b"hello\nworld\n");
+        let entries = host.read_dir(dir).unwrap();
         assert_eq!(entries.iter().map(|e| (e.name.as_str(), e.is_dir)).collect::<Vec<_>>(), vec![("sub", true), ("hello.txt", false)]);
-        assert!(!host.stat(&file).unwrap_or_else(|e| panic!("{e}")).is_dir);
+        assert!(!host.stat(&file).unwrap().is_dir);
         let query = lumen_shared::fsops::SearchQuery { pattern: "wor".into(), max_results: 10, ..Default::default() };
-        let (matches, _) = host.search(dir, &query).unwrap_or_else(|e| panic!("{e}"));
+        let (matches, _) = host.search(dir, &query).unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!((matches[0].line, matches[0].start, matches[0].end), (1, 0, 3));
-        assert!(host.list_files(dir, 100).unwrap_or_else(|e| panic!("{e}")).contains(&"hello.txt".to_string()));
+        assert!(host.list_files(dir, 100).unwrap().contains(&"hello.txt".to_string()));
         let renamed = join(dir, "renamed.txt");
-        host.rename(&file, &renamed).unwrap_or_else(|e| panic!("{e}"));
-        host.remove(&renamed).unwrap_or_else(|e| panic!("{e}"));
+        host.rename(&file, &renamed).unwrap();
+        host.remove(&renamed).unwrap();
         assert!(host.stat(&renamed).is_err());
         // `echo` is a program on Unix but a cmd built-in on Windows.
         let out = if cfg!(windows) {
-            host.output(dir, "cmd", &["/C".to_string(), "echo a b".to_string()], None).unwrap_or_else(|e| panic!("{e}"))
+            host.output(dir, "cmd", &["/C".to_string(), "echo a b".to_string()], None).unwrap()
         } else {
-            host.output(dir, "echo", &["a b".to_string()], None).unwrap_or_else(|e| panic!("{e}"))
+            host.output(dir, "echo", &["a b".to_string()], None).unwrap()
         };
         assert_eq!(String::from_utf8_lossy(&out).trim(), "a b");
     }
@@ -374,15 +374,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         for (use_agent, name) in [(true, "agent"), (false, "shell")] {
             let dir = base.join(name);
-            std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
+            std::fs::create_dir_all(&dir).unwrap();
             let target = format!("fake-{name}-{}", std::process::id());
             // Master "connection" in the background, as the UI does in a PTY.
-            let mut master = std::process::Command::new(super::ssh::ssh_bin())
-                .args(ssh::master_args(&target))
-                .stdout(Stdio::null())
-                .spawn()
-                .unwrap_or_else(|e| panic!("spawn failed: {e}"));
-            let remote = ssh::wait_and_establish(target, ssh::alive_flag(), use_agent).unwrap_or_else(|e| panic!("{e}"));
+            let mut master =
+                std::process::Command::new(super::ssh::ssh_bin()).args(ssh::master_args(&target)).stdout(Stdio::null()).spawn().unwrap();
+            let remote = ssh::wait_and_establish(target, ssh::alive_flag(), use_agent).unwrap();
             assert_eq!(remote.has_agent(), use_agent, "{}", remote.agent_status.lock().unwrap_or_else(|e| e.into_inner()));
             assert_eq!((remote.os.as_str(), remote.arch.as_str()), (std::env::consts::OS, std::env::consts::ARCH));
             exercise(&Host::Remote(remote.clone()), &dir.to_string_lossy());
@@ -396,7 +393,7 @@ mod tests {
     #[test]
     fn local_host() {
         let dir = std::env::temp_dir().join(format!("lumen-local-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
+        std::fs::create_dir_all(&dir).unwrap();
         exercise(&Host::Local, &dir.to_string_lossy());
         let _ = std::fs::remove_dir_all(&dir);
     }

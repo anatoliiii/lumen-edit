@@ -86,16 +86,10 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
                 Err(error) => fail(error),
             })
         }
-        name if methods::find(name).is_some() => {
-            let method = match methods::find(name) {
-                Some(method) => method,
-                None => unreachable!("the guard verified the method exists"),
-            };
-            Some(match parse_args(method, rest) {
-                Ok(params) => call_and_print(name, params, rest),
-                Err(error) => fail(error),
-            })
-        }
+        name if let Some(method) = methods::find(name) => Some(match parse_args(method, rest) {
+            Ok(params) => call_and_print(name, params, rest),
+            Err(error) => fail(error),
+        }),
         // A path: hand it to a running editor if there is one.
         path => {
             if path.starts_with('-') {
@@ -187,23 +181,13 @@ fn parse_args(method: &methods::Method, args: &[String]) -> Result<Value, String
                 .find(|p| p.name == name)
                 .ok_or_else(|| t!("{n1} has no parameter --{name}", n1 = method.name, name = name))?;
             let is_bool = matches!(param.kind, methods::Kind::Bool);
-            match iter.peek() {
-                Some(next) if !is_bool && !next.starts_with("--") => {
-                    let value = match iter.next() {
-                        Some(value) => value,
-                        None => unreachable!("peek observed the next item"),
-                    };
-                    normalized.push(format!("{name}={value}"));
-                }
-                Some(next) if is_bool && matches!(next.as_str(), "true" | "false") => {
-                    let value = match iter.next() {
-                        Some(value) => value,
-                        None => unreachable!("peek observed the next item"),
-                    };
-                    normalized.push(format!("{name}={value}"));
-                }
-                _ if is_bool => normalized.push(format!("{name}=true")),
-                _ => return Err(t!("--{name}: value required", name = name)),
+            let takes = |next: &&String| {
+                if is_bool { matches!(next.as_str(), "true" | "false") } else { !next.starts_with("--") }
+            };
+            match iter.next_if(takes) {
+                Some(value) => normalized.push(format!("{name}={value}")),
+                None if is_bool => normalized.push(format!("{name}=true")),
+                None => return Err(t!("--{name}: value required", name = name)),
             }
             continue;
         }
@@ -273,14 +257,10 @@ mod tests {
 
     #[test]
     fn arguments() {
-        let method = methods::find("search").unwrap_or_else(|| panic!("search method missing"));
-        let params = parse_args(method, &["fn main".into(), "--regex".into(), "--include".into(), ".rs".into(), "limit=5".into()])
-            .unwrap_or_else(|e| panic!("{e}"));
+        let method = methods::find("search").unwrap();
+        let params = parse_args(method, &["fn main".into(), "--regex".into(), "--include".into(), ".rs".into(), "limit=5".into()]).unwrap();
         assert_eq!(params, json!({ "query": "fn main", "regex": true, "include": ".rs", "limit": 5 }));
-        let git = methods::find("git").unwrap_or_else(|| panic!("git method missing"));
-        assert_eq!(
-            parse_args(git, &["log --oneline -3".into()]).unwrap_or_else(|e| panic!("{e}")),
-            json!({ "args": ["log", "--oneline", "-3"] })
-        );
+        let git = methods::find("git").unwrap();
+        assert_eq!(parse_args(git, &["log --oneline -3".into()]).unwrap(), json!({ "args": ["log", "--oneline", "-3"] }));
     }
 }

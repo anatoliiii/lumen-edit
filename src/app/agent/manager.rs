@@ -715,21 +715,21 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "lumen-archive-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_else(|e| panic!("clock skew: {e}")).as_nanos()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
-        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
+        std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("session.jsonl");
-        std::fs::write(&source, b"original conversation").unwrap_or_else(|e| panic!("write failed: {e}"));
-        archive_file(&source, false).unwrap_or_else(|e| panic!("{e}"));
+        std::fs::write(&source, b"original conversation").unwrap();
+        archive_file(&source, false).unwrap();
         let archived = dir.join(".lumen-archive/session.jsonl");
         assert!(!source.exists());
-        assert_eq!(std::fs::read(&archived).unwrap_or_else(|e| panic!("read failed: {e}")), b"original conversation");
-        std::fs::write(&source, b"another conversation").unwrap_or_else(|e| panic!("write failed: {e}"));
+        assert_eq!(std::fs::read(&archived).unwrap(), b"original conversation");
+        std::fs::write(&source, b"another conversation").unwrap();
         assert!(archive_file(&archived, true).is_err());
-        assert_eq!(std::fs::read(&source).unwrap_or_else(|e| panic!("read failed: {e}")), b"another conversation");
-        std::fs::remove_file(&source).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
-        archive_file(&archived, true).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(std::fs::read(&source).unwrap_or_else(|e| panic!("read failed: {e}")), b"original conversation");
-        std::fs::remove_dir_all(&dir).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
+        assert_eq!(std::fs::read(&source).unwrap(), b"another conversation");
+        std::fs::remove_file(&source).unwrap();
+        archive_file(&archived, true).unwrap();
+        assert_eq!(std::fs::read(&source).unwrap(), b"original conversation");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

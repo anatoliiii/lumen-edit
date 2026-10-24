@@ -381,7 +381,7 @@ mod tests {
     use super::*;
 
     fn chord(text: &str) -> Chord {
-        Chord::parse(text).unwrap_or_else(|| panic!("invalid chord {text}"))
+        Chord::parse(text).unwrap()
     }
 
     /// Regression: "×" appeared before the search box after the first letter
@@ -412,9 +412,8 @@ mod tests {
         assert_eq!(pressed_chord(&[key(modifier, primary), key(Key::F, primary)]), Chord::parse("Ctrl+F"));
         // The Control key of a Mac with backtick.
         let control = Modifiers { ctrl: true, command: !mac, ..Modifiers::NONE };
-        let chord =
-            pressed_chord(&[key(Key::ControlLeft, control), key(Key::Backtick, control)]).unwrap_or_else(|| panic!("expected a chord"));
-        assert_eq!(chord, Chord::parse("MacCtrl+`").unwrap_or_else(|| panic!("invalid chord")));
+        let chord = pressed_chord(&[key(Key::ControlLeft, control), key(Key::Backtick, control)]).unwrap();
+        assert_eq!(chord, Chord::parse("MacCtrl+`").unwrap());
         assert!(!chord.types_text());
         assert_eq!(chord.label(), "Ctrl+`");
         // Ctrl+V comes as a paste, not as a key press.
