@@ -123,8 +123,13 @@ pub fn syntax_context(lang: Lang, text: &str, cursor: usize, ranked: &mut Ranked
     let Some(tree) = parser.parse(text, None) else { return };
     let at = cursor.min(text.len());
     if let Some(mut node) = tree.root_node().descendant_for_byte_range(at, at) {
+        let mut ancestry = Vec::new();
         for _ in 0..12 {
             let kind = node.kind();
+            ancestry.push(kind);
+            if kind.contains("function") || kind.contains("method") {
+                ranked.add(0, "Insertion scope", &ancestry.join(" inside "));
+            }
             if kind.contains("function") || kind.contains("method") || kind.contains("impl") || kind.contains("class") {
                 let header = text[node.byte_range()].split('{').next().unwrap_or("").lines().take(3).collect::<Vec<_>>().join("\n");
                 ranked.add(4, kind, &header);
@@ -204,6 +209,9 @@ pub struct Snapshot {
     pub related: Vec<(String, ropey::Rope)>,
 }
 pub fn collect(snapshot: &Snapshot, cancel: &AtomicBool) -> Result<Context, String> {
+    collect_with_budget(snapshot, cancel, Duration::from_millis(650), Duration::from_millis(90))
+}
+fn collect_with_budget(snapshot: &Snapshot, cancel: &AtomicBool, budget: Duration, per_method: Duration) -> Result<Context, String> {
     if !safe_path(&snapshot.root, Path::new(&snapshot.path)) {
         return Err("File is outside the project or excluded".into());
     }
@@ -214,7 +222,7 @@ pub fn collect(snapshot: &Snapshot, cancel: &AtomicBool) -> Result<Context, Stri
     let mut ranked = Ranked::default();
     let text = snapshot.buffer.text();
     syntax_context(snapshot.lang, &text, snapshot.buffer.rope.char_to_byte(snapshot.cursor), &mut ranked);
-    let deadline = Instant::now() + Duration::from_millis(650);
+    let deadline = Instant::now() + budget;
     // Query the receiver/identifier immediately before '.' or the current word.
     let mut symbol = snapshot.cursor;
     while symbol > 0 && matches!(snapshot.buffer.char(symbol - 1), Some('.' | ':' | ' ' | '(')) {
@@ -246,7 +254,7 @@ pub fn collect(snapshot: &Snapshot, cancel: &AtomicBool) -> Result<Context, Stri
         if method.ends_with("completion") {
             params["context"] = json!({"triggerKind":1});
         }
-        let Ok(value) = client.request_timeout(method, params, remaining.min(Duration::from_millis(90))) else { continue };
+        let Ok(value) = client.request_timeout(method, params, remaining.min(per_method)) else { continue };
         if method.ends_with("definition") || method.ends_with("typeDefinition") || method.ends_with("references") {
             for (path, range) in lsp::parse_locations(&value).into_iter().take(3) {
                 if cancel.load(Ordering::Relaxed) {
@@ -408,11 +416,13 @@ while True:
             clients: vec![client.clone()],
             related: vec![],
         };
-        let context = collect(&snapshot, &AtomicBool::new(false)).unwrap();
+        // Test semantic extraction independently of the production latency
+        // cutoff: parallel CI workers can be descheduled beyond 90 ms.
+        let context = collect_with_budget(&snapshot, &AtomicBool::new(false), Duration::from_secs(6), Duration::from_secs(1)).unwrap();
         client.shutdown();
         assert!(context.semantic.contains("client: ApiClient"), "{}", context.semantic);
-        assert!(context.semantic.contains("fn send(&self, request: Request) -> Response"));
-        assert!(context.semantic.contains("pub struct ApiClient"));
+        assert!(context.semantic.contains("fn send(&self, request: Request) -> Response"), "{}", context.semantic);
+        assert!(context.semantic.contains("pub struct ApiClient"), "{}", context.semantic);
         assert!(context.semantic.contains("client.send(request)"));
         assert!(context.semantic.len() <= 4000);
         assert!(context.prompt().len() < 13000);

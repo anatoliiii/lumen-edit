@@ -15,6 +15,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 
 ### Fixed
+- Inline completion now anchors the current insertion scope and rejects syntax regressions or misplaced Rust match-arm fragments, including inside macro token trees.
 - Creating a background worker preserves the user's selected session and document.
 - MCP forwarding preserves the native agent action parameter, enabling agent management and delegation through Pi tools.
 - Pi restarts resume the exact session, ignore stale process events and cancel unsent startup prompts when stopped; expired background extension dialogs no longer block the UI.

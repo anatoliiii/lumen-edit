@@ -282,25 +282,34 @@ impl Controller {
             let started = Instant::now();
             let mut context = None;
             let mut charged = false;
-            let result = semantic::collect(&snapshot, &cancel).and_then(|collected| {
-                if cancel.load(Ordering::Relaxed) {
-                    return Err("Cancelled".into());
-                }
-                let key = CompletionCache::key(&collected, &settings);
-                if let Some((_, text)) = cached.iter().find(|(k, _)| *k == key) {
+            let result = semantic::collect(&snapshot, &cancel)
+                .and_then(|collected| {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err("Cancelled".into());
+                    }
+                    let key = CompletionCache::key(&collected, &settings);
+                    if let Some((_, text)) = cached.iter().find(|(k, _)| *k == key) {
+                        context = Some(collected);
+                        return Ok(Output { text: text.clone(), ..Default::default() });
+                    }
+                    let provider = OpenRouterProvider::from_env()?;
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|_| "Completion runtime failed".to_string())?;
+                    charged = true;
+                    let output = rt.block_on(provider.complete(&collected, &settings, cancel.clone()));
                     context = Some(collected);
-                    return Ok(Output { text: text.clone(), ..Default::default() });
-                }
-                let provider = OpenRouterProvider::from_env()?;
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|_| "Completion runtime failed".to_string())?;
-                charged = true;
-                let output = rt.block_on(provider.complete(&collected, &settings, cancel.clone()));
-                context = Some(collected);
-                output
-            });
+                    output
+                })
+                .map(|mut output| {
+                    let source = snapshot.buffer.text();
+                    let at = snapshot.buffer.rope.char_to_byte(snapshot.cursor);
+                    if !super::validation::acceptable(snapshot.lang, &source, at, &output.text) {
+                        output.text.clear();
+                    }
+                    output
+                });
             let _ = tx.send(Done { identity, serial, context, result, latency: started.elapsed(), charged });
             busy.store(false, Ordering::Release);
             ctx.request_repaint();

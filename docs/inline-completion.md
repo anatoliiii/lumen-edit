@@ -180,9 +180,36 @@ and passed. `fmt` and strict workspace/all-targets `clippy` passed.
 
 ## Changed files
 
-New subsystem: `src/inline_completion/{mod,controller,provider,credentials,semantic,renderer}.rs`.
+New subsystem: `src/inline_completion/{mod,controller,provider,credentials,semantic,renderer,validation}.rs`.
 Integration: `src/app/{mod,editor,panel,status,commands,keymap,control,lsp_manager}.rs`,
 `src/{main,config,syntax}.rs`. Dependencies: `Cargo.toml`, `Cargo.lock`.
 UI catalog: `locales/ru.toml`. Documentation: this guide, `README.md`,
 `README.ru.md`, `CHANGELOG.md`. Explicit native acceptance:
 `scripts/test-inline-completion.py`. Screenshots: `docs/screenshots/inline-completion-{rust,python}.png`.
+
+## Completion quality guard
+
+The prompt now uses JSON-escaped prefix/suffix/context and an explicit bounded
+`insertion_line` with a cursor marker. The current syntax ancestry is ranked
+first, and the system instruction disallows continuing a sibling function or
+appending after the existing suffix.
+
+Before display, both generated and cached insertions are parsed hypothetically
+with the existing tree-sitter grammar on the worker. Suggestions that increase
+the count or covered bytes of syntax errors/missing nodes are discarded. Rust
+match-arm fragments also require an enclosing match or macro definition, since
+Rust macro token trees otherwise accept arbitrary tokens. This directly covers
+the reported `help()` / `t_file!("cli-help.txt")` regression, including insertion
+inside the macro argument list. Real match-arm completion and valid Rust/Python
+blocks remain accepted in tests.
+
+This is a conservative syntax/position guard, not compiler type checking or a
+proof of developer intent. It can suppress partial snippets in already malformed
+code; unknown grammars retain the text fallback. Unrelated but syntactically
+valid suggestions are still possible.
+
+Verification of this quality fix: **98 tests passed**, 2 explicit tests ignored;
+strict workspace/all-targets clippy passed. Native automatic OpenRouter acceptance
+passed on Rust/Python, and the new complete `help()` expression scenario produced
+no ghost text. OpenRouter's null-content/stop response is treated as a valid
+empty completion, with usage retained, rather than a provider error.

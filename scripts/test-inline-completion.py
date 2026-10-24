@@ -40,6 +40,8 @@ def main():
         runtime.chmod(0o700)
         fixtures = [('square.rs', 'fn sum_squares(values: &[i32]) -> i32 {\n    // Use an explicit for loop and return the accumulated sum.\n   \n}\n', 3, 4),
                     ('square.py', 'def square(x: int) -> int:\n   \n', 2, 4)]
+        help_source = 'fn help() -> &\'static str {\n    include_str!("help.txt")\n}\nfn run(command: &str) {\n    match command { "open" => open(), "save" => save(), _ => () }\n}\n'
+        (project / 'help.rs').write_text(help_source)
         for filename, source, _, _ in fixtures:
             (project / filename).write_text(source)
         # No LSP binaries are required for this fallback/native-rendering test.
@@ -96,7 +98,7 @@ def main():
             try:
                 connection = wait_for(lambda: next((runtime / 'lumen-edit').glob('ctl-*.sock'), None), 'Control socket missing')
                 wait_for(lambda: call('state').get('workspace'), 'Project not ready')
-                window = subprocess.check_output(['xdotool', 'search', '--sync', '--pid', str(editor.pid)], env=env, text=True).splitlines()[0]
+                window = subprocess.check_output(['xdotool', 'search', '--onlyvisible', '--sync', '--pid', str(editor.pid)], env=env, text=True).splitlines()[0]
                 subprocess.run(['xdotool', 'windowfocus', '--sync', window], env=env, check=True)
                 for filename, original, line, column in fixtures:
                     source = original.replace('   \n', '    \n', 1)
@@ -122,7 +124,19 @@ def main():
                     assert call('read_file', path=filename) == source, 'Undo did not revert atomically'
                     print(filename, json.dumps(call('state')['inline_completion']), image)
                     call('close_file', path=filename, force=True)
-                print('PASS: automatic debounce from real keyboard input, OpenRouter, Rust/Python fallback, native ghost, Tab and atomic Undo; isolated config')
+                call('set_cursor', path='help.rs', line=2, column=len('    include_str!("help.txt")') + 1)
+                time.sleep(0.2)
+                before = call('state')['inline_completion']
+                subprocess.run(['xdotool', 'key', '--clearmodifiers', 'space'], env=env, check=True)
+                def finished_help():
+                    stats = call('state')['inline_completion']
+                    if stats['errors'] > before['errors']:
+                        raise AssertionError('Complete-expression response: ' + json.dumps(stats))
+                    return stats['success'] > before['success']
+                wait_for(finished_help, 'Complete-expression request did not finish')
+                assert not call('state')['active']['inline_completion_visible'], 'Unnecessary continuation after a complete help expression'
+                call('close_file', path='help.rs', force=True)
+                print('PASS: automatic debounce from real keyboard input, OpenRouter, Rust/Python fallback, native ghost, Tab, atomic Undo and no continuation after complete help expression; isolated config')
             except Exception:
                 log.flush()
                 print((root / 'editor.log').read_text()[-4000:], file=__import__('sys').stderr)
