@@ -30,7 +30,7 @@ pub fn ssh_bin() -> &'static Path {
 }
 
 /// Redirects every ssh invocation to `path` (used by tests).
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub fn set_ssh_bin(path: PathBuf) {
     let _ = SSH_BIN.set(path);
 }
