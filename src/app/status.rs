@@ -294,10 +294,11 @@ pub fn activity_bar(ui: &mut egui::Ui, app: &mut App) {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                 ui.add_space(6.0);
                 let (rect, response) = ui.allocate_exact_size(vec2(46.0, 44.0), Sense::click());
-                let color = if response.hovered() || app.settings_open { theme::TEXT } else { theme::FAINT_TEXT };
+                let settings_active = app.active_tab.is_some_and(|i| matches!(app.tabs.get(i), Some(super::Tab::Settings)));
+                let color = if response.hovered() || settings_active { theme::TEXT } else { theme::FAINT_TEXT };
                 draw_icon(ui.painter(), Icon::Settings, rect.center(), color);
                 if response.on_hover_text(t!("Settings (Ctrl+,)")).clicked() {
-                    app.settings_open = !app.settings_open;
+                    app.toggle_settings();
                 }
             });
         });
@@ -339,7 +340,9 @@ pub fn status_bar(ui: &mut egui::Ui, app: &mut App) {
                             theme::ERROR
                         }));
                         ui.label(
-                            RichText::new(t!("Agent: {n1}", n1 = remote.agent_status.lock().unwrap())).small().color(theme::MUTED_TEXT),
+                            RichText::new(t!("Agent: {n1}", n1 = remote.agent_status.lock().unwrap()))
+                                .small()
+                                .color(theme::MUTED_TEXT),
                         );
                         if ui.button(t!("Reconnect")).clicked() {
                             let root = app.workspace.as_ref().map(|w| w.root.clone());
@@ -416,7 +419,7 @@ pub fn status_bar(ui: &mut egui::Ui, app: &mut App) {
                     };
                     if status_button(ui, label).on_hover_text(if status.is_empty() { t!("AI Inline Completion") } else { status }).clicked()
                     {
-                        app.settings_open = true;
+                        app.open_settings();
                     }
                 }
                 let (errors, warnings) = panel::status_counts(app);
@@ -878,61 +881,49 @@ fn servers_settings_ui(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
     });
 }
 
-pub fn settings_window(ctx: &egui::Context, app: &mut App) {
-    let mut open = app.settings_open;
+pub fn settings_tab_ui(ui: &mut egui::Ui, app: &mut App) {
     let mut changed = false;
     let completion_project = app.workspace.as_ref().filter(|w| !w.host.is_remote()).map(|w| w.session_key());
-    let tab_id = egui::Id::unique("settings_active_tab");
-    let mut tab: SettingsTab = match ctx.data_mut(|d| d.get_temp::<u8>(tab_id)) {
+    let tab_id = ui.make_persistent_id("settings_active_tab");
+    let mut tab: SettingsTab = match ui.ctx().data_mut(|d| d.get_temp::<u8>(tab_id)) {
         Some(0) => SettingsTab::Editor,
         Some(1) => SettingsTab::Ai,
         Some(2) => SettingsTab::Servers,
         _ => SettingsTab::Editor,
     };
 
-    egui::Window::new(t!("Settings"))
-        .open(&mut open)
-        .resizable(true)
-        .default_width(580.0)
-        .default_height(540.0)
-        .min_width(500.0)
-        .collapsible(false)
-        .show(ctx, |ui| {
-            ui.set_min_width(540.0);
-            ui.horizontal(|ui| {
-                for (index, title) in [(0usize, t!("Editor")), (1, t!("AI Completion")), (2, t!("Servers & Agents"))] {
-                    if ui.selectable_label(tab_index(&tab) == index, title).clicked() {
-                        tab = match index {
-                            0 => SettingsTab::Editor,
-                            1 => SettingsTab::Ai,
-                            _ => SettingsTab::Servers,
-                        };
-                    }
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            for (index, title) in [(0usize, t!("Editor")), (1, t!("AI Completion")), (2, t!("Servers & Agents"))] {
+                if ui.selectable_label(tab_index(&tab) == index, title).clicked() {
+                    tab = match index {
+                        0 => SettingsTab::Editor,
+                        1 => SettingsTab::Ai,
+                        _ => SettingsTab::Servers,
+                    };
                 }
-            });
-            ui.separator();
-            match tab {
-                SettingsTab::Editor => editor_settings_ui(ui, app, &mut changed),
-                SettingsTab::Ai => ai_settings_ui(ui, app, completion_project.as_deref(), &mut changed),
-                SettingsTab::Servers => servers_settings_ui(ui, app, &mut changed),
             }
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.button(t!("Keyboard Shortcuts…")).clicked() {
-                    super::keybindings::open(app);
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(t!("Settings file: {n1}", n1 = crate::config::config_path().display()))
-                            .small()
-                            .color(theme::FAINT_TEXT),
-                    );
-                });
+        });
+        ui.separator();
+        match tab {
+            SettingsTab::Editor => editor_settings_ui(ui, app, &mut changed),
+            SettingsTab::Ai => ai_settings_ui(ui, app, completion_project.as_deref(), &mut changed),
+            SettingsTab::Servers => servers_settings_ui(ui, app, &mut changed),
+        }
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button(t!("Keyboard Shortcuts…")).clicked() {
+                super::keybindings::open(app);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(t!("Settings file: {n1}", n1 = crate::config::config_path().display())).small().color(theme::FAINT_TEXT),
+                );
             });
         });
+    });
 
-    ctx.data_mut(|d| d.insert_temp(tab_id, tab_index(&tab) as u8));
-    app.settings_open = open;
+    ui.ctx().data_mut(|d| d.insert_temp(tab_id, tab_index(&tab) as u8));
     if changed {
         app.config.save();
     }

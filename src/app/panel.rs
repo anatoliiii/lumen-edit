@@ -54,6 +54,7 @@ pub fn editor_area(ui: &mut egui::Ui, app: &mut App) {
         Tab::Agent(_) => super::agent::show(ui, app, super::agent::Loc::Tab(index)),
         Tab::Teleport(_) => super::teleport::show(ui, app, index),
         Tab::Image(_) => super::media::show_image(ui, app, index),
+        Tab::Settings => super::status::settings_tab_ui(ui, app),
     }
 }
 
@@ -105,6 +106,7 @@ fn tab_bar(ui: &mut egui::Ui, app: &mut App) {
                     Tab::Agent(_) => ("π", theme::ACCENT),
                     Tab::Teleport(_) => ("⇄", theme::GIT_ADDED),
                     Tab::Image(_) => ("▣", Color32::from_rgb(180, 120, 200)),
+                    Tab::Settings => ("⚙", theme::ACCENT),
                 };
                 let errors = match tab {
                     Tab::Doc(doc) => doc.diagnostic_counts().0,

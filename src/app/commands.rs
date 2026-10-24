@@ -646,7 +646,7 @@ impl App {
                 }
                 super::agent::insert_selection(self);
             }
-            Command::Settings => self.settings_open = !self.settings_open,
+            Command::Settings => self.toggle_settings(),
             Command::Keybindings => super::keybindings::open(self),
             Command::TerminalCopy => {
                 if let Some(terminal) = self.terminals.get_mut(self.active_terminal) {

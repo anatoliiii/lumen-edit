@@ -142,7 +142,8 @@ pub fn tick(app: &mut crate::app::App, ctx: &eframe::egui::Context) {
     let project = workspace
         .map(|w| w.session_key())
         .filter(|key| !app.config.inline_completion.paused && app.config.inline_completion.projects.contains(key));
-    let identity = if !app.agent_manager.open && app.palette.is_none() && app.dialog.is_none() && !app.settings_open {
+    let settings_active = app.active_tab.is_some_and(|i| matches!(app.tabs.get(i), Some(Tab::Settings)));
+    let identity = if !app.agent_manager.open && app.palette.is_none() && app.dialog.is_none() && !settings_active {
         project.as_ref().and_then(|key| {
             app.active_tab.and_then(|i| app.tabs.get(i)).and_then(|tab| {
                 let Tab::Doc(doc) = tab else { return None };

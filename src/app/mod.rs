@@ -209,6 +209,7 @@ pub enum Tab {
     Agent(Box<agent::AgentTab>),
     Teleport(Box<teleport::TeleportTab>),
     Image(Box<media::ImageTab>),
+    Settings,
 }
 
 impl Tab {
@@ -220,6 +221,7 @@ impl Tab {
             Tab::Agent(agent) => agent.title.clone(),
             Tab::Teleport(_) => t!("⇄ Teleport").into(),
             Tab::Image(image) => host::file_name(&image.path).to_string(),
+            Tab::Settings => t!("Settings").into(),
         }
     }
     /// The file behind the tab, if any.
@@ -310,7 +312,6 @@ pub struct App {
     terminal_focus: bool,
     /// Actions waiting for a file to finish loading (control requests).
     doc_waiters: Vec<(String, control::DocAction)>,
-    pub settings_open: bool,
     /// The "Keyboard Shortcuts" window, when open.
     pub keybindings: Option<keybindings::State>,
     pub about_open: bool,
@@ -383,7 +384,6 @@ impl App {
             doc_waiters: Vec::new(),
             inline_completion: Default::default(),
             next_edit: Default::default(),
-            settings_open: false,
             keybindings: None,
             about_open: false,
             pulse: pulse::Pulse::default(),
@@ -441,7 +441,7 @@ impl App {
                     ("palette", _) => app.run_command(Command::QuickOpen),
                     ("commands", _) => app.run_command(Command::CommandPalette),
                     ("log", _) => app.open_log(true),
-                    ("settings", _) => app.settings_open = true,
+                    ("settings", _) => app.open_settings(),
                     ("keybindings", query) => keybindings::open_with_query(&mut app, query),
                     ("teleport", _) => app.run_command(Command::Teleport),
                     ("agent", _) => app.run_command(Command::Agent),
@@ -742,6 +742,23 @@ impl App {
             if let Tab::Doc(doc) = &mut self.tabs[index] {
                 doc.view.focus_request = true;
             }
+        }
+    }
+
+    /// Open settings in the editor tab strip, reusing a single settings tab.
+    pub fn open_settings(&mut self) {
+        let index = self.tabs.iter().position(|tab| matches!(tab, Tab::Settings)).unwrap_or_else(|| {
+            self.tabs.push(Tab::Settings);
+            self.tabs.len() - 1
+        });
+        self.activate_tab(index);
+    }
+
+    pub fn toggle_settings(&mut self) {
+        if let Some(index) = self.active_tab.filter(|&i| matches!(self.tabs.get(i), Some(Tab::Settings))) {
+            self.close_tab(index);
+        } else {
+            self.open_settings();
         }
     }
 
@@ -1938,7 +1955,7 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::EDITOR_BACKGROUND)).show(ui, |ui| {
-            if self.workspace.is_none() {
+            if self.workspace.is_none() && !self.tabs.iter().any(|tab| matches!(tab, Tab::Settings)) {
                 welcome::show(ui, self);
             } else {
                 panel::editor_area(ui, self);
@@ -1950,9 +1967,6 @@ impl eframe::App for App {
         }
         if self.palette.is_some() {
             palette::show(&ctx, self);
-        }
-        if self.settings_open {
-            status::settings_window(&ctx, self);
         }
         agent::manager::tick(&ctx, self);
         keybindings::window(&ctx, self);

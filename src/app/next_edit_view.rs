@@ -1,5 +1,5 @@
 //! Review-only surface for a versioned prediction. Code rows never wrap.
-use super::{document::Document, editor::accept_next_edit};
+use super::{document::Document, editor::accept_next_edit, util};
 use crate::theme;
 use eframe::egui::{self, Align2, FontId, RichText, Sense, pos2, vec2};
 
@@ -56,8 +56,13 @@ pub fn show(ctx: &egui::Context, doc: &mut Document) {
                         similar::ChangeTag::Delete => (theme::DIFF_REMOVED_BG, theme::ERROR, "−"),
                         similar::ChangeTag::Equal => (egui::Color32::TRANSPARENT, theme::TEXT, " "),
                     };
-                    let text = format!("{sign} {}", row.text.replace('\t', "    "));
-                    let galley = ui.painter().layout_no_wrap(text, mono.clone(), fg);
+                    let body = row.text.replace('\t', "    ");
+                    let spans = util::highlighted_code(doc.lang, &body);
+                    let mut job = egui::text::LayoutJob::default();
+                    job.wrap.max_width = f32::INFINITY;
+                    job.append(&format!("{sign} "), 0.0, egui::TextFormat { font_id: mono.clone(), color: fg, ..Default::default() });
+                    util::append_colored_code(&mut job, &body, &spans, mono.clone(), fg);
+                    let galley = ui.fonts_mut(|f| f.layout_job(job));
                     let (rect, _) =
                         ui.allocate_exact_size(vec2((galley.size().x + 112.0).max(ui.available_width()), row_h), Sense::hover());
                     ui.painter().rect_filled(rect, 0.0, bg);
