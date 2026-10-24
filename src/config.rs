@@ -37,8 +37,12 @@ pub struct Config {
     /// Upload and use the helper agent on SSH hosts.
     pub use_agent: bool,
     pub pull_rebase: bool,
-    /// The pi coding agent: command, extra arguments and sandboxing.
+    /// The pi coding agent: command, optional Node entry point, runtime PATH,
+    /// extra arguments and sandboxing. `pi_entry` is used by the private
+    /// Node.js installation managed from Settings.
     pub pi_command: String,
+    pub pi_entry: String,
+    pub pi_runtime: String,
     pub pi_args: Vec<String>,
     pub agent_sandbox: bool,
     /// Model for new agent sessions (`provider/id`); empty = pi's default.
@@ -83,6 +87,8 @@ impl Default for Config {
             use_agent: true,
             pull_rebase: false,
             pi_command: "pi".into(),
+            pi_entry: String::new(),
+            pi_runtime: String::new(),
             pi_args: Vec::new(),
             agent_sandbox: true,
             agent_model: "openrouter/openai/gpt-6-luna".into(),

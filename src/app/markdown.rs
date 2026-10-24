@@ -193,8 +193,8 @@ impl Writer<'_> {
                 ui.label(RichText::new(prefix).size(size).color(theme::MUTED_TEXT));
             }
             let sense = if ranges.is_empty() { egui::Sense::hover() } else { egui::Sense::click() };
-            let (pos, galley, response) = egui::Label::new(job).wrap().sense(sense).layout_in_ui(ui);
-            ui.painter().galley(pos, galley.clone(), theme::TEXT);
+            let (pos, galley, response) = egui::Label::new(job).wrap().sense(sense).selectable(true).layout_in_ui(ui);
+            egui::text_selection::LabelSelectionState::label_text_selection(ui, &response, pos, galley.clone(), theme::TEXT, Stroke::NONE);
             if !ranges.is_empty()
                 && let Some(pointer) = response.hover_pos()
             {
@@ -260,7 +260,7 @@ impl Writer<'_> {
                     });
                 });
                 egui::ScrollArea::horizontal().id_salt(ui.next_auto_id()).auto_shrink([false, true]).show(ui, |ui| {
-                    ui.add(egui::Label::new(job).extend());
+                    ui.add(egui::Label::new(job).extend().selectable(true));
                 });
             });
         });
@@ -285,7 +285,7 @@ impl Writer<'_> {
                                     section.format.color = Color32::WHITE;
                                 }
                             }
-                            ui.add(egui::Label::new(job).extend());
+                            ui.add(egui::Label::new(job).extend().selectable(true));
                         }
                         ui.end_row();
                     }

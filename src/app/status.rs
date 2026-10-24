@@ -528,6 +528,7 @@ fn status_label(ui: &mut egui::Ui, text: &str) {
 enum SettingsTab {
     Editor,
     Ai,
+    Pi,
     Servers,
 }
 
@@ -535,7 +536,8 @@ fn tab_index(tab: &SettingsTab) -> usize {
     match tab {
         SettingsTab::Editor => 0,
         SettingsTab::Ai => 1,
-        SettingsTab::Servers => 2,
+        SettingsTab::Pi => 2,
+        SettingsTab::Servers => 3,
     }
 }
 
@@ -851,12 +853,12 @@ fn servers_settings_ui(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
         settings_section(ui, t!("pi agent"));
         egui::Grid::new("settings_pi").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
             ui.label(t!("pi agent: command"));
-            *changed |= ui.add(egui::TextEdit::singleline(&mut config.pi_command).desired_width(200.0)).lost_focus();
-            ui.end_row();
-
-            ui.label(t!("pi agent: model"));
-            *changed |=
-                ui.add(egui::TextEdit::singleline(&mut config.agent_model).hint_text("provider/id").desired_width(260.0)).lost_focus();
+            let command_response = ui.add(egui::TextEdit::singleline(&mut config.pi_command).desired_width(200.0));
+            if command_response.changed() {
+                config.pi_entry.clear();
+                config.pi_runtime.clear();
+            }
+            *changed |= command_response.lost_focus();
             ui.end_row();
 
             ui.label(t!("pi agent: mode at start"));
@@ -867,6 +869,46 @@ fn servers_settings_ui(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
             *changed |= settings_checkbox(ui, &mut config.agent_sandbox, Some(t!("Write only to the project folder, ~/.pi and caches")));
             ui.end_row();
         });
+
+        let install_id = ui.make_persistent_id("pi_user_install_state");
+        let install_state =
+            ui.ctx().data_mut(|data| data.get_temp::<std::sync::Arc<std::sync::Mutex<crate::pi_install::InstallState>>>(install_id));
+        let installing = install_state
+            .as_ref()
+            .is_some_and(|state| matches!(&*state.lock().unwrap_or_else(|e| e.into_inner()), crate::pi_install::InstallState::Running(_)));
+        ui.horizontal(|ui| {
+            if ui.add_enabled(!installing, egui::Button::new(t!("Install Pi for this user"))).clicked() {
+                let state = crate::pi_install::start(ui.ctx().clone());
+                ui.ctx().data_mut(|data| data.insert_temp(install_id, state));
+            }
+            ui.label(
+                RichText::new(t!("Pi includes its own private Node.js runtime; no system Node.js or administrator rights are needed."))
+                    .small()
+                    .color(theme::MUTED_TEXT),
+            );
+        });
+        if let Some(state) = install_state {
+            match state.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+                crate::pi_install::InstallState::Running(message) => {
+                    ui.label(RichText::new(message).small().color(theme::MUTED_TEXT));
+                }
+                crate::pi_install::InstallState::Finished(Ok(installed)) => {
+                    if config.pi_command != installed.node.to_string_lossy()
+                        || config.pi_entry != installed.entry.to_string_lossy()
+                        || config.pi_runtime != installed.runtime_dir.to_string_lossy()
+                    {
+                        config.pi_command = installed.node.to_string_lossy().into_owned();
+                        config.pi_entry = installed.entry.to_string_lossy().into_owned();
+                        config.pi_runtime = installed.runtime_dir.to_string_lossy().into_owned();
+                        *changed = true;
+                    }
+                    ui.label(RichText::new(t!("Pi is installed for this user.")).small().color(theme::SUCCESS));
+                }
+                crate::pi_install::InstallState::Finished(Err(error)) => {
+                    ui.label(RichText::new(t!("Pi installation failed: {error}", error = error)).small().color(theme::ERROR));
+                }
+            }
+        }
 
         settings_section(ui, t!("Remote"));
         egui::Grid::new("settings_remote").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
@@ -888,17 +930,21 @@ pub fn settings_tab_ui(ui: &mut egui::Ui, app: &mut App) {
     let mut tab: SettingsTab = match ui.ctx().data_mut(|d| d.get_temp::<u8>(tab_id)) {
         Some(0) => SettingsTab::Editor,
         Some(1) => SettingsTab::Ai,
-        Some(2) => SettingsTab::Servers,
+        Some(2) => SettingsTab::Pi,
+        Some(3) => SettingsTab::Servers,
         _ => SettingsTab::Editor,
     };
 
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
-            for (index, title) in [(0usize, t!("Editor")), (1, t!("AI Completion")), (2, t!("Servers & Agents"))] {
+            for (index, title) in
+                [(0usize, t!("Editor")), (1, t!("AI Completion")), (2, t!("Pi Models & Settings")), (3, t!("Servers & Agents"))]
+            {
                 if ui.selectable_label(tab_index(&tab) == index, title).clicked() {
                     tab = match index {
                         0 => SettingsTab::Editor,
                         1 => SettingsTab::Ai,
+                        2 => SettingsTab::Pi,
                         _ => SettingsTab::Servers,
                     };
                 }
@@ -908,6 +954,7 @@ pub fn settings_tab_ui(ui: &mut egui::Ui, app: &mut App) {
         match tab {
             SettingsTab::Editor => editor_settings_ui(ui, app, &mut changed),
             SettingsTab::Ai => ai_settings_ui(ui, app, completion_project.as_deref(), &mut changed),
+            SettingsTab::Pi => super::pi_settings::show(ui, app),
             SettingsTab::Servers => servers_settings_ui(ui, app, &mut changed),
         }
         ui.separator();

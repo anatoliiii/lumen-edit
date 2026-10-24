@@ -17,6 +17,7 @@ mod media;
 mod next_edit_view;
 mod palette;
 mod panel;
+mod pi_settings;
 mod pulse;
 mod run;
 mod scm;

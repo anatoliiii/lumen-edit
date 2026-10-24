@@ -22,6 +22,7 @@ mod git;
 mod host;
 mod inline_completion;
 mod lsp;
+mod pi_install;
 mod platform;
 mod syntax;
 mod tasks;
