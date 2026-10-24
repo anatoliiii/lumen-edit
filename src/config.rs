@@ -112,13 +112,15 @@ impl Config {
             }
             let _ = std::fs::copy(&legacy, config_path());
         }
-        match std::fs::read_to_string(config_path()) {
+        let mut config: Self = match std::fs::read_to_string(config_path()) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|error| {
                 eprintln!("lumen-edit: {}: {error}", config_path().display());
                 Config::default()
             }),
             Err(_) => Config::default(),
-        }
+        };
+        config.inline_completion.migrate_limits();
+        config
     }
 
     pub fn save(&self) {

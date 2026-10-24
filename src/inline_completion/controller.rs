@@ -121,7 +121,7 @@ pub struct Controller {
     tx: Sender<Done>,
     rx: Receiver<Done>,
     cache: CompletionCache,
-    recent: VecDeque<Instant>,
+    recent: VecDeque<(u64, Instant)>,
     pub metrics: Metrics,
     pub status: String,
     pub revision: u64,
@@ -167,7 +167,12 @@ impl Controller {
             if self.observed.as_ref().map(|i| &i.project) != identity.as_ref().map(|i| &i.project) {
                 self.cache.entries.clear();
             }
-            if let Some(active) = &self.active {
+            // Finish an already-started request while typing in this document.
+            // Its serial is invalidated below; the result cannot be displayed.
+            // Closing/changing documents or revoking consent still cancels it.
+            let same_document =
+                self.observed.as_ref().zip(identity.as_ref()).is_some_and(|(old, new)| old.project == new.project && old.doc == new.doc);
+            if !same_document && let Some(active) = &self.active {
                 active.cancel.store(true, Ordering::Relaxed);
             }
             self.serial += 1;
@@ -191,12 +196,20 @@ impl Controller {
         self.retry = retry;
         self.cache.entries.clear();
     }
+    pub fn waiting(&self) -> bool {
+        !self.issued && self.cooldown.is_some_and(|until| until > Instant::now())
+    }
     pub fn busy(&self) -> bool {
         self.active.as_ref().is_some_and(|a| a.busy.load(Ordering::Acquire))
     }
     pub fn wake_after(&self, settings: &Settings) -> Option<Duration> {
         if self.issued || self.busy() {
             return None;
+        }
+        if let Some(until) = self.cooldown
+            && until > Instant::now()
+        {
+            return Some(until.saturating_duration_since(Instant::now()));
         }
         let debounce = Duration::from_millis(settings.debounce_ms.clamp(50, 2000));
         let wait = debounce.saturating_sub(self.since.elapsed());
@@ -211,8 +224,15 @@ impl Controller {
     pub fn poll(&mut self, settings: &Settings) -> Option<Ghost> {
         let mut ghost = None;
         while let Ok(done) = self.rx.try_recv() {
+            if done.serial != self.serial && self.status == "AI completion…" {
+                self.status.clear();
+            }
             self.metrics.latency_ms = done.latency.as_millis();
+            if !done.charged {
+                self.recent.retain(|(serial, _)| *serial != done.serial);
+            }
             if done.charged {
+                self.metrics.requests += 1;
                 self.metrics.reserved_usd += settings.reserve_per_request_usd.max(0.001);
             }
             match done.result {
@@ -242,6 +262,7 @@ impl Controller {
                 Err(error) => {
                     if error.contains("HTTP 429") {
                         self.cooldown = Some(Instant::now() + Duration::from_secs(30));
+                        self.issued = false;
                     }
                     if error != "Cancelled" {
                         self.metrics.errors += 1;
@@ -256,12 +277,21 @@ impl Controller {
     }
     pub fn launch(&mut self, snapshot: Snapshot, settings: Settings, ctx: egui::Context) {
         self.issued = true;
-        self.recent.retain(|at| at.elapsed() < Duration::from_secs(60));
-        if self.recent.len() >= settings.requests_per_minute.min(60)
-            || self.metrics.requests >= settings.requests_per_session
-            || self.metrics.cost_usd + self.metrics.reserved_usd + settings.reserve_per_request_usd.max(0.001) > settings.session_budget_usd
-        {
-            self.status = "AI completion request or session budget reached".into();
+        self.recent.retain(|(_, at)| at.elapsed() < Duration::from_secs(60));
+        if self.recent.len() >= settings.requests_per_minute.min(60) {
+            if let Some((_, oldest)) = self.recent.front() {
+                self.cooldown = Some(*oldest + Duration::from_secs(60));
+                self.issued = false;
+                self.status = "AI completion rate limit; automatically retrying after cooldown".into();
+            }
+            return;
+        }
+        if self.metrics.requests >= settings.requests_per_session {
+            self.status = "AI completion session request limit reached; increase requests_per_session in settings".into();
+            return;
+        }
+        if self.metrics.cost_usd + self.metrics.reserved_usd + settings.reserve_per_request_usd.max(0.001) > settings.session_budget_usd {
+            self.status = "AI completion session spending budget reached".into();
             return;
         }
         let Some(identity) = self.observed.clone() else { return };
@@ -275,8 +305,7 @@ impl Controller {
         let tx = self.tx.clone();
         self.serial += 1;
         let serial = self.serial;
-        self.metrics.requests += 1;
-        self.recent.push_back(Instant::now());
+        self.recent.push_back((serial, Instant::now()));
         self.status = "AI completion…".into();
         std::thread::spawn(move || {
             let started = Instant::now();
@@ -305,6 +334,7 @@ impl Controller {
                 .map(|mut output| {
                     let source = snapshot.buffer.text();
                     let at = snapshot.buffer.rope.char_to_byte(snapshot.cursor);
+                    output.text = super::validation::normalize(snapshot.lang, &source, at, &output.text);
                     if !super::validation::acceptable(snapshot.lang, &source, at, &output.text) {
                         output.text.clear();
                     }
@@ -407,5 +437,73 @@ mod tests {
         assert!(c.ready(&settings, false));
         c.observe(None, false);
         assert!(!c.ready(&settings, true));
+    }
+    #[test]
+    fn typing_keeps_network_request_but_discards_its_stale_answer() {
+        let b = Buffer::new("client.");
+        let old = identity(&b);
+        let mut next = old.clone();
+        next.version += 1;
+        next.cursor += 1;
+        let mut c = Controller::default();
+        c.observe(Some(old.clone()), true);
+        let serial = c.serial;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let busy = Arc::new(AtomicBool::new(true));
+        c.active = Some(Active { cancel: cancel.clone(), busy: busy.clone() });
+        c.observe(Some(next), true);
+        assert!(!cancel.load(Ordering::Relaxed));
+        c.tx.send(Done {
+            identity: old,
+            serial,
+            context: None,
+            result: Ok(Output { text: "stale()".into(), cost: Some(0.001), ..Default::default() }),
+            latency: Duration::ZERO,
+            charged: true,
+        })
+        .unwrap();
+        busy.store(false, Ordering::Release);
+        assert!(c.poll(&Settings::default()).is_none());
+        assert_eq!(c.metrics.requests, 1);
+        c.since = Instant::now() - Duration::from_secs(1);
+        assert!(c.ready(&Settings::default(), false));
+    }
+    #[test]
+    fn minute_limit_schedules_automatic_retry() {
+        let b = Buffer::new("");
+        let mut c = Controller::default();
+        c.observe(Some(identity(&b)), true);
+        c.recent.push_back((0, Instant::now()));
+        let settings = Settings { requests_per_minute: 1, ..Default::default() };
+        let snapshot = Snapshot {
+            buffer: b,
+            lang: crate::syntax::Lang::Rust,
+            cursor: 0,
+            path: String::new(),
+            root: Default::default(),
+            clients: vec![],
+            related: vec![],
+        };
+        c.launch(snapshot, settings.clone(), egui::Context::default());
+        assert!(!c.issued);
+        assert!(c.wake_after(&settings).is_some());
+        assert!(!c.ready(&settings, false));
+        c.cooldown = Some(Instant::now() - Duration::from_secs(1));
+        c.since = Instant::now() - Duration::from_secs(1);
+        assert!(c.ready(&settings, false));
+    }
+    #[test]
+    fn cancelled_collection_does_not_spend_request_quota() {
+        let b = Buffer::new("");
+        let mut c = Controller::default();
+        let id = identity(&b);
+        c.observe(Some(id.clone()), true);
+        let serial = c.serial;
+        c.recent.push_back((serial, Instant::now()));
+        c.tx.send(Done { identity: id, serial, context: None, result: Err("Cancelled".into()), latency: Duration::ZERO, charged: false })
+            .unwrap();
+        c.poll(&Settings::default());
+        assert!(c.recent.is_empty());
+        assert_eq!(c.metrics.requests, 0);
     }
 }

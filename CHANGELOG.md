@@ -15,6 +15,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 
 ### Fixed
+- Automatic inline completion no longer burns quota by repeatedly cancelling requests while typing; minute limits retry automatically, request accounting excludes pre-HTTP cancellation/cache, and the original overly small defaults are migrated.
 - Inline completion now anchors the current insertion scope and rejects syntax regressions or misplaced Rust match-arm fragments, including inside macro token trees.
 - Creating a background worker preserves the user's selected session and document.
 - MCP forwarding preserves the native agent action parameter, enabling agent management and delegation through Pi tools.

@@ -18,6 +18,52 @@ fn errors(root: tree_sitter::Node<'_>) -> (usize, usize) {
     }
     (count, bytes)
 }
+/// A match-arm expression needs its separator before an existing next arm.
+/// Models often omit it; add it only after a real Rust fat-arrow token in a
+/// match block, never inside string/macro token trees or other languages.
+pub fn normalize(lang: Lang, source: &str, at: usize, insertion: &str) -> String {
+    if lang != Lang::Rust
+        || insertion.is_empty()
+        || at > source.len()
+        || !source.is_char_boundary(at)
+        || insertion.trim_end().ends_with(',')
+        || source[at..].trim_start().starts_with(',')
+    {
+        return insertion.into();
+    }
+    let before = source[..at].trim_end();
+    if !before.ends_with("=>") {
+        return insertion.into();
+    }
+    let Some(grammar) = syntax::grammar(lang) else {
+        return insertion.into();
+    };
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&grammar).is_err() {
+        return insertion.into();
+    }
+    let Some(tree) = parser.parse(source, None) else {
+        return insertion.into();
+    };
+    let Some(arrow) = tree.root_node().descendant_for_byte_range(before.len() - 1, before.len()) else {
+        return insertion.into();
+    };
+    if arrow.kind() != "=>" {
+        return insertion.into();
+    }
+    let mut node = arrow.parent();
+    while let Some(parent) = node {
+        if parent.kind() == "token_tree" {
+            return insertion.into();
+        }
+        if parent.kind() == "match_block" {
+            return format!("{},", insertion.trim_end());
+        }
+        node = parent.parent();
+    }
+    insertion.into()
+}
+
 pub fn acceptable(lang: Lang, source: &str, at: usize, insertion: &str) -> bool {
     if insertion.is_empty() {
         return true;
@@ -96,6 +142,28 @@ mod tests {
         assert!(acceptable(Lang::Rust, source, at, "let result=x*x;\n    result"));
         let source = "def square(x):\n    \n";
         assert!(acceptable(Lang::Python, source, source.len() - 1, "return x*x"));
+    }
+    #[test]
+    fn completes_missing_match_arm_body_before_existing_next_arm() {
+        let source = "fn run(command:&str) { match command {\n    \"close\" => \n    \"help\" => help(),\n    _ => (),\n} }";
+        let at = source.find("=> ").unwrap() + 3;
+        assert!(acceptable(Lang::Rust, source, at, "close(),"));
+        assert!(acceptable(Lang::Rust, source, at, "{ close(); },"));
+    }
+    #[test]
+    fn inserts_missing_match_separator_without_touching_macro_tokens() {
+        let source = "fn run(x:&str) { match x { \"close\" => \n\"help\" => help(), _ => () } }";
+        let at = source.find("=> ").unwrap() + 3;
+        let text = normalize(Lang::Rust, source, at, "close()");
+        assert_eq!(text, "close(),");
+        let proposed = format!("{}{}{}", &source[..at], text, &source[at..]);
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&syntax::grammar(Lang::Rust).unwrap()).unwrap();
+        assert!(!parser.parse(&proposed, None).unwrap().root_node().has_error());
+        assert_eq!(normalize(Lang::Rust, source, at, "close(),"), "close(),");
+        let source = "fn f() { macro_call!(a => ); }";
+        let at = source.find("=> ").unwrap() + 3;
+        assert_eq!(normalize(Lang::Rust, source, at, "something()"), "something()");
     }
     #[test]
     fn utf8_and_unknown_languages() {

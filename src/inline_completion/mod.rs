@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct Settings {
     pub projects: Vec<String>,
+    #[serde(default)]
+    pub limits_version: u8,
     pub paused: bool,
     pub model: String,
     pub temperature: f32,
@@ -21,16 +23,28 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             projects: Vec::new(),
+            limits_version: 1,
             paused: false,
             model: "mistralai/codestral-2508".into(),
             temperature: 0.1,
             max_tokens: 96,
             timeout_ms: 6000,
             debounce_ms: 180,
-            requests_per_minute: 12,
-            requests_per_session: 300,
+            requests_per_minute: 60,
+            requests_per_session: 5000,
             session_budget_usd: 1.0,
             reserve_per_request_usd: 0.01,
+        }
+    }
+}
+impl Settings {
+    pub fn migrate_limits(&mut self) {
+        if self.limits_version == 0 {
+            if self.requests_per_minute == 12 && self.requests_per_session == 300 {
+                self.requests_per_minute = 60;
+                self.requests_per_session = 5000;
+            }
+            self.limits_version = 1;
         }
     }
 }
@@ -173,5 +187,25 @@ pub fn tick(app: &mut crate::app::App, ctx: &eframe::egui::Context) {
             };
             app.inline_completion.launch(snapshot, app.config.inline_completion.clone(), ctx.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+    #[test]
+    fn migrate_only_original_small_limits() {
+        let mut old: Settings = toml::from_str("requests_per_minute=12\nrequests_per_session=300").unwrap();
+        old.migrate_limits();
+        assert_eq!(old.requests_per_minute, 60);
+        assert_eq!(old.requests_per_session, 5000);
+        let mut custom: Settings = toml::from_str("requests_per_minute=8\nrequests_per_session=100").unwrap();
+        custom.migrate_limits();
+        assert_eq!(custom.requests_per_minute, 8);
+        assert_eq!(custom.requests_per_session, 100);
+        old.requests_per_minute = 12;
+        old.requests_per_session = 300;
+        old.migrate_limits();
+        assert_eq!(old.requests_per_minute, 12);
     }
 }

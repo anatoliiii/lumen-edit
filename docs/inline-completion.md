@@ -53,8 +53,8 @@ temperature = 0.1
 max_tokens = 96
 timeout_ms = 6000
 debounce_ms = 180
-requests_per_minute = 12
-requests_per_session = 300
+requests_per_minute = 60
+requests_per_session = 5000
 session_budget_usd = 1.0
 reserve_per_request_usd = 0.01
 ```
@@ -157,7 +157,7 @@ python3 scripts/test-inline-completion.py --real-api target/debug/lumen-edit
 ```
 
 This uses temporary HOME/config/project, existing Pi credentials read-only,
-synthetic Rust/Python, a four-request limit, and checks automatic generation after real keyboard input, ghost/Tab/Undo via
+synthetic Rust/Python, an eight-request limit, and checks automatic generation after real keyboard input, ghost/Tab/Undo via
 native input and the control socket. It never enables the user's real projects.
 Screenshots go to `/tmp/lumen-inline-rs.png` and `/tmp/lumen-inline-py.png`.
 
@@ -213,3 +213,23 @@ strict workspace/all-targets clippy passed. Native automatic OpenRouter acceptan
 passed on Rust/Python, and the new complete `help()` expression scenario produced
 no ghost text. OpenRouter's null-content/stop response is treated as a valid
 empty completion, with usage retained, rather than a provider error.
+
+## Interactive request scheduling
+
+Typing in the same document invalidates the request serial but lets an already
+started HTTP request finish. The stale text is never displayed; its usage/cost
+is retained and the newest buffer is requested next. Closing/changing documents
+or revoking consent still cancels promptly. Collection cancelled before HTTP and
+cache hits do not consume network request quota.
+
+Minute-limit and HTTP 429 cooldowns schedule a repaint and automatically retry the
+latest eligible state after expiry. Waiting shows `AI …`, with the reason in its
+hover text. Session request and spending limits report separate reasons.
+Default limits are now 60/minute and 5000/session; the $1 session spending budget
+is unchanged. Existing settings with the original exact 12/minute + 300/session
+pair are migrated once, tracked by `limits_version`; other custom limits are
+preserved. No project is opted in by this migration.
+
+Regression coverage includes stale in-flight results, automatic cooldown wakeup,
+non-network cancellations not spending quota, default migration, and completion
+of a missing Rust match-arm body immediately before an existing next arm.

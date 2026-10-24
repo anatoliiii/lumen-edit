@@ -3,7 +3,7 @@
 
 Requires Linux, Xvfb, xdotool, and a working OpenRouter key in Pi or environment.
 Never enables completion in the user's config. Temporary project/state; at most
-four provider requests, no private source. Images are written to /tmp.
+eight provider requests, no private source. Images are written to /tmp.
 
 python3 scripts/test-inline-completion.py --real-api [target/debug/lumen-edit]
 Ordinary model-free tests: cargo test --locked --workspace
@@ -39,7 +39,8 @@ def main():
             folder.mkdir(parents=True, exist_ok=True)
         runtime.chmod(0o700)
         fixtures = [('square.rs', 'fn sum_squares(values: &[i32]) -> i32 {\n    // Use an explicit for loop and return the accumulated sum.\n   \n}\n', 3, 4),
-                    ('square.py', 'def square(x: int) -> int:\n   \n', 2, 4)]
+                    ('square.py', 'def square(x: int) -> int:\n   \n', 2, 4),
+                    ('match.rs', 'fn close() -> Option<i32> { Some(0) }\nfn run(command: &str) -> Option<i32> {\n    match command {\n        "close" =>\n        "help" => Some(0),\n        _ => None,\n    }\n}\n', 4, len('        "close" =>') + 1)]
         help_source = 'fn help() -> &\'static str {\n    include_str!("help.txt")\n}\nfn run(command: &str) {\n    match command { "open" => open(), "save" => save(), _ => () }\n}\n'
         (project / 'help.rs').write_text(help_source)
         for filename, source, _, _ in fixtures:
@@ -53,7 +54,7 @@ def main():
             + f'disabled_servers = {json.dumps(disabled)}\n'
             + '[inline_completion]\n'
             + f'projects = [{json.dumps("local|" + str(project))}]\n'
-            + 'requests_per_session = 4\nsession_budget_usd = 0.1\n')
+            + 'requests_per_session = 8\nsession_budget_usd = 0.1\n')
         env = dict(os.environ, HOME=str(root / 'home'), XDG_CONFIG_HOME=str(root / 'config'),
                    XDG_RUNTIME_DIR=str(runtime), XDG_CACHE_HOME=str(root / 'cache'),
                    XDG_STATE_HOME=str(root / 'state'), PI_CODING_AGENT_DIR=str(pi_dir), SHELL='/bin/sh')
@@ -101,7 +102,7 @@ def main():
                 window = subprocess.check_output(['xdotool', 'search', '--onlyvisible', '--sync', '--pid', str(editor.pid)], env=env, text=True).splitlines()[0]
                 subprocess.run(['xdotool', 'windowfocus', '--sync', window], env=env, check=True)
                 for filename, original, line, column in fixtures:
-                    source = original.replace('   \n', '    \n', 1)
+                    source = original.replace('=>\n', '=> \n', 1) if filename == 'match.rs' else original.replace('   \n', '    \n', 1)
                     call('set_cursor', path=filename, line=line, column=column)
                     # Allow focus + state observation to complete before issuing manually.
                     time.sleep(0.2)
@@ -136,7 +137,7 @@ def main():
                 wait_for(finished_help, 'Complete-expression request did not finish')
                 assert not call('state')['active']['inline_completion_visible'], 'Unnecessary continuation after a complete help expression'
                 call('close_file', path='help.rs', force=True)
-                print('PASS: automatic debounce from real keyboard input, OpenRouter, Rust/Python fallback, native ghost, Tab, atomic Undo and no continuation after complete help expression; isolated config')
+                print('PASS: missing match-arm body, automatic debounce from real keyboard input, OpenRouter, Rust/Python fallback, native ghost, Tab, atomic Undo and no continuation after complete help expression; isolated config')
             except Exception:
                 log.flush()
                 print((root / 'editor.log').read_text()[-4000:], file=__import__('sys').stderr)

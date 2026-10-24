@@ -407,7 +407,7 @@ pub fn status_bar(ui: &mut egui::Ui, app: &mut App) {
                 if ai_enabled {
                     let busy = app.inline_completion.busy();
                     let status = &app.inline_completion.status;
-                    let label = if busy {
+                    let label = if busy || app.inline_completion.waiting() {
                         "AI …"
                     } else if status.is_empty() {
                         "AI"
