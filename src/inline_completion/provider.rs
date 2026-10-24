@@ -67,7 +67,7 @@ impl InceptionFimProvider {
             "model": "mercury-edit-2",
             "prompt": context.prefix,
             "suffix": context.suffix,
-            "max_tokens": settings.max_tokens.clamp(1, 32),
+            "max_tokens": settings.max_tokens.clamp(1, super::MAX_TOKENS),
             "temperature": settings.temperature.clamp(0.0, 1.0),
             "stream": false
         })
@@ -178,7 +178,7 @@ impl CompletionProvider for OpenRouterProvider {
                     .bearer_auth(&self.key)
                     .header("X-Title", "Lumen Edit inline completion")
                     .json(&json!({"model": settings.model, "temperature": settings.temperature.clamp(0.0, 1.0),
-                        "max_tokens": settings.max_tokens.clamp(1, 512), "stream": false,
+                        "max_tokens": settings.max_tokens.clamp(1, super::MAX_TOKENS), "stream": false,
                         "messages": [{"role":"system", "content":SYSTEM}, {"role":"user", "content": context.prompt()}]}))
                     .send()
                     .await
@@ -290,12 +290,14 @@ mod tests {
             prefix: "fn square(x: i32) -> i32 {\n    x * ".into(),
             suffix: "x\n}\n".into(),
         };
-        let settings = Settings { max_tokens: 512, ..Default::default() };
+        let settings = Settings { max_tokens: 4096, ..Default::default() };
         let body = InceptionFimProvider::body(&context, &settings);
         assert_eq!(body["model"], "mercury-edit-2");
         assert_eq!(body["prompt"], context.prefix);
         assert_eq!(body["suffix"], context.suffix);
-        assert_eq!(body["max_tokens"], 32);
+        assert_eq!(body["max_tokens"], 512);
+        let short = Settings { max_tokens: crate::inline_completion::FimProfile::Short.max_tokens(), ..Default::default() };
+        assert_eq!(InceptionFimProvider::body(&context, &short)["max_tokens"], 32);
         assert_eq!(body["stream"], false);
         assert!(body.get("messages").is_none());
     }

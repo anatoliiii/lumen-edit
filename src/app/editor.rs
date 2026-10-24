@@ -1561,41 +1561,7 @@ fn show_popups(
         }
     }
 
-    // A separate review surface; Next Edit never reuses Ghost Text or Tab.
-    if let Some(preview) = doc.view.next_edit_preview.as_ref() {
-        let diff = preview.diff.clone();
-        let mut accept = false;
-        let mut dismiss = false;
-        egui::Window::new(t!("Next Edit Preview")).collapsible(false).resizable(true).default_width(560.0).default_height(260.0).show(
-            &ui.ctx().clone(),
-            |ui| {
-                ui.label(format!("{}", t!("Review the proposed change before applying it.")));
-                egui::ScrollArea::both().max_height(180.0).show(ui, |ui| {
-                    ui.add(egui::Label::new(egui::RichText::new(&diff).monospace()).selectable(true));
-                });
-                ui.small(format!(
-                    "context {} ms · HTTP {} ms · diff {} ms · total {} ms · tokens {} / {} (cached {})",
-                    preview.metrics.context_prepare_ms,
-                    preview.metrics.http_latency_ms,
-                    preview.metrics.diff_prepare_ms,
-                    preview.metrics.total_latency_ms,
-                    preview.metrics.prompt_tokens,
-                    preview.metrics.completion_tokens,
-                    preview.metrics.cached_tokens
-                ));
-                ui.horizontal(|ui| {
-                    accept = ui.button(t!("Accept Next Edit")).clicked();
-                    dismiss = ui.button(t!("Dismiss")).clicked();
-                });
-            },
-        );
-        if accept {
-            accept_next_edit(doc);
-        }
-        if dismiss {
-            doc.view.next_edit_preview = None;
-        }
-    }
+    super::next_edit_view::show(ui.ctx(), doc);
 }
 
 pub fn strip_markdown(text: &str) -> String {

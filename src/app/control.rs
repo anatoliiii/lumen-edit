@@ -803,9 +803,10 @@ impl App {
         let (latency_p50_ms, latency_p95_ms) = m.latency_percentiles();
         let inline_completion = json!({"requests":m.requests,"success":m.success,"errors":m.errors,"accepted":m.accepted,"rejected":m.rejected,
             "cache_hits":m.cache_hits,"latency_ms":m.latency_ms,"debounce_ms":m.debounce_ms,"context_prepare_ms":m.context_prepare_ms,
-            "http_request_ms":m.http_request_ms,"total_latency_ms":m.total_latency_ms,"display_ms":m.display_ms,"latency_p50_ms":latency_p50_ms,"latency_p95_ms":latency_p95_ms,
-            "input_tokens":m.input_tokens,"output_tokens":m.output_tokens,"cached_tokens":m.cached_tokens,"rejection_reason":m.rejection_reason,"cost_usd":m.cost_usd,
-            "reserved_usd":m.reserved_usd,"busy":self.inline_completion.busy(),"status":self.inline_completion.status,
+            "queue_ms":m.queue_ms,"http_request_ms":m.http_request_ms,"total_latency_ms":m.total_latency_ms,"display_ms":m.display_ms,"latency_p50_ms":latency_p50_ms,"latency_p95_ms":latency_p95_ms,
+            "input_tokens":m.input_tokens,"output_tokens":m.output_tokens,"cached_tokens":m.cached_tokens,"rejection_reason":m.rejection_reason,
+            "session_requests":self.inline_completion.ledger.requests,"cost_usd":self.inline_completion.ledger.cost_usd,
+            "reserved_usd":self.inline_completion.ledger.reserved_usd,"busy":self.inline_completion.busy(),"status":self.inline_completion.status,
             "enabled":!self.config.inline_completion.paused && self.workspace.as_ref().is_some_and(|w|!w.host.is_remote() && self.config.inline_completion.projects.contains(&w.session_key()))});
         let connecting = self.connect.as_ref().map(|c| json!({ "target": c.target, "error": c.error }));
         json!({

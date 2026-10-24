@@ -635,14 +635,33 @@ pub fn settings_window(ctx: &egui::Context, app: &mut App) {
                     ui.label(t!("Model"));changed |= ui.text_edit_singleline(&mut config.inline_completion.model).changed();ui.end_row();
                 }
                 ui.label("Temperature");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.temperature,0.0..=1.0)).changed();ui.end_row();
-                ui.label("Max tokens");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.max_tokens,1..=32)).changed();ui.end_row();
+                ui.label(t!("FIM length"));
+                ui.horizontal(|ui| {
+                    use crate::inline_completion::FimProfile;
+                    let current = FimProfile::of(config.inline_completion.max_tokens);
+                    for profile in FimProfile::ALL {
+                        let label = match profile { FimProfile::Short => t!("Short hint"), FimProfile::MultiLine => t!("Several lines") };
+                        if ui.selectable_label(current == Some(profile), format!("{label} · {}", profile.max_tokens())).clicked() {
+                            config.inline_completion.max_tokens = profile.max_tokens();
+                            changed = true;
+                        }
+                    }
+                });
+                ui.end_row();
+                ui.label("Max tokens");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.max_tokens,1..=crate::inline_completion::MAX_TOKENS)).changed();ui.end_row();
+            });
+            ui.label(RichText::new(t!("Session limits below are shared by FIM and Next Edit.")).small().color(theme::MUTED_TEXT));
+            egui::Grid::new("inline_completion_limits").num_columns(2).show(ui, |ui| {
                 ui.label("Requests / minute");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.requests_per_minute,1..=60)).changed();ui.end_row();
+                ui.label("Requests / session");changed |= ui.add(egui::DragValue::new(&mut config.inline_completion.requests_per_session).range(1..=100_000)).changed();ui.end_row();
                 ui.label("Session budget, USD");changed |= ui.add(egui::DragValue::new(&mut config.inline_completion.session_budget_usd).range(0.0..=100.0).speed(0.1)).changed();ui.end_row();
             });
+            let ledger = &app.inline_completion.ledger;
+            ui.label(format!("FIM + Next Edit: requests {} · cost ${:.4} · reserved ${:.4}", ledger.requests, ledger.cost_usd, ledger.reserved_usd));
             ui.label(t!("Tab accepts; Esc dismisses; Ctrl+Alt+Space requests AI completion."));
             let m=&app.inline_completion.metrics;
             let (p50, p95) = m.latency_percentiles();
-            ui.label(format!("Requests {} · success {} · errors {} · cache {}\nDebounce {} ms · context {} ms · HTTP {} ms · display {} ms\nTotal {} ms · p50 {} ms · p95 {} ms\nAccepted {} · rejected {} · tokens {} / {} (cached {})\nCost ${:.4} · reserved ${:.4}",m.requests,m.success,m.errors,m.cache_hits,m.debounce_ms,m.context_prepare_ms,m.http_request_ms,m.display_ms,m.total_latency_ms,p50,p95,m.accepted,m.rejected,m.input_tokens,m.output_tokens,m.cached_tokens,m.cost_usd,m.reserved_usd));
+            ui.label(format!("FIM requests {} · success {} · errors {} · cache {}\nDebounce {} ms · queue {} ms · context {} ms · HTTP {} ms · display {} ms\nTotal {} ms · p50 {} ms · p95 {} ms\nAccepted {} · rejected {} · tokens {} / {} (cached {})",m.requests,m.success,m.errors,m.cache_hits,m.debounce_ms,m.queue_ms,m.context_prepare_ms,m.http_request_ms,m.display_ms,m.total_latency_ms,p50,p95,m.accepted,m.rejected,m.input_tokens,m.output_tokens,m.cached_tokens));
             if !m.rejection_reason.is_empty() { ui.label(t!("Last completion: {reason}", reason = m.rejection_reason)); }
             if !app.inline_completion.status.is_empty() {ui.label(&app.inline_completion.status);}
             ui.separator();

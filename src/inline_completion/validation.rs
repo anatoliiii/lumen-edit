@@ -112,9 +112,62 @@ pub fn acceptable(lang: Lang, source: &str, at: usize, insertion: &str) -> bool 
     let new = errors(after.root_node());
     new.0 <= old.0 && new.1 <= old.1
 }
+/// Checks a Next Edit replacement of `range` (bytes) against the whole
+/// document. `acceptable` assumes a pure insertion, so it is not reused here.
+/// Rejects replacements that add syntax errors; a warning means the result
+/// parses no worse than before but cannot be fully vouched for.
+pub fn check_replacement(
+    lang: Lang,
+    source: &str,
+    range: std::ops::Range<usize>,
+    replacement: &str,
+) -> Result<Option<&'static str>, &'static str> {
+    if range.start > range.end || range.end > source.len() || !source.is_char_boundary(range.start) || !source.is_char_boundary(range.end) {
+        return Err("Next Edit region no longer matches the document");
+    }
+    let Some(grammar) = syntax::grammar(lang) else {
+        return Ok(None);
+    };
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&grammar).is_err() {
+        return Ok(Some("Syntax was not checked for this file"));
+    }
+    let proposed = format!("{}{}{}", &source[..range.start], replacement, &source[range.end..]);
+    let (Some(before), Some(after)) = (parser.parse(source, None), parser.parse(&proposed, None)) else {
+        return Ok(Some("Syntax was not checked for this file"));
+    };
+    let old = errors(before.root_node());
+    let new = errors(after.root_node());
+    if new.0 > old.0 {
+        return Err("Next Edit rejected: the change would introduce syntax errors");
+    }
+    if new.1 > old.1 {
+        return Ok(Some("The change moves or widens existing syntax errors; review it carefully"));
+    }
+    if new.0 > 0 {
+        return Ok(Some("The file still has syntax errors, so the check is incomplete"));
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn replacement_check_rejects_new_errors_and_warns_when_ambiguous() {
+        let source = "fn a() {\n    old();\n}\n";
+        let at = source.find("old").unwrap();
+        let range = at..at + "old();".len();
+        assert_eq!(check_replacement(Lang::Rust, source, range.clone(), "new();"), Ok(None));
+        // Deletion is a replacement too.
+        assert_eq!(check_replacement(Lang::Rust, source, range.clone(), ""), Ok(None));
+        assert!(check_replacement(Lang::Rust, source, range.clone(), "new(;\n}\nfn b( {").is_err());
+        let broken = "fn a() {\n    old(;\n}\n";
+        let at = broken.find("old").unwrap();
+        assert!(check_replacement(Lang::Rust, broken, at..at + 3, "new").unwrap().is_some());
+        assert_eq!(check_replacement(Lang::Plain, "x", 0..1, "(("), Ok(None));
+        assert!(check_replacement(Lang::Rust, "😀", 1..2, "x").is_err());
+    }
     #[test]
     fn rejects_match_arms_inside_help_expression() {
         let source = "fn help() -> &'static str {\n    t_file!(\"cli-help.txt\")\n}\nfn run() { match command { _ => () } }";

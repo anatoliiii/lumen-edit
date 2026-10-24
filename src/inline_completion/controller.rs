@@ -1,6 +1,7 @@
 use crate::{
     inline_completion::{
         Context, ProviderMode, Settings,
+        budget::{Ledger, Refusal, Ticket},
         provider::{CompletionProvider, InceptionFimProvider, OpenRouterProvider, Output},
         semantic::{self, Snapshot},
     },
@@ -57,10 +58,9 @@ pub struct Metrics {
     pub rejected: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
-    pub cost_usd: f64,
-    pub reserved_usd: f64,
     pub latency_ms: u128,
     pub debounce_ms: u128,
+    pub queue_ms: u128,
     pub context_prepare_ms: u128,
     pub http_request_ms: u128,
     pub total_latency_ms: u128,
@@ -77,8 +77,10 @@ struct Done {
     result: Result<Output, String>,
     latency: Duration,
     debounce_ms: u128,
+    queue_ms: u128,
     context_prepare_ms: u128,
     charged: bool,
+    ticket: Ticket,
 }
 struct Active {
     cancel: Arc<AtomicBool>,
@@ -132,7 +134,8 @@ pub struct Controller {
     tx: Sender<Done>,
     rx: Receiver<Done>,
     cache: CompletionCache,
-    recent: VecDeque<(u64, Instant)>,
+    /// Shared with Next Edit: rate, session and spending limits.
+    pub ledger: Ledger,
     pub metrics: Metrics,
     pub status: String,
     pub revision: u64,
@@ -153,7 +156,7 @@ impl Default for Controller {
             tx,
             rx,
             cache: CompletionCache { entries: VecDeque::new() },
-            recent: VecDeque::new(),
+            ledger: Ledger::default(),
             metrics: Metrics::default(),
             status: String::new(),
             revision: 0,
@@ -204,8 +207,12 @@ impl Controller {
         self.retry = retry;
         self.cache.entries.clear();
     }
+    /// The later of this controller's retry time and the shared 429 backoff.
+    fn blocked_until(&self) -> Option<Instant> {
+        self.cooldown.max(self.ledger.cooldown()).filter(|until| *until > Instant::now())
+    }
     pub fn waiting(&self) -> bool {
-        !self.issued && self.cooldown.is_some_and(|until| until > Instant::now())
+        !self.issued && self.blocked_until().is_some()
     }
     pub fn busy(&self) -> bool {
         self.active.as_ref().is_some_and(|a| a.busy.load(Ordering::Acquire))
@@ -214,9 +221,7 @@ impl Controller {
         if self.issued || self.busy() {
             return None;
         }
-        if let Some(until) = self.cooldown
-            && until > Instant::now()
-        {
+        if let Some(until) = self.blocked_until() {
             return Some(until.saturating_duration_since(Instant::now()));
         }
         let debounce = Duration::from_millis(settings.debounce_ms.clamp(50, 2000));
@@ -225,7 +230,7 @@ impl Controller {
     }
     pub fn ready(&self, settings: &Settings, manual: bool) -> bool {
         self.observed.is_some()
-            && self.cooldown.is_none_or(|at| Instant::now() >= at)
+            && self.blocked_until().is_none()
             && (manual || (!self.issued && self.since.elapsed() >= Duration::from_millis(settings.debounce_ms.clamp(50, 2000))))
             && self.active.as_ref().is_none_or(|a| !a.busy.load(Ordering::Acquire))
     }
@@ -235,25 +240,24 @@ impl Controller {
             if done.serial != self.serial && self.status == "AI completion…" {
                 self.status.clear();
             }
-            let total_latency_ms = done.debounce_ms + done.latency.as_millis();
+            let total_latency_ms = done.debounce_ms + done.queue_ms + done.latency.as_millis();
             self.metrics.latency_ms = total_latency_ms;
             self.metrics.total_latency_ms = total_latency_ms;
             self.metrics.display_ms = total_latency_ms;
             self.metrics.debounce_ms = done.debounce_ms;
+            self.metrics.queue_ms = done.queue_ms;
             self.metrics.context_prepare_ms = done.context_prepare_ms;
             self.metrics.http_request_ms = match &done.result {
                 Ok(output) => output.http_request_ms,
                 Err(_) if done.charged => done.latency.as_millis().saturating_sub(done.context_prepare_ms),
                 Err(_) => 0,
             };
-            self.metrics.latency_samples.push_back(total_latency_ms);
-            self.metrics.latency_samples.truncate(128);
-            if !done.charged {
-                self.recent.retain(|(serial, _)| *serial != done.serial);
-            }
+            self.metrics.add_latency(total_latency_ms);
             if done.charged {
                 self.metrics.requests += 1;
-                self.metrics.reserved_usd += settings.reserve_per_request_usd.max(0.001);
+                self.ledger.settle(done.ticket, done.result.as_ref().ok().and_then(|o| o.cost));
+            } else {
+                self.ledger.release(done.ticket);
             }
             match done.result {
                 Ok(output) => {
@@ -264,12 +268,6 @@ impl Controller {
                     self.metrics.input_tokens += output.input_tokens;
                     self.metrics.output_tokens += output.output_tokens;
                     self.metrics.cached_tokens += output.cached_tokens;
-                    if let Some(cost) = output.cost {
-                        self.metrics.cost_usd += cost;
-                        if done.charged {
-                            self.metrics.reserved_usd = (self.metrics.reserved_usd - settings.reserve_per_request_usd.max(0.001)).max(0.0);
-                        }
-                    }
                     if done.serial == self.serial && self.observed.as_ref() == Some(&done.identity) {
                         if let Some(context) = done.context {
                             self.cache.put(CompletionCache::key(&context, settings), output.text.clone());
@@ -285,7 +283,7 @@ impl Controller {
                 }
                 Err(error) => {
                     if error.contains("HTTP 429") {
-                        self.cooldown = Some(Instant::now() + Duration::from_secs(30));
+                        self.ledger.backoff();
                         self.issued = false;
                     }
                     if error != "Cancelled" {
@@ -300,26 +298,20 @@ impl Controller {
         }
         ghost
     }
-    pub fn launch(&mut self, snapshot: Snapshot, settings: Settings, ctx: egui::Context) {
+    pub fn launch(&mut self, snapshot: Snapshot, settings: Settings, ctx: egui::Context, manual: bool) {
         self.issued = true;
-        self.recent.retain(|(_, at)| at.elapsed() < Duration::from_secs(60));
-        if self.recent.len() >= settings.requests_per_minute.min(60) {
-            if let Some((_, oldest)) = self.recent.front() {
-                self.cooldown = Some(*oldest + Duration::from_secs(60));
-                self.issued = false;
-                self.status = "AI completion rate limit; automatically retrying after cooldown".into();
-            }
-            return;
-        }
-        if self.metrics.requests >= settings.requests_per_session {
-            self.status = "AI completion session request limit reached; increase requests_per_session in settings".into();
-            return;
-        }
-        if self.metrics.cost_usd + self.metrics.reserved_usd + settings.reserve_per_request_usd.max(0.001) > settings.session_budget_usd {
-            self.status = "AI completion session spending budget reached".into();
-            return;
-        }
         let Some(identity) = self.observed.clone() else { return };
+        let ticket = match self.ledger.reserve(&settings) {
+            Ok(ticket) => ticket,
+            Err(refusal) => {
+                if let Refusal::Cooldown(until) = refusal {
+                    self.cooldown = Some(until);
+                    self.issued = false;
+                }
+                self.status = refusal.message("AI completion");
+                return;
+            }
+        };
         // Exact semantic cache lookup is performed on the worker; this UI only
         // clones a small bounded cache, never parses syntax or waits for LSP.
         let cached: Vec<_> =
@@ -330,11 +322,12 @@ impl Controller {
         let tx = self.tx.clone();
         self.serial += 1;
         let serial = self.serial;
-        let debounce_ms = self.since.elapsed().as_millis();
-        self.recent.push_back((serial, Instant::now()));
+        let debounce_ms = debounce_latency(self.since.elapsed(), &settings, manual);
+        let queued = Instant::now();
         self.status = "AI completion…".into();
         std::thread::spawn(move || {
             let started = Instant::now();
+            let queue_ms = started.duration_since(queued).as_millis();
             let context_started = Instant::now();
             let mut context = None;
             let mut charged = false;
@@ -377,15 +370,36 @@ impl Controller {
                     }
                     output
                 });
-            let _ =
-                tx.send(Done { identity, serial, context, result, latency: started.elapsed(), debounce_ms, context_prepare_ms, charged });
+            let _ = tx.send(Done {
+                identity,
+                serial,
+                context,
+                result,
+                latency: started.elapsed(),
+                debounce_ms,
+                queue_ms,
+                context_prepare_ms,
+                charged,
+                ticket,
+            });
             busy.store(false, Ordering::Release);
             ctx.request_repaint();
         });
     }
 }
 
+/// Only the configured quiet period is latency; idle time before a manual
+/// request or a cooldown retry is not.
+fn debounce_latency(since_edit: Duration, settings: &Settings, manual: bool) -> u128 {
+    if manual { 0 } else { since_edit.min(Duration::from_millis(settings.debounce_ms.clamp(50, 2000))).as_millis() }
+}
 impl Metrics {
+    fn add_latency(&mut self, ms: u128) {
+        self.latency_samples.push_back(ms);
+        while self.latency_samples.len() > 128 {
+            self.latency_samples.pop_front();
+        }
+    }
     pub fn latency_percentiles(&self) -> (u128, u128) {
         if self.latency_samples.is_empty() {
             return (0, 0);
@@ -442,6 +456,7 @@ mod tests {
         let mut c = Controller::default();
         c.observe(Some(id.clone()), true);
         let serial = c.serial;
+        let ticket = c.ledger.reserve(&Settings::default()).unwrap();
         c.observe(None, false);
         c.tx.send(Done {
             identity: id,
@@ -450,8 +465,10 @@ mod tests {
             result: Ok(Output { text: "late".into(), ..Default::default() }),
             latency: Duration::ZERO,
             debounce_ms: 0,
+            queue_ms: 0,
             context_prepare_ms: 0,
             charged: false,
+            ticket,
         })
         .unwrap();
         assert!(c.poll(&Settings::default()).is_none());
@@ -500,6 +517,7 @@ mod tests {
         let mut c = Controller::default();
         c.observe(Some(old.clone()), true);
         let serial = c.serial;
+        let ticket = c.ledger.reserve(&Settings::default()).unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
         let busy = Arc::new(AtomicBool::new(true));
         c.active = Some(Active { cancel: cancel.clone(), busy: busy.clone() });
@@ -512,13 +530,18 @@ mod tests {
             result: Ok(Output { text: "stale()".into(), cost: Some(0.001), ..Default::default() }),
             latency: Duration::ZERO,
             debounce_ms: 0,
+            queue_ms: 0,
             context_prepare_ms: 0,
             charged: true,
+            ticket,
         })
         .unwrap();
         busy.store(false, Ordering::Release);
         assert!(c.poll(&Settings::default()).is_none());
         assert_eq!(c.metrics.requests, 1);
+        assert_eq!(c.ledger.requests, 1);
+        assert!((c.ledger.cost_usd - 0.001).abs() < 1e-9);
+        assert_eq!(c.ledger.reserved_usd, 0.0);
         c.since = Instant::now() - Duration::from_secs(1);
         assert!(c.ready(&Settings::default(), false));
     }
@@ -527,8 +550,8 @@ mod tests {
         let b = Buffer::new("");
         let mut c = Controller::default();
         c.observe(Some(identity(&b)), true);
-        c.recent.push_back((0, Instant::now()));
         let settings = Settings { requests_per_minute: 1, ..Default::default() };
+        c.ledger.reserve(&settings).unwrap();
         let snapshot = Snapshot {
             buffer: b,
             lang: crate::syntax::Lang::Rust,
@@ -538,7 +561,7 @@ mod tests {
             clients: vec![],
             related: vec![],
         };
-        c.launch(snapshot, settings.clone(), egui::Context::default());
+        c.launch(snapshot, settings.clone(), egui::Context::default(), false);
         assert!(!c.issued);
         assert!(c.wake_after(&settings).is_some());
         assert!(!c.ready(&settings, false));
@@ -553,7 +576,7 @@ mod tests {
         let id = identity(&b);
         c.observe(Some(id.clone()), true);
         let serial = c.serial;
-        c.recent.push_back((serial, Instant::now()));
+        let ticket = c.ledger.reserve(&Settings::default()).unwrap();
         c.tx.send(Done {
             identity: id,
             serial,
@@ -561,12 +584,32 @@ mod tests {
             result: Err("Cancelled".into()),
             latency: Duration::ZERO,
             debounce_ms: 0,
+            queue_ms: 0,
             context_prepare_ms: 0,
             charged: false,
+            ticket,
         })
         .unwrap();
         c.poll(&Settings::default());
-        assert!(c.recent.is_empty());
+        assert_eq!(c.ledger.reserved_usd, 0.0);
+        assert_eq!(c.ledger.requests, 0);
         assert_eq!(c.metrics.requests, 0);
+    }
+    #[test]
+    fn latency_window_keeps_the_newest_samples() {
+        let mut m = Metrics::default();
+        for n in 0..129 {
+            m.add_latency(n);
+        }
+        assert_eq!(m.latency_samples.len(), 128);
+        assert_eq!(m.latency_samples.front(), Some(&1));
+        assert_eq!(m.latency_samples.back(), Some(&128));
+    }
+    #[test]
+    fn manual_request_after_idle_does_not_count_idle_as_latency() {
+        let settings = Settings::default();
+        assert_eq!(debounce_latency(Duration::from_secs(60), &settings, true), 0);
+        assert_eq!(debounce_latency(Duration::from_secs(60), &settings, false), settings.debounce_ms as u128);
+        assert_eq!(debounce_latency(Duration::from_millis(100), &Settings { debounce_ms: 500, ..settings }, false), 100);
     }
 }

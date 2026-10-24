@@ -70,7 +70,17 @@ pub struct UserEditEvent {
     pub after: String,
     pub typing: bool,
     pub deleting: bool,
+    /// Zero-based line where `context_before` begins, before the edit.
+    pub line: usize,
+    /// Up to two whole lines (bounded) preceding the edit, plus the start of
+    /// its own line; `context_after` is the rest of the last edited line and
+    /// up to two more.
+    pub context_before: String,
+    pub context_after: String,
 }
+
+const EVENT_CONTEXT_LINES: usize = 2;
+const EVENT_CONTEXT_CHARS: usize = 512;
 
 pub struct Buffer {
     pub rope: Rope,
@@ -313,16 +323,7 @@ impl Buffer {
             let start = range.start.min(end);
             let removed = self.rope.slice(start..end).to_string();
             if !matches!(kind, EditKind::External | EditKind::Prediction) {
-                self.user_edit_events.push_back(UserEditEvent {
-                    start,
-                    before: removed.clone(),
-                    after: text.clone(),
-                    typing: kind == EditKind::Typing,
-                    deleting: kind == EditKind::Deleting,
-                });
-                while self.user_edit_events.len() > 32 {
-                    self.user_edit_events.pop_front();
-                }
+                self.push_user_event(start, removed.clone(), text.clone(), kind == EditKind::Typing, kind == EditKind::Deleting);
             }
             self.record_byte_edit(start, end, text);
             self.rope.remove(start..end);
@@ -365,6 +366,29 @@ impl Buffer {
         self.last_edit = Some((kind, now));
     }
 
+    /// Records a user edit against the rope as it is just before the edit.
+    fn push_user_event(&mut self, start: usize, before: String, after: String, typing: bool, deleting: bool) {
+        let end = start + before.chars().count();
+        let first = self.rope.char_to_line(start).saturating_sub(EVENT_CONTEXT_LINES);
+        let ctx_start = self.rope.line_to_char(first).max(start.saturating_sub(EVENT_CONTEXT_CHARS));
+        let last = self.rope.char_to_line(end) + EVENT_CONTEXT_LINES + 1;
+        let ctx_end =
+            if last >= self.rope.len_lines() { self.rope.len_chars() } else { self.rope.line_to_char(last) }.min(end + EVENT_CONTEXT_CHARS);
+        self.user_edit_events.push_back(UserEditEvent {
+            start,
+            before,
+            after,
+            typing,
+            deleting,
+            line: self.rope.char_to_line(ctx_start),
+            context_before: self.rope.slice(ctx_start..start).to_string(),
+            context_after: self.rope.slice(end..ctx_end).to_string(),
+        });
+        while self.user_edit_events.len() > 32 {
+            self.user_edit_events.pop_front();
+        }
+    }
+
     fn record_byte_edit(&mut self, start: usize, end: usize, text: &str) {
         let start_byte = self.rope.char_to_byte(start);
         let old_end = self.rope.char_to_byte(end);
@@ -391,18 +415,10 @@ impl Buffer {
 
     pub fn undo(&mut self) {
         let Some(transaction) = self.undo.pop() else { return };
-        if transaction.user_history {
-            for change in transaction.changes.iter().rev() {
-                self.user_edit_events.push_back(UserEditEvent {
-                    start: change.start,
-                    before: change.inserted.clone(),
-                    after: change.removed.clone(),
-                    typing: false,
-                    deleting: false,
-                });
-            }
-        }
         for change in transaction.changes.iter().rev() {
+            if transaction.user_history {
+                self.push_user_event(change.start, change.inserted.clone(), change.removed.clone(), false, false);
+            }
             let end = change.start + change.inserted.chars().count();
             self.record_byte_edit(change.start, end, &change.removed);
             self.rope.remove(change.start..end);
@@ -417,18 +433,10 @@ impl Buffer {
 
     pub fn redo(&mut self) {
         let Some(transaction) = self.redo.pop() else { return };
-        if transaction.user_history {
-            for change in &transaction.changes {
-                self.user_edit_events.push_back(UserEditEvent {
-                    start: change.start,
-                    before: change.removed.clone(),
-                    after: change.inserted.clone(),
-                    typing: false,
-                    deleting: false,
-                });
-            }
-        }
         for change in &transaction.changes {
+            if transaction.user_history {
+                self.push_user_event(change.start, change.removed.clone(), change.inserted.clone(), false, false);
+            }
             let end = change.start + change.removed.chars().count();
             self.record_byte_edit(change.start, end, &change.inserted);
             self.rope.remove(change.start..end);

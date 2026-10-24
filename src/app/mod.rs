@@ -14,6 +14,7 @@ pub(crate) mod keymap;
 mod lsp_manager;
 mod markdown;
 mod media;
+mod next_edit_view;
 mod palette;
 mod panel;
 mod pulse;

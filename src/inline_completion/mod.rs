@@ -10,6 +10,28 @@ pub enum ProviderMode {
     MercuryEdit2,
     OpenRouterChat,
 }
+/// One output limit for every FIM provider, the payload and the settings UI.
+pub const MAX_TOKENS: u32 = 512;
+
+/// Named output budgets for FIM; `max_tokens` remains the stored value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FimProfile {
+    Short,
+    MultiLine,
+}
+impl FimProfile {
+    pub const ALL: [FimProfile; 2] = [FimProfile::Short, FimProfile::MultiLine];
+    pub fn max_tokens(self) -> u32 {
+        match self {
+            FimProfile::Short => 32,
+            FimProfile::MultiLine => 128,
+        }
+    }
+    pub fn of(max_tokens: u32) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.max_tokens() == max_tokens)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -83,6 +105,7 @@ impl Context {
     }
 }
 
+mod budget;
 mod controller;
 mod credentials;
 pub mod renderer;
@@ -167,7 +190,13 @@ pub fn tick(app: &mut crate::app::App, ctx: &eframe::egui::Context) {
         }
         if app.inline_completion.ready(&app.config.inline_completion, manual) && !app.next_edit.busy {
             let Some(Tab::Doc(doc)) = app.active_tab.and_then(|i| app.tabs.get_mut(i)) else { return };
-            if doc.view.completion.is_some() || doc.view.rename.is_some() || doc.view.code_actions.is_some() || doc.view.find.is_some() {
+            if doc.view.next_edit_preview.is_some()
+                || doc.view.next_edit_requested
+                || doc.view.completion.is_some()
+                || doc.view.rename.is_some()
+                || doc.view.code_actions.is_some()
+                || doc.view.find.is_some()
+            {
                 return;
             }
             app.lsp.sync(doc);
@@ -196,7 +225,7 @@ pub fn tick(app: &mut crate::app::App, ctx: &eframe::egui::Context) {
                 clients,
                 related,
             };
-            app.inline_completion.launch(snapshot, app.config.inline_completion.clone(), ctx.clone());
+            app.inline_completion.launch(snapshot, app.config.inline_completion.clone(), ctx.clone(), manual);
         }
     }
 }
@@ -209,11 +238,15 @@ impl next_edit::Controller {
         let active = app.active_tab.and_then(|i| app.tabs.get(i));
         let identity =
             active.and_then(|t| if let Tab::Doc(d) = t { Some((d.id, d.buffer.version, d.buffer.primary().head)) } else { None });
+        if self.busy {
+            ctx.request_repaint_after(std::time::Duration::from_millis(30));
+        }
         if self.busy && self.pending_identity != identity {
             self.invalidate();
             self.status = "Next Edit cancelled: active document or cursor changed".into();
         }
-        if let Some(preview) = self.poll(identity) {
+        self.settle_abandoned(&mut app.inline_completion.ledger);
+        if let Some(preview) = self.poll(identity, &mut app.inline_completion.ledger) {
             if let Some(Tab::Doc(doc)) = app.active_tab.and_then(|i| app.tabs.get_mut(i)) {
                 doc.view.next_edit_preview = Some(preview);
             }
@@ -221,8 +254,8 @@ impl next_edit::Controller {
         }
         for (index, tab) in app.tabs.iter_mut().enumerate() {
             if let Tab::Doc(doc) = tab {
-                let ident = (doc.id, doc.buffer.version, doc.buffer.primary().head);
-                if doc.view.next_edit_preview.is_some() && (Some(ident) != identity || Some(index) != app.active_tab) {
+                if doc.view.next_edit_preview.as_ref().is_some_and(|p| !p.is_current(doc.id, &doc.buffer) || Some(index) != app.active_tab)
+                {
                     doc.view.next_edit_preview = None;
                 }
                 if Some(index) != app.active_tab && doc.view.next_edit_requested {
@@ -257,9 +290,27 @@ impl next_edit::Controller {
             self.status = "Close the active editor popup before requesting Next Edit".into();
             return;
         }
+        // Same session limits, budget and 429 backoff as FIM.
+        let ticket = match app.inline_completion.ledger.reserve(&app.config.inline_completion) {
+            Ok(ticket) => ticket,
+            Err(refusal) => {
+                self.status = refusal.message("Next Edit");
+                return;
+            }
+        };
+        doc.view.ghost = None;
         let root = workspace.root.clone();
-        let history = doc.next_edit_history.iter().cloned().collect::<Vec<_>>();
-        self.launch(std::path::Path::new(&root), &doc.path, doc.id, &doc.buffer, &history, app.config.next_edit_region_lines);
+        let history = doc.next_edit_history.entries().cloned().collect::<Vec<_>>();
+        self.launch(
+            std::path::Path::new(&root),
+            &doc.path,
+            doc.id,
+            &doc.buffer,
+            doc.lang,
+            &history,
+            app.config.next_edit_region_lines,
+            ticket,
+        );
         ctx.request_repaint_after(std::time::Duration::from_millis(30));
     }
 }
