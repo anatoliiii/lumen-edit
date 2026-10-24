@@ -394,9 +394,7 @@ fn save_settings(state: &mut PiSettingsUi) {
 }
 
 fn settings_section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(8.0);
-    ui.label(RichText::new(title).strong().color(theme::ACCENT));
-    ui.separator();
+    super::settings_layout::section(ui, title);
 }
 
 fn draw_error(ui: &mut egui::Ui, error: Option<&String>) {
@@ -407,16 +405,15 @@ fn draw_error(ui: &mut egui::Ui, error: Option<&String>) {
 
 fn draw_providers(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
     draw_error(ui, state.models_error.as_ref());
-    ui.label(RichText::new(t!("Editing file: {path}", path = models_path().display())).small().color(theme::MUTED_TEXT));
+    ui.label(RichText::new(t!("Editing file: {path}", path = models_path().display())).small().color(super::settings_layout::HELP_TEXT));
     ui.label(
         RichText::new(t!("Custom providers from models.json. Provider IDs are used as the prefix in model IDs."))
             .small()
-            .color(theme::MUTED_TEXT),
+            .color(super::settings_layout::HELP_TEXT),
     );
     ui.add_space(6.0);
-    ui.columns(2, |columns| {
-        columns[0].set_min_width(180.0);
-        columns[0].vertical(|ui| {
+    super::settings_layout::master_detail(ui, |ui, list| {
+        if list {
             ui.heading(t!("Providers"));
             ui.separator();
             for id in provider_ids(&state.models) {
@@ -432,19 +429,22 @@ fn draw_providers(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
                 state.selected_provider.clear();
                 state.confirm_provider_delete = false;
             }
-        });
-        columns[1].vertical(|ui| {
+        } else {
             ui.heading(if state.provider.is_new { t!("New provider") } else { t!("Edit provider") });
             ui.separator();
             ui.label(t!("Provider ID"));
             ui.add(egui::TextEdit::singleline(&mut state.provider.id).hint_text("my-provider"));
             if !state.provider.is_new {
-                ui.label(RichText::new(t!("Changing the ID renames the provider and keeps its models.")).small().color(theme::MUTED_TEXT));
+                ui.label(
+                    RichText::new(t!("Changing the ID renames the provider and keeps its models."))
+                        .small()
+                        .color(super::settings_layout::HELP_TEXT),
+                );
             }
             ui.label(t!("Display name"));
             ui.text_edit_singleline(&mut state.provider.name);
             ui.label(t!("API type"));
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut state.provider.api).hint_text("openai-completions"));
                 egui::ComboBox::from_id_salt("pi_api_type_suggestions").selected_text(t!("Common API types")).show_ui(ui, |ui| {
                     for api in [
@@ -466,7 +466,9 @@ fn draw_providers(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
                 });
             });
             ui.label(
-                RichText::new(t!("Use an API type supported by Pi; custom APIs need a Pi extension.")).small().color(theme::MUTED_TEXT),
+                RichText::new(t!("Use an API type supported by Pi; custom APIs need a Pi extension."))
+                    .small()
+                    .color(super::settings_layout::HELP_TEXT),
             );
             ui.label(t!("Base URL"));
             ui.add(egui::TextEdit::singleline(&mut state.provider.base_url).hint_text("https://api.example.com/v1"));
@@ -475,9 +477,9 @@ fn draw_providers(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
             ui.label(
                 RichText::new(t!("A literal key is stored in Pi's user config. Prefer $ENV_NAME to keep secrets outside the file."))
                     .small()
-                    .color(theme::MUTED_TEXT),
+                    .color(super::settings_layout::HELP_TEXT),
             );
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui.button(t!("Save provider")).clicked() {
                     save_provider(state);
                 }
@@ -487,7 +489,7 @@ fn draw_providers(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
             });
             if state.confirm_provider_delete {
                 ui.colored_label(theme::WARNING, t!("This also removes every model under this provider."));
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui.button(t!("Delete provider and its models")).clicked() {
                         delete_provider(state);
                     }
@@ -496,7 +498,7 @@ fn draw_providers(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
                     }
                 });
             }
-        });
+        }
     });
 }
 
@@ -578,15 +580,15 @@ fn delete_provider(state: &mut PiSettingsUi) {
 
 fn draw_models(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
     draw_error(ui, state.models_error.as_ref());
-    ui.label(RichText::new(t!("Editing file: {path}", path = models_path().display())).small().color(theme::MUTED_TEXT));
+    ui.label(RichText::new(t!("Editing file: {path}", path = models_path().display())).small().color(super::settings_layout::HELP_TEXT));
     ui.label(
         RichText::new(t!("Models are stored under their provider. Select a model to edit its limits, capabilities and pricing."))
             .small()
-            .color(theme::MUTED_TEXT),
+            .color(super::settings_layout::HELP_TEXT),
     );
     ui.add_space(6.0);
     let providers = provider_ids(&state.models);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(t!("Provider"));
         egui::ComboBox::from_id_salt("pi_models_provider")
             .selected_text(if state.model_provider.is_empty() { t!("Select provider") } else { &state.model_provider })
@@ -612,12 +614,11 @@ fn draw_models(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
         }
     });
     if state.model_provider.is_empty() {
-        ui.colored_label(theme::MUTED_TEXT, t!("Add a provider first, then add models under it."));
+        ui.colored_label(super::settings_layout::HELP_TEXT, t!("Add a provider first, then add models under it."));
         return;
     }
-    ui.columns(2, |columns| {
-        columns[0].set_min_width(220.0);
-        columns[0].vertical(|ui| {
+    super::settings_layout::master_detail(ui, |ui, list| {
+        if list {
             ui.heading(t!("Models"));
             ui.separator();
             for model in provider_models(&state.models, &state.model_provider) {
@@ -628,8 +629,7 @@ fn draw_models(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
                     state.confirm_model_delete = false;
                 }
             }
-        });
-        columns[1].vertical(|ui| {
+        } else {
             ui.heading(if state.model.is_new { t!("New model") } else { t!("Edit model") });
             ui.separator();
             ui.label(t!("Model ID"));
@@ -638,21 +638,21 @@ fn draw_models(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
             ui.text_edit_singleline(&mut state.model.name);
             ui.label(t!("API override (optional)"));
             ui.add(egui::TextEdit::singleline(&mut state.model.api).hint_text(t!("Inherit provider API")));
-            egui::Grid::new("pi_model_limits").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
+            egui::Grid::new("pi_model_limits").num_columns(2).spacing([16.0, 12.0]).show(ui, |ui| {
                 ui.label(t!("Context window (tokens)"));
-                ui.text_edit_singleline(&mut state.model.context);
+                ui.add(egui::TextEdit::singleline(&mut state.model.context).desired_width(140.0));
                 ui.end_row();
                 ui.label(t!("Maximum output (tokens)"));
-                ui.text_edit_singleline(&mut state.model.max_tokens);
+                ui.add(egui::TextEdit::singleline(&mut state.model.max_tokens).desired_width(140.0));
                 ui.end_row();
             });
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut state.model.reasoning, t!("Reasoning"));
                 ui.checkbox(&mut state.model.text_input, t!("Text input"));
                 ui.checkbox(&mut state.model.image_input, t!("Image input"));
             });
             egui::CollapsingHeader::new(t!("Pricing per million tokens (USD)")).show(ui, |ui| {
-                egui::Grid::new("pi_model_pricing").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
+                egui::Grid::new("pi_model_pricing").num_columns(2).spacing([16.0, 12.0]).show(ui, |ui| {
                     for (label, value) in [
                         (t!("Input"), &mut state.model.input_cost),
                         (t!("Output"), &mut state.model.output_cost),
@@ -660,12 +660,12 @@ fn draw_models(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
                         (t!("Cache write"), &mut state.model.cache_write_cost),
                     ] {
                         ui.label(label);
-                        ui.text_edit_singleline(value);
+                        ui.add(egui::TextEdit::singleline(value).desired_width(140.0));
                         ui.end_row();
                     }
                 });
             });
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui.button(t!("Save model")).clicked() {
                     save_model(state);
                 }
@@ -675,7 +675,7 @@ fn draw_models(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
             });
             if state.confirm_model_delete {
                 ui.colored_label(theme::WARNING, t!("Removing a model may affect saved defaults."));
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui.button(t!("Delete model")).clicked() {
                         delete_model(state);
                     }
@@ -684,7 +684,7 @@ fn draw_models(ui: &mut egui::Ui, state: &mut PiSettingsUi) {
                     }
                 });
             }
-        });
+        }
     });
 }
 
@@ -808,8 +808,12 @@ fn delete_model(state: &mut PiSettingsUi) {
 
 fn draw_defaults(ui: &mut egui::Ui, state: &mut PiSettingsUi, app: &App) {
     draw_error(ui, state.settings_error.as_ref());
-    ui.label(RichText::new(t!("Editing file: {path}", path = settings_path().display())).small().color(theme::MUTED_TEXT));
-    ui.label(RichText::new(t!("Pi preferences are stored separately from provider/model definitions.")).small().color(theme::MUTED_TEXT));
+    ui.label(RichText::new(t!("Editing file: {path}", path = settings_path().display())).small().color(super::settings_layout::HELP_TEXT));
+    ui.label(
+        RichText::new(t!("Pi preferences are stored separately from provider/model definitions."))
+            .small()
+            .color(super::settings_layout::HELP_TEXT),
+    );
     settings_section(ui, t!("Startup model"));
     let available_models = model_options(&state.models, app);
     let current_pi_default =
@@ -887,7 +891,11 @@ fn draw_defaults(ui: &mut egui::Ui, state: &mut PiSettingsUi, app: &App) {
 }
 
 fn draw_lumen_agent(ui: &mut egui::Ui, state: &mut PiSettingsUi, app: &mut App) {
-    ui.label(RichText::new(t!("Lumen's model selection is separate from Pi's settings.json defaults.")).small().color(theme::MUTED_TEXT));
+    ui.label(
+        RichText::new(t!("Lumen's model selection is separate from Pi's settings.json defaults."))
+            .small()
+            .color(super::settings_layout::HELP_TEXT),
+    );
     settings_section(ui, t!("Default model for Lumen-hosted Pi sessions"));
     let available_models = model_options(&state.models, app);
     let current_lumen_default = available_models
@@ -912,7 +920,11 @@ fn draw_lumen_agent(ui: &mut egui::Ui, state: &mut PiSettingsUi, app: &mut App) 
                 .color(theme::WARNING),
         );
     }
-    ui.label(RichText::new(t!("The list combines models.json with models reported by open Pi sessions.")).small().color(theme::MUTED_TEXT));
+    ui.label(
+        RichText::new(t!("The list combines models.json with models reported by open Pi sessions."))
+            .small()
+            .color(super::settings_layout::HELP_TEXT),
+    );
     if ui.button(t!("Save Lumen agent default")).clicked() {
         app.config.save();
         state.message = Some((t!("Lumen's default agent model updated.").into(), false));
@@ -981,7 +993,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     if !state.loaded {
         state = load_ui();
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for (section, label) in [
             (Section::Providers, t!("Providers")),
             (Section::Models, t!("Models")),
@@ -995,11 +1007,11 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         }
     });
     ui.separator();
-    ui.label(RichText::new(t!("Pi directory: {path}", path = agent_dir().display())).small().color(theme::MUTED_TEXT));
+    ui.label(RichText::new(t!("Pi directory: {path}", path = agent_dir().display())).small().color(super::settings_layout::HELP_TEXT));
     ui.label(
         RichText::new(t!("Saved changes are used by new Pi sessions; restart a running agent to reload its catalog."))
             .small()
-            .color(theme::MUTED_TEXT),
+            .color(super::settings_layout::HELP_TEXT),
     );
     if let Some((message, error)) = &state.message {
         ui.colored_label(if *error { theme::ERROR } else { theme::SUCCESS }, message);

@@ -22,6 +22,7 @@ mod pulse;
 mod run;
 mod scm;
 mod search;
+mod settings_layout;
 mod status;
 mod teleport;
 mod util;
