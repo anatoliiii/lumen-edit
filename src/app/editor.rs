@@ -125,6 +125,12 @@ pub struct ViewState {
     pub reveal: bool,
     pub reveal_center: bool,
     pub completion: Option<Completion>,
+    pub ghost: Option<crate::inline_completion::Ghost>,
+    pub ai_manual: bool,
+    pub next_edit_requested: bool,
+    pub next_edit_preview: Option<crate::inline_completion::next_edit::Preview>,
+    pub ai_rejected: bool,
+    pub ai_accepted: u64,
     pub hover: Option<HoverPopup>,
     pub signature: Option<String>,
     pub find: Option<FindState>,
@@ -220,6 +226,9 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     if focused {
         handle_keyboard(ui, doc, settings, actions, visible_lines);
     }
+    if doc.view.ghost.as_ref().is_some_and(|g| !g.valid(doc.id, &doc.buffer)) {
+        doc.view.ghost = None;
+    }
     doc.absorb_edits();
     // Edits above may have removed lines; everything below uses the new count.
     let line_count = doc.buffer.line_count();
@@ -228,8 +237,13 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     let tab = doc.buffer.tab_size;
     let pointer = ui.input(|i| i.pointer.clone());
     let modifiers = ui.input(|i| i.modifiers);
+    let virtual_layout = ghost_layout(doc);
     let char_at_pos = |doc: &Document, pos: Pos2| -> usize {
-        let line = ((pos.y - text_rect.top() + doc.view.scroll.y) / line_h).floor().max(0.0) as usize;
+        let row = ((pos.y - text_rect.top() + doc.view.scroll.y) / line_h).floor().max(0.0) as usize;
+        if virtual_layout.in_ghost_rows(row) {
+            return doc.buffer.primary().head;
+        }
+        let line = virtual_layout.line_at(row);
         if line >= doc.buffer.line_count() {
             return doc.buffer.len_chars();
         }
@@ -337,7 +351,8 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     }
 
     // Vertical scrollbar drag.
-    let content_h = (line_count + visible_lines.saturating_sub(3)) as f32 * line_h;
+    let virtual_layout = ghost_layout(doc);
+    let content_h = (line_count + virtual_layout.extra + visible_lines.saturating_sub(3)) as f32 * line_h;
     let max_scroll_y = (content_h - text_rect.height()).max(0.0);
     let sb_response = ui.interact(scrollbar_rect, id.with("vscroll"), Sense::click_and_drag());
     if let Some(pos) = sb_response.interact_pointer_pos() {
@@ -388,9 +403,10 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
     let text_painter = ui.painter_at(text_rect);
     let gutter_painter = ui.painter_at(gutter_rect);
 
-    let first_line = (doc.view.scroll.y / line_h).floor() as usize;
-    let last_line = (first_line + visible_lines + 2).min(line_count);
-    let y_of = |line: usize, scroll_y: f32| text_rect.top() + line as f32 * line_h - scroll_y;
+    let first_row = (doc.view.scroll.y / line_h).floor() as usize;
+    let first_line = virtual_layout.line_at(first_row).min(line_count.saturating_sub(1));
+    let last_line = (virtual_layout.line_at(first_row + visible_lines + 2) + 1).min(line_count);
+    let y_of = |line: usize, scroll_y: f32| text_rect.top() + virtual_layout.row(line) as f32 * line_h - scroll_y;
     let scroll = doc.view.scroll;
     let x_of_display = |display: usize| text_rect.left() + TEXT_PAD + display as f32 * char_w - scroll.x;
     let first_display = (scroll.x / char_w).floor() as usize;
@@ -515,7 +531,10 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
         }
     }
 
-    // Text.
+    // Ghost text occupies virtual rows, moving the real suffix and later lines.
+    // The original syntax galley is clipped and translated for the suffix so
+    // existing highlighting survives without parsing generated code.
+    let ghost_visible = !virtual_layout.text.is_empty();
     let mut widest = doc.view.content_width;
     for (line, text) in &lines {
         let y = y_of(*line, scroll.y);
@@ -523,7 +542,32 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
         widest = widest.max(width as f32 * char_w + TEXT_PAD * 2.0);
         let galley = text_painter.layout_job(job);
         let x = x_of_display(first_display.min(width));
-        text_painter.galley(pos2(x, y + (line_h - row_h) / 2.0), galley, theme::TEXT);
+        if ghost_visible && *line == virtual_layout.line {
+            let cursor_x = x_of_display(virtual_layout.column);
+            let prefix_clip = Rect::from_min_max(text_rect.min, pos2(cursor_x.min(text_rect.right()), text_rect.bottom()));
+            text_painter.with_clip_rect(prefix_clip).galley(pos2(x, y + (line_h - row_h) / 2.0), galley.clone(), theme::TEXT);
+            let ghost_color = Color32::from_rgba_unmultiplied(150, 170, 190, 145);
+            let expanded = virtual_layout.expanded_lines(tab);
+            let mut suffix_column = virtual_layout.column;
+            for (offset, (column, text)) in expanded.iter().enumerate() {
+                let gy = y + offset as f32 * line_h;
+                suffix_column = *column + text.chars().count();
+                widest = widest.max(suffix_column as f32 * char_w + TEXT_PAD * 2.0);
+                text_painter.text(
+                    pos2(x_of_display(*column), gy + (line_h - row_h) / 2.0),
+                    Align2::LEFT_TOP,
+                    text,
+                    font.clone(),
+                    ghost_color,
+                );
+            }
+            let suffix_x = x_of_display(suffix_column);
+            let suffix_clip = Rect::from_min_max(pos2(suffix_x.max(text_rect.left()), text_rect.top()), text_rect.max);
+            let suffix_y = y + virtual_layout.extra as f32 * line_h + (line_h - row_h) / 2.0;
+            text_painter.with_clip_rect(suffix_clip).galley(pos2(x + suffix_x - cursor_x, suffix_y), galley, theme::TEXT);
+        } else {
+            text_painter.galley(pos2(x, y + (line_h - row_h) / 2.0), galley, theme::TEXT);
+        }
     }
     doc.view.content_width = widest;
 
@@ -561,6 +605,9 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
         }
     }
     for (line, (severity, message)) in &line_messages {
+        if ghost_visible && *line == virtual_layout.line {
+            continue;
+        }
         if let Some((_, text)) = lines.iter().find(|(l, _)| l == line) {
             let end = display_col(text, text.chars().count(), tab);
             let x = x_of_display(end) + char_w * 3.0;
@@ -578,6 +625,7 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Document, settings: &EditorSettings, ac
 
     // Inline blame on the cursor line.
     if settings.inline_blame
+        && !ghost_visible
         && single_cursor
         && !line_messages.contains_key(&cursor_line)
         && let Some((_, text)) = lines.iter().find(|(l, _)| *l == cursor_line)
@@ -949,6 +997,21 @@ fn paint_range(
             painter.rect_filled(Rect::from_min_max(pos2(x0, y), pos2(x1, y + line_h)), CornerRadius::same(2), color);
         }
     }
+}
+
+fn ghost_layout(doc: &Document) -> crate::inline_completion::renderer::Layout {
+    if doc.view.completion.is_none()
+        && let Some(ghost) = &doc.view.ghost
+        && ghost.valid(doc.id, &doc.buffer)
+    {
+        let (line, col) = doc.buffer.line_col(ghost.identity.cursor);
+        return crate::inline_completion::renderer::Layout::new(
+            line,
+            display_col(&doc.buffer.line_text(line), col, doc.buffer.tab_size),
+            &ghost.text,
+        );
+    }
+    Default::default()
 }
 
 /// Builds the syntax-colored layout for the visible columns of one line.
@@ -1497,6 +1560,8 @@ fn show_popups(
             doc.view.focus_request = true;
         }
     }
+
+    super::next_edit_view::show(ui.ctx(), doc);
 }
 
 pub fn strip_markdown(text: &str) -> String {
@@ -1588,13 +1653,12 @@ fn handle_keyboard(
     if moved {
         doc.view.hover = None;
         // Leaving the completed word closes the list.
-        if let Some(completion) = &doc.view.completion {
+        if let Some(completion) = doc.view.completion.as_mut() {
             let head = doc.buffer.primary().head;
             if head < completion.anchor || !doc.buffer.slice(completion.anchor..head).chars().all(is_word) {
                 doc.view.completion = None;
             } else {
-                let prefix = doc.buffer.slice(completion.anchor..head);
-                doc.view.completion.as_mut().unwrap().refilter(&prefix);
+                completion.refilter(&doc.buffer.slice(completion.anchor..head));
             }
         }
     }
@@ -1705,6 +1769,25 @@ fn handle_key(
         return false; // handled by the popup
     }
 
+    if doc.view.rename.is_none() && doc.view.code_actions.is_none() && doc.view.find.is_none() {
+        if key == Key::Escape {
+            doc.view.ai_rejected = true;
+            if doc.view.ghost.take().is_some() {
+                return false;
+            }
+        }
+        if key == Key::Tab
+            && !m.shift
+            && !ctrl
+            && !m.alt
+            && let Some(ghost) = doc.view.ghost.take()
+            && ghost.accept(doc.id, &mut doc.buffer)
+        {
+            doc.view.ai_accepted += 1;
+            doc.view.reveal = true;
+            return false;
+        }
+    }
     if let Some(command) = keymap::current().lookup(Scope::Editor, key, physical, m) {
         run_command(ctx, doc, command, actions, settings.has_lsp);
         return false;
@@ -1835,6 +1918,21 @@ pub fn run_command(ctx: &egui::Context, doc: &mut Document, command: Command, ac
             doc.view.scroll.y += if command == Command::ScrollLineDown { 20.0 } else { -20.0 };
             doc.view.reveal = false;
         }
+        Command::TriggerInlineCompletion => {
+            doc.view.completion = None;
+            doc.view.ai_manual = true;
+            doc.view.ghost = None;
+        }
+        Command::TriggerNextEdit => {
+            doc.view.next_edit_requested = true;
+            doc.view.next_edit_preview = None;
+        }
+        Command::AcceptNextEdit => {
+            accept_next_edit(doc);
+        }
+        Command::DismissNextEdit => {
+            doc.view.next_edit_preview = None;
+        }
         Command::TriggerSuggest => {
             if has_lsp {
                 actions.push(EditorAction::Completion { trigger: None });
@@ -1866,6 +1964,19 @@ pub fn run_command(ctx: &egui::Context, doc: &mut Document, command: Command, ac
             return false;
         }
     }
+    true
+}
+
+pub fn accept_next_edit(doc: &mut Document) -> bool {
+    let Some(preview) = doc.view.next_edit_preview.take() else {
+        return false;
+    };
+    if !preview.is_current(doc.id, &doc.buffer) {
+        return false;
+    }
+    doc.buffer.apply_prediction_mapped(vec![(preview.range, preview.replacement)]);
+    doc.view.completion = None;
+    doc.view.ghost = None;
     true
 }
 
@@ -1911,5 +2022,86 @@ mod tests {
             output.textures_delta.clear();
         }
         assert_eq!(doc.buffer.text(), "a\n");
+    }
+    fn inline_settings() -> EditorSettings<'static> {
+        EditorSettings {
+            font_size: 14.0,
+            show_whitespace: false,
+            inline_blame: false,
+            completion_triggers: &[],
+            signature_triggers: &[],
+            has_lsp: true,
+        }
+    }
+    fn attach_ghost(doc: &mut Document, text: &str) {
+        doc.view.ghost = Some(crate::inline_completion::Ghost {
+            identity: crate::inline_completion::Identity {
+                project: "test".into(),
+                doc: doc.id,
+                version: doc.buffer.version,
+                cursor: doc.buffer.primary().head,
+                epoch: 0,
+            },
+            text: text.into(),
+        });
+    }
+    #[test]
+    fn lsp_tab_has_priority_and_ai_undo_is_atomic() {
+        let ctx = egui::Context::default();
+        let settings = inline_settings();
+        let mut actions = Vec::new();
+        let mut doc = Document::new(1, "test.rs".into(), "client.", 4, true);
+        doc.buffer.set_cursor(7, false);
+        attach_ghost(&mut doc, "hallucinated()");
+        let items = lsp::parse_completions(serde_json::json!([{"label":"send","insertText":"send()"}]), "fixture");
+        let mut completion = Completion::new(items, 7);
+        completion.refilter("");
+        doc.view.completion = Some(completion);
+        handle_key(&ctx, &mut doc, Key::Tab, None, Modifiers::NONE, &mut actions, 20, 4, &settings);
+        assert_eq!(doc.buffer.text(), "client.send()");
+        assert_eq!(doc.view.ai_accepted, 0);
+        doc.buffer.undo();
+        assert_eq!(doc.buffer.text(), "client.");
+        attach_ghost(&mut doc, "send(\n    value\n)");
+        handle_key(&ctx, &mut doc, Key::Tab, None, Modifiers::NONE, &mut actions, 20, 4, &settings);
+        assert_eq!(doc.buffer.text(), "client.send(\n    value\n)");
+        assert_eq!(doc.view.ai_accepted, 1);
+        doc.buffer.undo();
+        assert_eq!(doc.buffer.text(), "client.");
+        attach_ghost(&mut doc, "x");
+        handle_key(&ctx, &mut doc, Key::Tab, None, Modifiers::SHIFT, &mut actions, 20, 4, &settings);
+        assert_eq!(doc.view.ai_accepted, 1);
+        attach_ghost(&mut doc, "x");
+        handle_key(&ctx, &mut doc, Key::Escape, None, Modifiers::NONE, &mut actions, 20, 4, &settings);
+        assert!(doc.view.ghost.is_none());
+        assert!(doc.view.ai_rejected);
+    }
+    #[test]
+    fn multiline_ghost_renders_virtual_rows_without_editing() {
+        let ctx = egui::Context::default();
+        let source = "fn main() {\n    client.;\n    next();\n}\n";
+        let mut doc = Document::new(1, "test.rs".into(), source, 4, true);
+        let at = source.find(".;").unwrap() + 1;
+        doc.buffer.set_cursor(at, false);
+        attach_ghost(&mut doc, "send(\n        value\n    )");
+        for size in [12.0, 20.0] {
+            let settings = EditorSettings { font_size: size, ..inline_settings() };
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640.0, 360.0))), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| show(ui, &mut doc, &settings, &mut Vec::new()));
+            out.textures_delta.clear();
+            let labels: Vec<_> = out
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(t) => Some((t.pos.y, t.galley.job.text.clone())),
+                    _ => None,
+                })
+                .collect();
+            let ghost_y = labels.iter().find(|(_, text)| text.contains("send(")).unwrap().0;
+            let next_y = labels.iter().find(|(_, text)| text.contains("next();")).unwrap().0;
+            assert!(next_y > ghost_y + size * 3.0, "virtual rows must move following code");
+            assert_eq!(doc.buffer.text(), source);
+            assert_eq!(doc.buffer.version, 0);
+        }
     }
 }

@@ -51,6 +51,10 @@ pub enum Command {
     CodeActions,
     Format,
     TriggerSuggest,
+    TriggerInlineCompletion,
+    TriggerNextEdit,
+    AcceptNextEdit,
+    DismissNextEdit,
     ShowHover,
     Undo,
     Redo,
@@ -94,6 +98,7 @@ pub enum Command {
     GitToggleBlame,
     Agent,
     AgentSendSelection,
+    AgentSessions,
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -150,6 +155,10 @@ pub const ALL: &[Command] = &[
     Command::CodeActions,
     Command::Format,
     Command::TriggerSuggest,
+    Command::TriggerInlineCompletion,
+    Command::TriggerNextEdit,
+    Command::AcceptNextEdit,
+    Command::DismissNextEdit,
     Command::ShowHover,
     Command::Undo,
     Command::Redo,
@@ -193,6 +202,7 @@ pub const ALL: &[Command] = &[
     Command::GitToggleBlame,
     Command::Agent,
     Command::AgentSendSelection,
+    Command::AgentSessions,
     Command::ZoomIn,
     Command::ZoomOut,
     Command::ZoomReset,
@@ -273,6 +283,10 @@ impl Command {
             Command::Rename => t_key!("Rename Symbol"),
             Command::CodeActions => t_key!("Quick Fixes…"),
             Command::Format => t_key!("Format Document"),
+            Command::TriggerInlineCompletion => t_key!("Request AI Inline Completion"),
+            Command::TriggerNextEdit => t_key!("Request Next Edit Preview"),
+            Command::AcceptNextEdit => t_key!("Accept Next Edit"),
+            Command::DismissNextEdit => t_key!("Dismiss Next Edit"),
             Command::TriggerSuggest => t_key!("Trigger Suggestions"),
             Command::ShowHover => t_key!("Show Hover"),
             Command::Undo => t_key!("Undo"),
@@ -317,6 +331,7 @@ impl Command {
             Command::GitToggleBlame => t_key!("Git: Toggle Line Blame"),
             Command::Agent => t_key!("pi Agent"),
             Command::AgentSendSelection => t_key!("Agent: Send Selection"),
+            Command::AgentSessions => t_key!("Agent: Manage Sessions"),
             Command::ZoomIn => t_key!("Zoom In"),
             Command::ZoomOut => t_key!("Zoom Out"),
             Command::ZoomReset => t_key!("Reset Zoom"),
@@ -339,6 +354,10 @@ impl Command {
             | Command::Rename
             | Command::CodeActions
             | Command::Format
+            | Command::TriggerInlineCompletion
+            | Command::TriggerNextEdit
+            | Command::AcceptNextEdit
+            | Command::DismissNextEdit
             | Command::TriggerSuggest
             | Command::ShowHover
             | Command::Undo
@@ -425,17 +444,25 @@ impl App {
             }
             Command::SaveAll => self.save_all(),
             Command::CloseTab => {
+                if self.agent_manager.open {
+                    super::agent::manager::hide(self);
+                    return;
+                }
                 if let Some(index) = self.active_tab {
                     self.request_close_tab(index);
                 }
             }
             Command::NextTab | Command::PrevTab => {
-                if let Some(active) = self.active_tab
-                    && !self.tabs.is_empty()
-                {
-                    let len = self.tabs.len();
-                    let next = if command == Command::NextTab { (active + 1) % len } else { (active + len - 1) % len };
-                    self.activate_tab(next);
+                // The agent workspace is one visible tab, independent of process count.
+                let pages: Vec<Option<usize>> = std::iter::once(None)
+                    .chain(self.tabs.iter().enumerate().filter(|(_, tab)| !matches!(tab, Tab::Agent(_))).map(|(i, _)| Some(i)))
+                    .collect();
+                let current = if self.agent_manager.open { 0 } else { pages.iter().position(|page| *page == self.active_tab).unwrap_or(0) };
+                let next =
+                    if command == Command::NextTab { (current + 1) % pages.len() } else { (current + pages.len() - 1) % pages.len() };
+                match pages[next] {
+                    None => super::agent::manager::open(self),
+                    Some(index) => self.activate_tab(index),
                 }
             }
             Command::ToggleSidebar => self.sidebar_open = !self.sidebar_open,
@@ -611,14 +638,15 @@ impl App {
                 }
                 self.config.save();
             }
-            Command::Agent => super::agent::open(self),
+            Command::Agent => super::agent::manager::open(self),
+            Command::AgentSessions => super::agent::manager::open(self),
             Command::AgentSendSelection => {
                 if let Some(Tab::Doc(doc)) = self.active_tab.and_then(|i| self.tabs.get(i)) {
                     self.last_doc_id = Some(doc.id);
                 }
                 super::agent::insert_selection(self);
             }
-            Command::Settings => self.settings_open = !self.settings_open,
+            Command::Settings => self.toggle_settings(),
             Command::Keybindings => super::keybindings::open(self),
             Command::TerminalCopy => {
                 if let Some(terminal) = self.terminals.get_mut(self.active_terminal) {

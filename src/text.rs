@@ -1,7 +1,7 @@
 //! Text model of an open document: a rope, multiple selections and undo
 //! history. Positions are char indices into the rope.
 
-use std::{ops::Range, time::Instant};
+use std::{collections::VecDeque, ops::Range, time::Instant};
 
 use ropey::Rope;
 
@@ -43,6 +43,7 @@ struct Transaction {
     after: Vec<Selection>,
     revision_before: u64,
     revision_after: u64,
+    user_history: bool,
 }
 
 /// An edit in byte coordinates, for incremental consumers (highlighting).
@@ -58,7 +59,28 @@ enum EditKind {
     Typing,
     Deleting,
     Other,
+    External,
+    Prediction,
 }
+
+#[derive(Clone, Debug)]
+pub struct UserEditEvent {
+    pub start: usize,
+    pub before: String,
+    pub after: String,
+    pub typing: bool,
+    pub deleting: bool,
+    /// Zero-based line where `context_before` begins, before the edit.
+    pub line: usize,
+    /// Up to two whole lines (bounded) preceding the edit, plus the start of
+    /// its own line; `context_after` is the rest of the last edited line and
+    /// up to two more.
+    pub context_before: String,
+    pub context_after: String,
+}
+
+const EVENT_CONTEXT_LINES: usize = 2;
+const EVENT_CONTEXT_CHARS: usize = 512;
 
 pub struct Buffer {
     pub rope: Rope,
@@ -81,6 +103,7 @@ pub struct Buffer {
     pub insert_spaces: bool,
     pub line_comment: Option<&'static str>,
     pub crlf: bool,
+    user_edit_events: VecDeque<UserEditEvent>,
 }
 
 impl Buffer {
@@ -105,6 +128,7 @@ impl Buffer {
             insert_spaces: indent.map(|(spaces, _)| spaces).unwrap_or(true),
             line_comment: None,
             crlf,
+            user_edit_events: VecDeque::new(),
         }
     }
 
@@ -142,7 +166,8 @@ impl Buffer {
     }
 
     pub fn primary(&self) -> Selection {
-        *self.selections.last().unwrap()
+        // A buffer always keeps at least one selection.
+        self.selections.last().copied().unwrap_or(Selection::cursor(0))
     }
 
     pub fn len_chars(&self) -> usize {
@@ -298,6 +323,9 @@ impl Buffer {
             let end = range.end.min(self.rope.len_chars());
             let start = range.start.min(end);
             let removed = self.rope.slice(start..end).to_string();
+            if !matches!(kind, EditKind::External | EditKind::Prediction) {
+                self.push_user_event(start, removed.clone(), text.clone(), kind == EditKind::Typing, kind == EditKind::Deleting);
+            }
             self.record_byte_edit(start, end, text);
             self.rope.remove(start..end);
             self.rope.insert(start, text);
@@ -312,24 +340,53 @@ impl Buffer {
         let after = self.selections.clone();
 
         let now = Instant::now();
-        let merge = kind != EditKind::Other
+        let merge = matches!(kind, EditKind::Typing | EditKind::Deleting)
             && self.last_edit.is_some_and(|(last, at)| last == kind && now.duration_since(at).as_millis() < 1000)
             && self.redo.is_empty()
             && self.undo.last().is_some_and(|t| t.revision_after == revision_before)
             && self.saved_revision != revision_before;
         self.redo.clear();
-        if merge {
-            let last = self.undo.last_mut().unwrap();
+        if merge && let Some(last) = self.undo.last_mut() {
             last.changes.extend(changes);
             last.after = after;
             last.revision_after = self.revision;
         } else {
-            self.undo.push(Transaction { changes, before, after, revision_before, revision_after: self.revision });
+            self.undo.push(Transaction {
+                changes,
+                before,
+                after,
+                revision_before,
+                revision_after: self.revision,
+                user_history: !matches!(kind, EditKind::External | EditKind::Prediction),
+            });
             if self.undo.len() > 2000 {
                 self.undo.remove(0);
             }
         }
         self.last_edit = Some((kind, now));
+    }
+
+    /// Records a user edit against the rope as it is just before the edit.
+    fn push_user_event(&mut self, start: usize, before: String, after: String, typing: bool, deleting: bool) {
+        let end = start + before.chars().count();
+        let first = self.rope.char_to_line(start).saturating_sub(EVENT_CONTEXT_LINES);
+        let ctx_start = self.rope.line_to_char(first).max(start.saturating_sub(EVENT_CONTEXT_CHARS));
+        let last = self.rope.char_to_line(end) + EVENT_CONTEXT_LINES + 1;
+        let ctx_end =
+            if last >= self.rope.len_lines() { self.rope.len_chars() } else { self.rope.line_to_char(last) }.min(end + EVENT_CONTEXT_CHARS);
+        self.user_edit_events.push_back(UserEditEvent {
+            start,
+            before,
+            after,
+            typing,
+            deleting,
+            line: self.rope.char_to_line(ctx_start),
+            context_before: self.rope.slice(ctx_start..start).to_string(),
+            context_after: self.rope.slice(end..ctx_end).to_string(),
+        });
+        while self.user_edit_events.len() > 32 {
+            self.user_edit_events.pop_front();
+        }
     }
 
     fn record_byte_edit(&mut self, start: usize, end: usize, text: &str) {
@@ -341,16 +398,27 @@ impl Buffer {
 
     /// Public entry for edits coming from LSP or tools.
     pub fn apply_edits(&mut self, edits: Vec<(Range<usize>, String)>) {
-        self.apply(edits, EditKind::Other, None);
+        self.apply(edits, EditKind::External, None);
     }
 
     pub fn apply_edits_with_selection(&mut self, edits: Vec<(Range<usize>, String)>, selections: Vec<Selection>) {
         self.apply(edits, EditKind::Other, Some(selections));
     }
 
+    pub fn apply_prediction_mapped(&mut self, edits: Vec<(Range<usize>, String)>) {
+        self.apply(edits, EditKind::Prediction, None);
+    }
+
+    pub fn take_user_edit_events(&mut self) -> Vec<UserEditEvent> {
+        self.user_edit_events.drain(..).collect()
+    }
+
     pub fn undo(&mut self) {
         let Some(transaction) = self.undo.pop() else { return };
         for change in transaction.changes.iter().rev() {
+            if transaction.user_history {
+                self.push_user_event(change.start, change.inserted.clone(), change.removed.clone(), false, false);
+            }
             let end = change.start + change.inserted.chars().count();
             self.record_byte_edit(change.start, end, &change.removed);
             self.rope.remove(change.start..end);
@@ -366,6 +434,9 @@ impl Buffer {
     pub fn redo(&mut self) {
         let Some(transaction) = self.redo.pop() else { return };
         for change in &transaction.changes {
+            if transaction.user_history {
+                self.push_user_event(change.start, change.removed.clone(), change.inserted.clone(), false, false);
+            }
             let end = change.start + change.removed.chars().count();
             self.record_byte_edit(change.start, end, &change.inserted);
             self.rope.remove(change.start..end);
@@ -705,8 +776,10 @@ impl Buffer {
         while i > 0 && self.char(i - 1).is_some_and(|c| c.is_whitespace() && c != '\n') {
             i -= 1;
         }
-        if i > 0 {
-            let class = char_class(self.char(i - 1).unwrap());
+        if i > 0
+            && let Some(c) = self.char(i - 1)
+        {
+            let class = char_class(c);
             while i > 0 && self.char(i - 1).is_some_and(|c| char_class(c) == class && c != '\n') {
                 i -= 1;
             }
@@ -720,8 +793,10 @@ impl Buffer {
         while i < len && self.char(i).is_some_and(|c| c.is_whitespace() && c != '\n') {
             i += 1;
         }
-        if i < len {
-            let class = char_class(self.char(i).unwrap());
+        if i < len
+            && let Some(c) = self.char(i)
+        {
+            let class = char_class(c);
             while i < len && self.char(i).is_some_and(|c| char_class(c) == class && c != '\n') {
                 i += 1;
             }

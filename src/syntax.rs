@@ -382,30 +382,36 @@ pub struct Done {
 /// dropped when newer ones are queued.
 pub fn spawn_worker(done: impl Fn(Done) + Send + 'static) -> Sender<Job> {
     let (tx, rx): (Sender<Job>, Receiver<Job>) = unbounded();
-    std::thread::Builder::new()
-        .name("highlighter".into())
-        .spawn(move || {
-            let mut highlighter = Highlighter::new();
-            // Warm up the queries off the UI thread.
-            configs();
-            while let Ok(first) = rx.recv() {
-                let mut latest: HashMap<u64, Job> = HashMap::new();
-                latest.insert(first.doc_id, first);
-                while let Ok(job) = rx.try_recv() {
-                    latest.insert(job.doc_id, job);
-                }
-                for (_, job) in latest {
-                    let spans = if job.text.len() > 8 * 1024 * 1024 {
-                        Vec::new()
-                    } else {
-                        highlight_file(&mut highlighter, job.lang, &job.path, &job.text)
-                    };
-                    done(Done { doc_id: job.doc_id, version: job.version, spans });
-                }
+    // Without the thread the editor still works, only unhighlighted.
+    let spawned = std::thread::Builder::new().name("highlighter".into()).spawn(move || {
+        let mut highlighter = Highlighter::new();
+        // Warm up the queries off the UI thread.
+        configs();
+        while let Ok(first) = rx.recv() {
+            let mut latest: HashMap<u64, Job> = HashMap::new();
+            latest.insert(first.doc_id, first);
+            while let Ok(job) = rx.try_recv() {
+                latest.insert(job.doc_id, job);
             }
-        })
-        .expect("highlighter thread");
+            for (_, job) in latest {
+                let spans = if job.text.len() > 8 * 1024 * 1024 {
+                    Vec::new()
+                } else {
+                    highlight_file(&mut highlighter, job.lang, &job.path, &job.text)
+                };
+                done(Done { doc_id: job.doc_id, version: job.version, spans });
+            }
+        }
+    });
+    if let Err(e) = spawned {
+        eprintln!("lumen-edit: failed to start highlighter thread: {e}");
+    }
     tx
+}
+
+/// The same grammar used for highlighting; parsing happens on the completion worker.
+pub fn grammar(lang: Lang) -> Option<tree_sitter::Language> {
+    configs().get(&lang).map(|config| config.language.clone())
 }
 
 #[cfg(test)]

@@ -4,6 +4,11 @@
 //! the editor through the `lumen` MCP server (deferred tools, discovered on
 //! demand) and the `lumen-edit` CLI.
 
+pub mod manager;
+pub mod team;
+
+use team::{Role, Task, TaskStatus};
+
 use std::{
     collections::BTreeMap,
     io::{BufRead, BufReader, Write},
@@ -49,10 +54,15 @@ struct UiRequest {
     message: String,
     options: Vec<String>,
     value: String,
+    expires: Option<Instant>,
 }
 
 pub struct AgentTab {
     pub id: u64,
+    generation: u64,
+    ready: bool,
+    history_loading: bool,
+    startup_prompt: Option<String>,
     pub title: String,
     child: Option<Child>,
     stdin: Option<Arc<Mutex<ChildStdin>>>,
@@ -88,14 +98,173 @@ pub struct AgentTab {
     sessions: Arc<Mutex<Option<Vec<SessionInfo>>>>,
     session_filter: String,
     renaming: Option<String>,
+    pub role: Role,
+    pub group: Option<String>,
+    pub coordinator: Option<u64>,
+    pub task: Option<Task>,
+    pub team_paused: bool,
+    stats: Option<Value>,
+    steering_queue: Vec<String>,
+    follow_up_queue: Vec<String>,
+    compacting: bool,
+    /// Files opened explicitly are reserved before the asynchronous get_state response.
+    opening_session: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
+    fn long_confirmation_keeps_buttons_visible_and_answers() {
+        use eframe::egui::{self, Event, PointerButton, RawInput, Rect, pos2, vec2};
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(480.0, 360.0));
+        let mut request = super::UiRequest {
+            id: "permission".into(),
+            method: "confirm".into(),
+            title: "Confirm command".into(),
+            message: "A very long command requiring approval\n".repeat(300),
+            options: Vec::new(),
+            value: String::new(),
+            expires: None,
+        };
+        let mut yes = None;
+        // Windows need a sizing pass before their first visible frame.
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+                super::request_dialog(ui.ctx(), 1, &mut request);
+            });
+            output.textures_delta.clear();
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(text) = shape.shape
+                    && text.galley.text() == t!("Yes")
+                {
+                    let rect = Rect::from_min_size(text.pos, text.galley.size());
+                    assert!(screen.contains_rect(rect), "confirmation button outside viewport: {rect:?}");
+                    yes = Some(rect.center());
+                }
+            }
+        }
+        let pos = yes.unwrap();
+        let mut answer = None;
+        for pressed in [true, false] {
+            let mut output = ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(screen),
+                    events: vec![
+                        Event::PointerMoved(pos),
+                        Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Default::default() },
+                    ],
+                    ..Default::default()
+                },
+                |ui| {
+                    answer = answer.take().or_else(|| super::request_dialog(ui.ctx(), 1, &mut request));
+                },
+            );
+            output.textures_delta.clear();
+        }
+        assert_eq!(answer, Some(serde_json::json!({ "confirmed": true })));
+    }
+
+    #[test]
     fn session_dir_matches_pi_layout() {
         let dir = super::session_dir("/home/user/projects/demo-app");
         assert!(dir.ends_with("--home-user-projects-demo-app--"), "{}", dir.display());
+    }
+
+    #[test]
+    fn configured_flags_cannot_override_managed_session() {
+        let flags = [
+            "--session",
+            "other.jsonl",
+            "--continue",
+            "--resume",
+            "--no-session",
+            "--session-id=shared",
+            "--model",
+            "test/model",
+            "--session-dir",
+            "/tmp/records",
+        ];
+        assert_eq!(super::session_safe_args(&flags.map(str::to_string)), ["--model", "test/model", "--session-dir", "/tmp/records"]);
+    }
+
+    fn detached() -> super::AgentTab {
+        super::AgentTab::detached(10, "/test", &super::LaunchOptions::from_config(&crate::config::Config::default(), false))
+    }
+
+    #[test]
+    fn exited_session_does_not_remain_busy_and_can_be_restarted() {
+        let mut agent = detached();
+        agent.compacting = true;
+        agent.steering_queue.push("queued".into());
+        agent.follow_up_queue.push("later".into());
+        agent.startup_prompt = Some("unsent".into());
+        agent.handle(serde_json::json!({ "type": "__exit" }));
+        assert!(agent.exited.is_some());
+        assert!(!agent.busy(), "exit must clear transient state so restart is available");
+    }
+
+    #[test]
+    fn stopping_during_startup_cancels_the_unsent_prompt() {
+        let mut agent = detached();
+        agent.prompt("must not run after cancellation".into());
+        assert!(agent.startup_prompt.is_some());
+        agent.handle(serde_json::json!({ "type": "extension_ui_request", "id": "pending", "method": "confirm", "title": "Confirm" }));
+        agent.abort();
+        assert!(agent.requests.is_empty());
+        agent.handle(serde_json::json!({ "type": "response", "command": "get_state", "success": true, "data": {} }));
+        assert!(agent.ready);
+        assert!(agent.startup_prompt.is_none());
+    }
+
+    #[test]
+    fn expired_background_dialogs_are_removed() {
+        let mut agent = detached();
+        agent.handle(
+            serde_json::json!({ "type": "extension_ui_request", "id": "old", "method": "confirm", "title": "Confirm", "timeout": 0 }),
+        );
+        agent.handle(serde_json::json!({ "type": "extension_ui_request", "id": "live", "method": "confirm", "title": "Confirm" }));
+        agent.expire_requests(&eframe::egui::Context::default());
+        assert_eq!(agent.requests.len(), 1);
+        assert_eq!(agent.requests[0].id, "live");
+    }
+
+    #[test]
+    fn task_result_uses_this_task_and_ignores_recovered_errors() {
+        use super::{Block, Item, Task, TaskStatus};
+        let mut agent = detached();
+        agent.items.push(Item::Assistant { blocks: [(0, Block::Text("old result".into()))].into(), error: None });
+        agent.task = Some(Task::new("new task".into(), 1));
+        agent.items.push(Item::Assistant { blocks: Default::default(), error: Some("transient error".into()) });
+        agent.items.push(Item::Assistant { blocks: [(0, Block::Text("new result".into()))].into(), error: None });
+        agent.handle(serde_json::json!({ "type": "agent_settled" }));
+        let task = agent.task.as_ref().unwrap();
+        assert_eq!(task.status, TaskStatus::Completed);
+        assert_eq!(task.result.as_deref(), Some("new result"));
+    }
+
+    #[test]
+    fn history_accepts_spaced_json_and_cleared_names() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumen-history-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session.jsonl");
+        let entries = [
+            serde_json::json!({ "type": "session_info", "name": "old name" }),
+            serde_json::json!({ "type": "message", "message": { "role": "user", "content": "first task" } }),
+            serde_json::json!({ "type": "session_info", "name": "" }),
+        ];
+        let text = entries.iter().map(|e| serde_json::to_string(e).unwrap().replace(":", ": ")).collect::<Vec<_>>().join("\n");
+        std::fs::write(&path, text).unwrap();
+        let sessions = super::read_sessions(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0].name.is_none());
+        assert_eq!(sessions[0].messages, 1);
+        assert_eq!(sessions[0].first_message.as_deref(), Some("first task"));
     }
 
     #[test]
@@ -123,13 +292,19 @@ pub struct SessionInfo {
 
 /// pi groups sessions by working directory: `/a/b` -> `--a-b--`.
 fn session_dir(cwd: &str) -> PathBuf {
-    let base = std::env::var_os("PI_CODING_AGENT_SESSION_DIR").map(PathBuf::from).unwrap_or_else(|| home().join(".pi/agent/sessions"));
-    base.join(format!("--{}--", cwd.trim_start_matches('/').replace('/', "-")))
+    if let Some(dir) = std::env::var_os("PI_CODING_AGENT_SESSION_DIR").filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    home().join(".pi/agent/sessions").join(format!("--{}--", cwd.trim_start_matches(['/', '\\']).replace(['/', '\\', ':'], "-")))
 }
 
 /// Reads session files of `cwd`, newest first (runs on a worker thread).
 fn list_sessions(cwd: &str) -> Vec<SessionInfo> {
-    let mut files: Vec<(PathBuf, std::time::SystemTime)> = std::fs::read_dir(session_dir(cwd))
+    read_sessions(&session_dir(cwd))
+}
+
+fn read_sessions(dir: &Path) -> Vec<SessionInfo> {
+    let mut files: Vec<(PathBuf, std::time::SystemTime)> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
@@ -139,7 +314,6 @@ fn list_sessions(cwd: &str) -> Vec<SessionInfo> {
     files.sort_by_key(|f| std::cmp::Reverse(f.1));
     files
         .into_iter()
-        .take(200)
         .map(|(path, modified)| {
             let mut info = SessionInfo {
                 path: path.to_string_lossy().into_owned(),
@@ -150,26 +324,26 @@ fn list_sessions(cwd: &str) -> Vec<SessionInfo> {
             };
             if let Ok(file) = std::fs::File::open(&path) {
                 for line in BufReader::new(file).lines().map_while(Result::ok) {
-                    if line.contains("\"type\":\"session_info\"") {
-                        if let Ok(entry) = serde_json::from_str::<Value>(&line) {
-                            info.name = entry["name"].as_str().map(str::to_string).filter(|n| !n.is_empty());
+                    let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
+                    if entry["type"] == "session_info" {
+                        info.name = entry["name"].as_str().map(str::to_string).filter(|n| !n.is_empty());
+                    } else if entry["type"] == "message" {
+                        match entry["message"]["role"].as_str() {
+                            Some("user") => {
+                                info.messages += 1;
+                                if info.first_message.is_none() {
+                                    let text = content_text(&entry["message"]["content"]);
+                                    info.first_message = Some(text.split_whitespace().collect::<Vec<_>>().join(" "));
+                                }
+                            }
+                            Some("assistant") => info.messages += 1,
+                            _ => {}
                         }
-                    } else if line.contains("\"role\":\"user\"") {
-                        info.messages += 1;
-                        if info.first_message.is_none()
-                            && let Ok(entry) = serde_json::from_str::<Value>(&line)
-                        {
-                            let text = content_text(&entry["message"]["content"]);
-                            info.first_message = Some(text.split_whitespace().collect::<Vec<_>>().join(" "));
-                        }
-                    } else if line.contains("\"role\":\"assistant\"") {
-                        info.messages += 1;
                     }
                 }
             }
             info
         })
-        .filter(|info| info.messages > 0)
         .collect()
 }
 
@@ -247,8 +421,8 @@ pub fn ensure_pi_mcp_entry() -> Result<bool, String> {
     if path.exists() {
         let _ = std::fs::copy(&path, path.with_extension("json.lumen-backup"));
     }
-    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-    std::fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(path.parent().ok_or_else(|| "session path has no parent".to_string())?).map_err(|e| e.to_string())?;
+    std::fs::write(&path, serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -259,6 +433,11 @@ pub struct LaunchOptions {
     pub resume: bool,
     pub model: String,
     pub mode: String,
+    pub session: Option<String>,
+    pub name: Option<String>,
+    pub context: String,
+    pub clone_session: bool,
+    pub generation: u64,
 }
 
 impl LaunchOptions {
@@ -270,6 +449,11 @@ impl LaunchOptions {
             resume,
             model: config.agent_model.clone(),
             mode: config.agent_mode.clone(),
+            session: None,
+            name: None,
+            context: String::new(),
+            clone_session: false,
+            generation: 0,
         }
     }
 }
@@ -321,7 +505,7 @@ fn model_key(model: &Value) -> String {
 
 /// Sessions of this folder: search, switch, new, rename.
 fn session_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actions: &mut Vec<Action>) {
-    let sessions = agent.sessions.lock().unwrap().clone();
+    let sessions = agent.sessions.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let mut close = ui.ctx().input(|i| i.key_pressed(Key::Escape));
     let area = egui::Area::new(egui::Id::unique(("session_picker", agent.id)))
         .order(egui::Order::Foreground)
@@ -628,11 +812,13 @@ fn pi_modes() -> Vec<String> {
 }
 
 impl AgentTab {
-    /// Starts pi for the project. Remote projects get a local scratch folder
-    /// as working directory and work on the project through lumen tools.
-    pub fn spawn(id: u64, host: &Host, root: &str, socket: Option<&Path>, options: &LaunchOptions, bus: Bus) -> Self {
-        let mut tab = AgentTab {
+    fn detached(id: u64, root: &str, options: &LaunchOptions) -> Self {
+        AgentTab {
             id,
+            generation: options.generation,
+            ready: false,
+            history_loading: options.session.is_some(),
+            startup_prompt: None,
             title: t!("π Agent").into(),
             child: None,
             stdin: None,
@@ -667,7 +853,23 @@ impl AgentTab {
             sessions: Arc::default(),
             session_filter: String::new(),
             renaming: None,
-        };
+            role: Role::Independent,
+            group: None,
+            coordinator: None,
+            task: None,
+            team_paused: false,
+            stats: None,
+            steering_queue: Vec::new(),
+            follow_up_queue: Vec::new(),
+            compacting: false,
+            opening_session: options.session.clone().filter(|_| !options.clone_session),
+        }
+    }
+
+    /// Starts pi for the project. Remote projects get a local scratch folder
+    /// as working directory and work on the project through lumen tools.
+    pub fn spawn(id: u64, host: &Host, root: &str, socket: Option<&Path>, options: &LaunchOptions, bus: Bus) -> Self {
+        let mut tab = Self::detached(id, root, options);
 
         let (cwd, context) = match host {
             Host::Local => (
@@ -709,19 +911,28 @@ impl AgentTab {
             Err(error) => tab.items.push(Item::Notice { text: t!("Could not set up MCP for pi: {error}", error = error), error: true }),
         }
 
-        let mut pi_args: Vec<String> = vec!["--mode".into(), "rpc".into(), "--append-system-prompt".into(), context];
+        let mut pi_args: Vec<String> =
+            vec!["--mode".into(), "rpc".into(), "--append-system-prompt".into(), format!("{context}\n{}", options.context)];
         if host.is_remote() {
             // Local read/bash/edit would act on the scratch folder, not on the
             // project; the lumen tools work on the remote host instead.
             pi_args.push("--no-builtin-tools".into());
         }
-        if options.resume {
-            pi_args.push("--continue".into());
+        if let Some(path) = &options.session {
+            pi_args.extend([if options.clone_session { "--fork" } else { "--session" }.into(), path.clone()]);
+        } else if options.resume {
+            // Exact paths are required for parallel agents; never guess the latest file.
+            tab.exited = Some(t!("No saved session to resume").into());
+            return tab;
+        }
+        if let Some(name) = &options.name {
+            pi_args.extend(["--name".into(), name.clone()]);
+            tab.title = format!("π {name}");
         }
         if !options.model.trim().is_empty() && !options.resume {
             pi_args.extend(["--model".into(), options.model.trim().to_string()]);
         }
-        pi_args.extend(options.extra_args.iter().cloned());
+        pi_args.extend(session_safe_args(&options.extra_args));
 
         // Absolute path: inside bwrap there is no shell to search PATH.
         let pi = if options.pi_command.contains('/') { Some(PathBuf::from(&options.pi_command)) } else { which(&options.pi_command) };
@@ -749,6 +960,7 @@ impl AgentTab {
             .current_dir(&cwd)
             .env("PATH", crate::host::local_path())
             .env("LUMEN_PROJECT_ROOT", root)
+            .env("LUMEN_AGENT_ID", id.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -758,27 +970,31 @@ impl AgentTab {
 
         match command.spawn() {
             Ok(mut child) => {
-                let stdout = child.stdout.take().unwrap();
-                let stderr = child.stderr.take().unwrap();
-                tab.stdin = Some(Arc::new(Mutex::new(child.stdin.take().unwrap())));
+                let (Some(stdout), Some(stderr), Some(stdin)) = (child.stdout.take(), child.stderr.take(), child.stdin.take()) else {
+                    let _ = child.kill();
+                    tab.exited = Some(t!("could not start {n1}: {error}", n1 = options.pi_command, error = "no stdio pipes"));
+                    return tab;
+                };
+                tab.stdin = Some(Arc::new(Mutex::new(stdin)));
                 tab.child = Some(child);
                 let reader_bus = bus.clone();
+                let generation = options.generation;
                 std::thread::spawn(move || {
                     let mut reader = BufReader::new(stdout);
                     let mut line = Vec::new();
                     // Split strictly on LF; JSON strings may contain U+2028.
                     while reader.read_until(b'\n', &mut line).map(|n| n > 0).unwrap_or(false) {
                         if let Ok(value) = serde_json::from_slice::<Value>(&line) {
-                            reader_bus.send(Msg::Agent { id, event: value });
+                            reader_bus.send(Msg::Agent { id, generation, event: value });
                         }
                         line.clear();
                     }
-                    reader_bus.send(Msg::Agent { id, event: json!({ "type": "__exit" }) });
+                    reader_bus.send(Msg::Agent { id, generation, event: json!({ "type": "__exit" }) });
                 });
                 let tail = tab.stderr_tail.clone();
                 std::thread::spawn(move || {
                     for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                        let mut tail = tail.lock().unwrap();
+                        let mut tail = tail.lock().unwrap_or_else(|e| e.into_inner());
                         tail.push(line);
                         if tail.len() > 30 {
                             tail.remove(0);
@@ -788,11 +1004,12 @@ impl AgentTab {
                 for command in ["get_state", "get_available_models", "get_commands", "get_available_thinking_levels"] {
                     tab.send(json!({ "type": command }));
                 }
-                if options.resume {
+                tab.send(json!({ "type": "get_session_stats" }));
+                if options.session.is_some() {
                     tab.send(json!({ "type": "get_messages" }));
                 }
                 let mode = options.mode.trim();
-                if !mode.is_empty() && tab.modes.iter().any(|m| m == mode) {
+                if options.session.is_none() && !mode.is_empty() && tab.modes.iter().any(|m| m == mode) {
                     tab.send(json!({ "type": "prompt", "message": format!("/mode {mode}") }));
                 }
             }
@@ -803,15 +1020,34 @@ impl AgentTab {
         tab
     }
 
+    fn clear_runtime_state(&mut self) {
+        self.streaming = false;
+        self.compacting = false;
+        self.started_at = None;
+        self.startup_prompt = None;
+        self.steering_queue.clear();
+        self.follow_up_queue.clear();
+        self.requests.clear();
+    }
+
     fn send(&mut self, mut command: Value) {
         if command.get("id").is_none() {
             command["id"] = json!(format!("c{}", self.next_request));
             self.next_request += 1;
         }
-        if let Some(stdin) = &self.stdin {
-            let mut stdin = stdin.lock().unwrap();
-            let _ = writeln!(stdin, "{command}");
-            let _ = stdin.flush();
+        let result = if let Some(stdin) = &self.stdin {
+            let mut stdin = stdin.lock().unwrap_or_else(|e| e.into_inner());
+            writeln!(stdin, "{command}").and_then(|_| stdin.flush())
+        } else {
+            return;
+        };
+        if let Err(error) = result {
+            let reason = t!("Pi connection failed: {error}", error = error);
+            self.items.push(Item::Notice { text: reason.clone(), error: true });
+            self.exited = Some(reason);
+            self.stdin = None;
+            self.clear_runtime_state();
+            self.finish_task(TaskStatus::Failed);
         }
     }
 
@@ -831,16 +1067,11 @@ impl AgentTab {
         )
     }
 
-    /// Switches to a session file, or starts a new one for an empty path.
-    pub fn switch_session(&mut self, path: String) {
-        if path.is_empty() {
-            self.send(json!({ "type": "new_session" }));
-        } else {
-            self.send(json!({ "type": "switch_session", "sessionPath": path }));
-        }
-    }
-
     pub fn abort(&mut self) {
+        self.startup_prompt = None;
+        while !self.requests.is_empty() {
+            self.answer(0, json!({ "cancelled": true }));
+        }
         self.send(json!({ "type": "clear_queue" }));
         self.send(json!({ "type": "abort" }));
     }
@@ -872,13 +1103,132 @@ impl AgentTab {
             .collect()
     }
 
+    fn session_path(&self) -> Option<&str> {
+        self.current_session.as_deref().or(self.opening_session.as_deref())
+    }
+
+    fn busy(&self) -> bool {
+        !self.requests.is_empty()
+            || self.startup_prompt.is_some()
+            || self.streaming
+            || self.compacting
+            || self.task.as_ref().is_some_and(Task::active)
+            || !self.steering_queue.is_empty()
+            || !self.follow_up_queue.is_empty()
+    }
+
+    fn state_code(&self) -> &'static str {
+        if !self.requests.is_empty() {
+            "waiting"
+        } else if self.exited.is_some() {
+            "exited"
+        } else if !self.ready {
+            "starting"
+        } else if self.compacting {
+            "compacting"
+        } else if self.busy() {
+            "working"
+        } else if self.team_paused {
+            "paused"
+        } else {
+            match self.task.as_ref().map(|t| t.status) {
+                Some(TaskStatus::Completed) => "completed",
+                Some(TaskStatus::Failed) => "failed",
+                Some(TaskStatus::Cancelled) => "cancelled",
+                _ => "ready",
+            }
+        }
+    }
+
+    fn state_label(&self) -> &'static str {
+        if !self.requests.is_empty() {
+            t!("Waiting for confirmation")
+        } else if self.exited.is_some() {
+            t!("Exited")
+        } else if !self.ready {
+            t!("Starting")
+        } else if self.compacting {
+            t!("Compacting")
+        } else if self.busy() {
+            t!("Working")
+        } else if self.team_paused {
+            t!("Group paused")
+        } else if let Some(task) = &self.task {
+            match task.status {
+                TaskStatus::Completed => t!("Completed"),
+                TaskStatus::Failed => t!("Failed"),
+                TaskStatus::Cancelled => t!("Stopped"),
+                _ => t!("Ready"),
+            }
+        } else {
+            t!("Ready")
+        }
+    }
+
+    fn finish_task(&mut self, status: TaskStatus) {
+        let Some(task) = &self.task else { return };
+        if !task.active() {
+            return;
+        }
+        let start = task.start_item;
+        let result = self
+            .items
+            .iter()
+            .skip(start)
+            .rev()
+            .find_map(|item| match item {
+                Item::Assistant { blocks, error } => {
+                    let text = blocks
+                        .values()
+                        .filter_map(|b| match b {
+                            Block::Text(text) => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Some(format!("{text}{}", error.as_ref().map(|error| format!("\n{error}")).unwrap_or_default()))
+                }
+                Item::Notice { text, error: true } => Some(text.clone()),
+                _ => None,
+            })
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| match status {
+                TaskStatus::Cancelled => t!("Stopped").into(),
+                TaskStatus::Failed => t!("Task failed without a result").into(),
+                _ => t!("No assistant result was produced").into(),
+            });
+        if let Some(task) = &mut self.task {
+            task.finish(status, result);
+        }
+    }
+
+    fn expire_requests(&mut self, ctx: &egui::Context) {
+        self.requests.retain(|request| request.expires.is_none_or(|deadline| deadline > Instant::now()));
+        if let Some(deadline) = self.requests.iter().filter_map(|r| r.expires).min() {
+            ctx.request_repaint_after(deadline.saturating_duration_since(Instant::now()));
+        }
+    }
+
     pub fn is_running(&self) -> bool {
         self.exited.is_none() && self.child.is_some()
     }
 
     pub fn prompt(&mut self, text: String) {
+        if self.team_paused {
+            self.items.push(Item::Notice { text: t!("Resume the group before assigning work").into(), error: true });
+            return;
+        }
         let text = text.trim().to_string();
         if text.is_empty() {
+            return;
+        }
+        if self.role == Role::Worker && !self.busy() {
+            self.task = Some(Task::new(text.clone(), self.items.len()));
+        }
+        if !self.ready {
+            if self.startup_prompt.is_none() {
+                self.startup_prompt = Some(text);
+            }
             return;
         }
         let mut command = json!({ "type": "prompt", "message": text });
@@ -910,6 +1260,9 @@ impl AgentTab {
                 if !success {
                     let error = event.get("error").and_then(Value::as_str).unwrap_or(t!("error"));
                     self.items.push(Item::Notice { text: format!("{command}: {error}"), error: true });
+                    if matches!(command, "prompt" | "follow_up") {
+                        self.finish_task(TaskStatus::Failed);
+                    }
                     return false;
                 }
                 match command {
@@ -923,6 +1276,9 @@ impl AgentTab {
                             self.title = t!("π Agent").into();
                         }
                         self.current_session = data.get("sessionFile").and_then(Value::as_str).map(str::to_string);
+                        self.opening_session = None;
+                        self.compacting = data["isCompacting"].as_bool().unwrap_or(false);
+                        self.ready = !self.history_loading;
                     }
                     "get_available_models" => {
                         self.models = data.get("models").and_then(Value::as_array).cloned().unwrap_or_default();
@@ -963,11 +1319,14 @@ impl AgentTab {
                         self.send(json!({ "type": "get_state" }));
                     }
                     "get_messages" => {
+                        self.items.retain(|item| matches!(item, Item::Notice { .. }));
                         if let Some(messages) = data.get("messages").and_then(Value::as_array) {
                             for message in messages {
                                 self.add_message(message);
                             }
                         }
+                        self.history_loading = false;
+                        self.ready = true;
                     }
                     "new_session" | "switch_session" => {
                         if data.get("cancelled").and_then(Value::as_bool) != Some(true) {
@@ -980,15 +1339,49 @@ impl AgentTab {
                         }
                     }
                     "set_session_name" => self.send(json!({ "type": "get_state" })),
-                    "get_session_stats" => {}
+                    "get_session_stats" => self.stats = Some(data.clone()),
+                    "prompt" | "follow_up" if data["disposition"] == "handled" => {
+                        self.finish_task(TaskStatus::Completed);
+                    }
                     _ => {}
+                }
+                if self.ready
+                    && let Some(text) = self.startup_prompt.take()
+                {
+                    if let Some(task) = self.task.as_mut().filter(|t| t.status == TaskStatus::Pending) {
+                        task.start_item = self.items.len();
+                    }
+                    self.prompt(text);
                 }
             }
             "agent_start" => {
                 self.streaming = true;
                 self.started_at.get_or_insert_with(Instant::now);
+                if let Some(task) = self.task.as_mut().filter(|task| task.active()) {
+                    task.status = TaskStatus::Running;
+                }
             }
             "agent_settled" => {
+                let status = if event["aborted"].as_bool() == Some(true) {
+                    TaskStatus::Cancelled
+                } else if self
+                    .items
+                    .iter()
+                    .skip(self.task.as_ref().map_or(self.items.len(), |t| t.start_item))
+                    .filter_map(|i| match i {
+                        Item::Assistant { error, .. } => Some(error.is_some()),
+                        _ => None,
+                    })
+                    .next_back()
+                    .unwrap_or(false)
+                {
+                    TaskStatus::Failed
+                } else {
+                    TaskStatus::Completed
+                };
+                self.finish_task(status);
+                self.send(json!({ "type": "get_state" }));
+                self.send(json!({ "type": "get_session_stats" }));
                 self.streaming = false;
                 self.started_at = None;
                 if event.get("aborted").and_then(Value::as_bool) == Some(true) {
@@ -1088,8 +1481,20 @@ impl AgentTab {
                     error: true,
                 });
             }
-            "compaction_start" => self.items.push(Item::Notice { text: t!("Compacting context…").into(), error: false }),
+            "queue_update" => {
+                let queue = |key: &str| {
+                    event[key].as_array().map(|q| q.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default()
+                };
+                self.steering_queue = queue("steering");
+                self.follow_up_queue = queue("followUp");
+            }
+            "compaction_start" => {
+                self.compacting = true;
+                self.items.push(Item::Notice { text: t!("Compacting context…").into(), error: false });
+            }
             "compaction_end" => {
+                self.compacting = false;
+                self.send(json!({ "type": "get_session_stats" }));
                 let text = if let Some(error) = event["errorMessage"].as_str() {
                     t!("Compaction failed: {error}", error = error)
                 } else {
@@ -1108,9 +1513,12 @@ impl AgentTab {
             }
             "extension_ui_request" => self.ui_request(&event),
             "__exit" => {
-                self.streaming = false;
-                let tail = self.stderr_tail.lock().unwrap().join("\n");
+                self.clear_runtime_state();
+                let tail = self.stderr_tail.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
                 let reason = if tail.trim().is_empty() { t!("pi exited").to_string() } else { t!("pi exited:\n{tail}", tail = tail) };
+                self.items.push(Item::Notice { text: reason.clone(), error: true });
+                self.finish_task(TaskStatus::Failed);
+                self.requests.clear();
                 self.exited = Some(reason);
                 self.stdin = None;
             }
@@ -1183,7 +1591,7 @@ impl AgentTab {
                 let error = event["notifyType"] == "error";
                 self.items.push(Item::Notice { text: strip_ansi(&text("message")), error });
             }
-            "setTitle" => {}
+            "setTitle" => self.title = strip_ansi(&text("title")),
             "set_editor_text" => self.input = text("text"),
             "select" | "confirm" | "input" | "editor" => {
                 let options = event["options"]
@@ -1197,6 +1605,7 @@ impl AgentTab {
                     message: strip_ansi(&text("message")),
                     options,
                     value: text("prefill"),
+                    expires: event["timeout"].as_u64().and_then(|ms| Instant::now().checked_add(std::time::Duration::from_millis(ms))),
                 });
             }
             _ => {}
@@ -1209,11 +1618,34 @@ impl AgentTab {
         message["type"] = json!("extension_ui_response");
         message["id"] = json!(request.id);
         if let Some(stdin) = &self.stdin {
-            let mut stdin = stdin.lock().unwrap();
+            let mut stdin = stdin.lock().unwrap_or_else(|e| e.into_inner());
             let _ = writeln!(stdin, "{message}");
             let _ = stdin.flush();
         }
     }
+}
+
+/// Session identity belongs to the editor manager, even when extra CLI flags are configured.
+fn session_safe_args(args: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut skip = false;
+    for arg in args {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if matches!(arg.as_str(), "--session" | "--fork" | "--session-id" | "--name") {
+            skip = true;
+            continue;
+        }
+        if matches!(arg.as_str(), "--continue" | "-c" | "--resume" | "-r" | "--no-session")
+            || ["--session=", "--fork=", "--session-id=", "--name="].iter().any(|flag| arg.starts_with(flag))
+        {
+            continue;
+        }
+        out.push(arg.clone());
+    }
+    out
 }
 
 fn which(program: &str) -> Option<PathBuf> {
@@ -1313,6 +1745,7 @@ enum Action {
     RunInTerminal(String),
     ToggleDock,
     Hide,
+    Manage,
 }
 
 /// Where an agent lives: an editor tab or the dock beside the code.
@@ -1334,6 +1767,18 @@ fn at(app: &mut App, loc: Loc) -> Option<&mut AgentTab> {
 
 /// The agent, wherever it is (dock first).
 pub fn find(app: &App) -> Option<Loc> {
+    if app.agent_manager.open
+        && let Some(id) = app.agent_manager.selected
+        && let Some(loc) = manager::location(app, id)
+    {
+        return Some(loc);
+    }
+
+    if let Some(index) = app.active_tab
+        && matches!(app.tabs.get(index), Some(super::Tab::Agent(_)))
+    {
+        return Some(Loc::Tab(index));
+    }
     if app.agent_dock.is_some() {
         return Some(Loc::Dock);
     }
@@ -1345,8 +1790,69 @@ pub fn agent_mut(app: &mut App) -> Option<&mut AgentTab> {
     at(app, loc)
 }
 
+/// Keep extension content scrollable and the response controls inside the viewport.
+fn request_dialog(ctx: &egui::Context, agent_id: u64, request: &mut UiRequest) -> Option<Value> {
+    let mut answer = None;
+    let viewport = ctx.content_rect();
+    egui::Window::new("π")
+        .id(egui::Id::unique(("agent_request", agent_id, &request.id)))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .fixed_size(vec2((viewport.width() - 48.0).clamp(1.0, 640.0), (viewport.height() - 80.0).max(1.0)))
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt(("request_content", agent_id, &request.id))
+                .max_height((ui.available_height() - 48.0).max(1.0))
+                .show(ui, |ui| {
+                    ui.add(egui::Label::new(RichText::new(&request.title).strong()).wrap());
+                    if !request.message.is_empty() {
+                        ui.add(egui::Label::new(&request.message).wrap());
+                    }
+                    match request.method.as_str() {
+                        "select" => {
+                            for option in &request.options {
+                                if ui.add(egui::Button::new(option).wrap()).clicked() {
+                                    answer = Some(json!({ "value": option }));
+                                }
+                            }
+                        }
+                        "confirm" => {}
+                        _ => {
+                            let editor = if request.method == "editor" {
+                                egui::TextEdit::multiline(&mut request.value).desired_rows(4)
+                            } else {
+                                egui::TextEdit::singleline(&mut request.value)
+                            };
+                            ui.add(editor.desired_width(ui.available_width()));
+                        }
+                    }
+                });
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                if request.method == "confirm" {
+                    if ui.button(t!("Yes")).clicked() {
+                        answer = Some(json!({ "confirmed": true }));
+                    }
+                    if ui.button(t!("No")).clicked() {
+                        answer = Some(json!({ "confirmed": false }));
+                    }
+                } else {
+                    if request.method != "select" && ui.button("OK").clicked() {
+                        answer = Some(json!({ "value": request.value }));
+                    }
+                    if ui.button(t!("Cancel")).clicked() {
+                        answer = Some(json!({ "cancelled": true }));
+                    }
+                }
+            });
+        });
+    answer
+}
+
 pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
     let font_size = app.config.editor_font_size;
+    let integrated = app.agent_manager.open;
     let Some(agent) = at(app, loc) else { return };
     let mut actions = Vec::new();
 
@@ -1409,6 +1915,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                 ui.label(RichText::new(text).small().color(theme::FAINT_TEXT));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if integrated {
+                    return;
+                }
                 if loc == Loc::Dock && ui.small_button("×").on_hover_text(t!("Hide the panel (the agent keeps working)")).clicked() {
                     actions.push(Action::Hide);
                 }
@@ -1426,18 +1935,21 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                 if ui.small_button("+").on_hover_text(t!("New session")).clicked() {
                     actions.push(Action::NewSession);
                 }
+                if ui.small_button(t!("Manage agents")).clicked() {
+                    actions.push(Action::Manage);
+                }
                 let sessions_button = ui.small_button(t!("☰ Sessions")).on_hover_text(t!("Sessions of this folder"));
                 if sessions_button.clicked() {
                     agent.sessions_open = !agent.sessions_open;
                     if agent.sessions_open {
                         agent.session_filter.clear();
                         let slot = agent.sessions.clone();
-                        *slot.lock().unwrap() = None;
+                        *slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
                         let cwd = agent.cwd.clone();
                         let ctx = ui.ctx().clone();
                         std::thread::spawn(move || {
                             let list = list_sessions(&cwd);
-                            *slot.lock().unwrap() = Some(list);
+                            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(list);
                             ctx.request_repaint();
                         });
                     }
@@ -1642,68 +2154,21 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
     let mut input_ui =
         ui.new_child(egui::UiBuilder::new().max_rect(input_rect.shrink2(vec2(12.0, 6.0))).layout(egui::Layout::top_down(egui::Align::Min)));
     let ui = &mut input_ui;
-    for (key, lines) in &agent.widgets {
-        if key == "pi-modes" {
-            continue;
-        }
-        let text = lines.join("\n");
-        if !text.trim().is_empty() {
-            ui.label(RichText::new(text).small().monospace().color(theme::MUTED_TEXT));
-        }
-    }
-    // Dialogs from pi extensions.
-    let mut answer = None;
-    if let Some((index, request)) = agent.requests.iter_mut().enumerate().next() {
-        egui::Frame::new()
-            .fill(theme::SURFACE)
-            .stroke(Stroke::new(1.0, theme::ACCENT_DIM))
-            .corner_radius(CornerRadius::same(6))
-            .inner_margin(egui::Margin::same(8))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new(&request.title).strong());
-                if !request.message.is_empty() {
-                    ui.label(&request.message);
+    if agent.widgets.keys().any(|key| key != "pi-modes") {
+        egui::ScrollArea::vertical().id_salt(("agent_widgets", agent.id)).max_height(36.0).show(ui, |ui| {
+            for (key, lines) in &agent.widgets {
+                if key != "pi-modes" {
+                    ui.label(RichText::new(lines.join("\n")).small().monospace().color(theme::MUTED_TEXT));
                 }
-                ui.horizontal_wrapped(|ui| match request.method.as_str() {
-                    "confirm" => {
-                        if ui.button(t!("Yes")).clicked() {
-                            answer = Some((index, json!({ "confirmed": true })));
-                        }
-                        if ui.button(t!("No")).clicked() {
-                            answer = Some((index, json!({ "confirmed": false })));
-                        }
-                    }
-                    "select" => {
-                        for option in &request.options {
-                            if ui.button(option).clicked() {
-                                answer = Some((index, json!({ "value": option })));
-                            }
-                        }
-                        if ui.button(t!("Cancel")).clicked() {
-                            answer = Some((index, json!({ "cancelled": true })));
-                        }
-                    }
-                    _ => {
-                        let editor = if request.method == "editor" {
-                            egui::TextEdit::multiline(&mut request.value).desired_rows(4)
-                        } else {
-                            egui::TextEdit::singleline(&mut request.value)
-                        };
-                        ui.add(editor.desired_width(ui.available_width() - 160.0));
-                        if ui.button("OK").clicked() {
-                            answer = Some((index, json!({ "value": request.value })));
-                        }
-                        if ui.button(t!("Cancel")).clicked() {
-                            answer = Some((index, json!({ "cancelled": true })));
-                        }
-                    }
-                });
-            });
-        ui.add_space(4.0);
+            }
+        });
     }
-    if let Some((index, response)) = answer {
-        agent.answer(index, response);
+    agent.expire_requests(ui.ctx());
+    // Extension dialogs use the viewport, rather than the fixed-height composer.
+    if let Some(request) = agent.requests.first_mut()
+        && let Some(response) = request_dialog(ui.ctx(), agent.id, request)
+    {
+        agent.answer(0, response);
     }
 
     // Slash command suggestions.
@@ -1724,7 +2189,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
         agent.focus_input = true;
     }
 
-    let running = agent.is_running();
+    let running = agent.is_running() && agent.ready && agent.requests.is_empty();
     let hint = if agent.streaming {
         t!("Steer while it works (Enter), Alt+Enter — after it finishes")
     } else {
@@ -1776,7 +2241,17 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
     // ---- apply
     for action in actions {
         match action {
-            Action::Send(text) if text == "\u{0}selection" => insert_selection(app),
+            Action::Send(text) if text == "\u{0}selection" => {
+                if let Some(snippet) = snippet(app, app.last_doc_id)
+                    && let Some(agent) = at(app, loc)
+                {
+                    if !agent.input.is_empty() && !agent.input.ends_with('\n') {
+                        agent.input.push('\n');
+                    }
+                    agent.input.push_str(&snippet);
+                    agent.focus_input = true;
+                }
+            }
             other => apply(app, loc, other),
         }
     }
@@ -1784,7 +2259,22 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
 
 fn apply(app: &mut App, loc: Loc, action: Action) {
     match action {
-        Action::Restart => return restart(app, loc),
+        Action::Restart => {
+            if let Some(agent) = at(app, loc) {
+                let id = agent.id;
+                manager::restart(app, id);
+            }
+            return;
+        }
+        Action::Manage => {
+            manager::open(app);
+            return;
+        }
+        Action::SwitchSession(path) => {
+            manager::open_history(app, path, false);
+            return;
+        }
+        Action::NewSession => return new_agent(app),
         Action::OpenFile(path) | Action::OpenLink(path) => return open_link(app, &path),
         Action::RunInTerminal(command) => {
             let task = crate::tasks::Task {
@@ -1810,8 +2300,6 @@ fn apply(app: &mut App, loc: Loc, action: Action) {
         Action::Send(text) => agent.prompt(text),
         Action::FollowUp(text) => agent.send(json!({ "type": "follow_up", "message": text })),
         Action::Abort => agent.abort(),
-        Action::NewSession => agent.send(json!({ "type": "new_session" })),
-        Action::SwitchSession(path) => agent.send(json!({ "type": "switch_session", "sessionPath": path })),
         Action::RenameSession(name) => agent.send(json!({ "type": "set_session_name", "name": name })),
         Action::Compact => agent.send(json!({ "type": "compact" })),
         Action::SetModel(provider, model) => agent.send(json!({ "type": "set_model", "provider": provider, "modelId": model })),
@@ -1905,7 +2393,9 @@ fn toggle_dock(app: &mut App, loc: Loc) {
         Loc::Tab(index) => {
             if index < app.tabs.len() && matches!(app.tabs[index], super::Tab::Agent(_)) {
                 if let super::Tab::Agent(agent) = app.tabs.remove(index) {
-                    app.agent_dock = Some(agent);
+                    if let Some(previous) = app.agent_dock.replace(agent) {
+                        app.tabs.push(super::Tab::Agent(previous));
+                    }
                     app.agent_dock_open = true;
                 }
                 app.active_tab = if app.tabs.is_empty() { None } else { Some(index.min(app.tabs.len() - 1)) };
@@ -1991,44 +2481,16 @@ pub fn open(app: &mut App) {
         }
         return;
     }
-    let Some(workspace) = &app.workspace else {
-        app.notify(t!("Open a project first"), true);
-        return;
-    };
-    let host = workspace.host.clone();
-    let root = workspace.root.clone();
-    let id = app.next_id();
-    let options = LaunchOptions::from_config(&app.config, false);
-    let tab = Box::new(AgentTab::spawn(id, &host, &root, app.control_socket.as_deref(), &options, app.bus.clone()));
-    if app.config.agent_docked {
-        app.agent_dock = Some(tab);
-        app.agent_dock_open = true;
-    } else {
-        app.tabs.push(super::Tab::Agent(tab));
-        app.active_tab = Some(app.tabs.len() - 1);
-    }
+    new_agent(app);
 }
 
-/// Restarts pi, continuing the previous session of this folder.
-fn restart(app: &mut App, loc: Loc) {
-    let Some(workspace) = &app.workspace else { return };
-    let host = workspace.host.clone();
-    let root = workspace.root.clone();
-    let id = app.next_id();
-    let options = LaunchOptions::from_config(&app.config, true);
-    let tab = Box::new(AgentTab::spawn(id, &host, &root, app.control_socket.as_deref(), &options, app.bus.clone()));
-    match loc {
-        Loc::Dock => app.agent_dock = Some(tab),
-        Loc::Tab(index) => {
-            if index < app.tabs.len() {
-                app.tabs[index] = super::Tab::Agent(tab);
-            }
-        }
-    }
+/// Each parallel agent owns a separate RPC process and conversation.
+fn new_agent(app: &mut App) {
+    manager::create(app, manager::Create::default());
 }
 
 /// Routes a record from pi to its tab.
-pub fn on_event(app: &mut App, id: u64, event: Value) {
+pub fn on_event(app: &mut App, id: u64, generation: u64, event: Value) {
     let agent = match app.agent_dock.as_deref_mut() {
         Some(agent) if agent.id == id => Some(agent),
         _ => app.tabs.iter_mut().find_map(|t| match t {
@@ -2036,8 +2498,20 @@ pub fn on_event(app: &mut App, id: u64, event: Value) {
             _ => None,
         }),
     };
-    let Some(agent) = agent else { return };
+    let Some(agent) = agent.filter(|a| a.generation == generation) else { return };
+    let save = matches!(event["type"].as_str(), Some("session_info_changed" | "agent_settled"))
+        || (event["type"] == "response" && event["command"] == "get_state");
     let changed_files = agent.handle(event);
+    manager::deliver(app, id);
+    if save && manager::agents(app).any(|a| a.id == id && a.role == Role::Coordinator && a.ready) {
+        let workers: Vec<_> = manager::agents(app).filter(|a| a.coordinator == Some(id)).map(|a| a.id).collect();
+        for worker in workers {
+            manager::deliver(app, worker);
+        }
+    }
+    if save {
+        manager::persist(app);
+    }
     if changed_files {
         app.reload_unmodified_docs();
         app.git_refresh();

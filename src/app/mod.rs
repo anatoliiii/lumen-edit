@@ -1,7 +1,7 @@
 //! Application state and the main loop. Workers report back through `Msg`.
 
 mod about;
-mod agent;
+pub(crate) mod agent;
 mod commands;
 mod control;
 mod diffview;
@@ -14,6 +14,7 @@ pub(crate) mod keymap;
 mod lsp_manager;
 mod markdown;
 mod media;
+mod next_edit_view;
 mod palette;
 mod panel;
 mod pulse;
@@ -147,6 +148,7 @@ pub enum Msg {
     /// A record from a pi agent process.
     Agent {
         id: u64,
+        generation: u64,
         event: serde_json::Value,
     },
     /// Continuation from a worker thread.
@@ -207,6 +209,7 @@ pub enum Tab {
     Agent(Box<agent::AgentTab>),
     Teleport(Box<teleport::TeleportTab>),
     Image(Box<media::ImageTab>),
+    Settings,
 }
 
 impl Tab {
@@ -218,6 +221,7 @@ impl Tab {
             Tab::Agent(agent) => agent.title.clone(),
             Tab::Teleport(_) => t!("⇄ Teleport").into(),
             Tab::Image(image) => host::file_name(&image.path).to_string(),
+            Tab::Settings => t!("Settings").into(),
         }
     }
     /// The file behind the tab, if any.
@@ -276,6 +280,8 @@ pub struct OpenFile {
 pub struct App {
     ctx: egui::Context,
     pub config: Config,
+    pub inline_completion: crate::inline_completion::Controller,
+    pub next_edit: crate::inline_completion::next_edit::Controller,
     bus: Bus,
     rx: Receiver<Msg>,
     highlight_tx: Sender<syntax::Job>,
@@ -306,7 +312,6 @@ pub struct App {
     terminal_focus: bool,
     /// Actions waiting for a file to finish loading (control requests).
     doc_waiters: Vec<(String, control::DocAction)>,
-    pub settings_open: bool,
     /// The "Keyboard Shortcuts" window, when open.
     pub keybindings: Option<keybindings::State>,
     pub about_open: bool,
@@ -316,6 +321,7 @@ pub struct App {
     /// The agent docked beside the code (when not in a tab).
     pub agent_dock: Option<Box<agent::AgentTab>>,
     pub agent_dock_open: bool,
+    pub agent_manager: agent::manager::Manager,
     /// Images referenced from Markdown previews, by absolute path.
     pub image_cache: std::collections::HashMap<String, media::ImageEntry>,
     /// This editor's control socket, passed to agents.
@@ -376,13 +382,15 @@ impl App {
             last_task: None,
             terminal_focus: false,
             doc_waiters: Vec::new(),
-            settings_open: false,
+            inline_completion: Default::default(),
+            next_edit: Default::default(),
             keybindings: None,
             about_open: false,
             pulse: pulse::Pulse::default(),
             known_hosts: Vec::new(),
             agent_dock: None,
             agent_dock_open: false,
+            agent_manager: Default::default(),
             image_cache: std::collections::HashMap::new(),
             control_socket: None,
             last_doc_id: None,
@@ -433,7 +441,7 @@ impl App {
                     ("palette", _) => app.run_command(Command::QuickOpen),
                     ("commands", _) => app.run_command(Command::CommandPalette),
                     ("log", _) => app.open_log(true),
-                    ("settings", _) => app.settings_open = true,
+                    ("settings", _) => app.open_settings(),
                     ("keybindings", query) => keybindings::open_with_query(&mut app, query),
                     ("teleport", _) => app.run_command(Command::Teleport),
                     ("agent", _) => app.run_command(Command::Agent),
@@ -554,11 +562,12 @@ impl App {
         self.refresh_tasks();
         self.lsp.reset(self.config.servers());
 
-        let session = self.config.sessions.get(&self.workspace.as_ref().unwrap().session_key()).cloned().unwrap_or_default();
+        let session = self.workspace.as_ref().and_then(|w| self.config.sessions.get(&w.session_key()).cloned()).unwrap_or_default();
         for path in session {
             self.open_file(path, None);
         }
-        if reopen_agent {
+        agent::manager::restore(self);
+        if reopen_agent && agent::find(self).is_none() {
             agent::open(self);
         }
     }
@@ -578,6 +587,7 @@ impl App {
         self.active_tab = None;
         self.agent_dock = None;
         self.agent_dock_open = false;
+        self.agent_manager = Default::default();
         self.terminals.clear();
         self.references.clear();
         self.loading_files.clear();
@@ -603,6 +613,7 @@ impl App {
             })
             .collect();
         self.config.sessions.insert(workspace.session_key(), files);
+        agent::manager::persist(self);
         self.config.save();
     }
 
@@ -674,6 +685,7 @@ impl App {
         }
         let insert_at = self.active_tab.map(|i| i + 1).unwrap_or(self.tabs.len()).min(self.tabs.len());
         self.tabs.insert(insert_at, Tab::Doc(Box::new(doc)));
+        self.agent_manager.open = false;
         self.active_tab = Some(insert_at);
         self.request_highlight(id);
         self.load_git_base(&path);
@@ -724,9 +736,29 @@ impl App {
     pub fn activate_tab(&mut self, index: usize) {
         if index < self.tabs.len() {
             self.active_tab = Some(index);
+            if !matches!(self.tabs[index], Tab::Agent(_)) {
+                self.agent_manager.open = false;
+            }
             if let Tab::Doc(doc) = &mut self.tabs[index] {
                 doc.view.focus_request = true;
             }
+        }
+    }
+
+    /// Open settings in the editor tab strip, reusing a single settings tab.
+    pub fn open_settings(&mut self) {
+        let index = self.tabs.iter().position(|tab| matches!(tab, Tab::Settings)).unwrap_or_else(|| {
+            self.tabs.push(Tab::Settings);
+            self.tabs.len() - 1
+        });
+        self.activate_tab(index);
+    }
+
+    pub fn toggle_settings(&mut self) {
+        if let Some(index) = self.active_tab.filter(|&i| matches!(self.tabs.get(i), Some(Tab::Settings))) {
+            self.close_tab(index);
+        } else {
+            self.open_settings();
         }
     }
 
@@ -742,6 +774,13 @@ impl App {
         if index >= self.tabs.len() {
             return;
         }
+        let agent_id = match self.tabs.get(index) {
+            Some(Tab::Agent(agent)) => Some(agent.id),
+            _ => None,
+        };
+        if let Some(id) = agent_id {
+            agent::manager::prepare_close(self, id);
+        }
         let tab = self.tabs.remove(index);
         if let Tab::Doc(doc) = &tab {
             self.lsp.document_closed(doc);
@@ -756,6 +795,9 @@ impl App {
             && let Tab::Doc(doc) = &mut self.tabs[active]
         {
             doc.view.focus_request = true;
+        }
+        if agent_id.is_some() {
+            agent::manager::persist(self);
         }
     }
 
@@ -1110,6 +1152,7 @@ impl App {
                 }
             }
             Msg::FsChanged(paths) => {
+                self.inline_completion.invalidate();
                 self.fs_pending.extend(paths);
                 self.fs_pending_since.get_or_insert_with(Instant::now);
             }
@@ -1305,7 +1348,7 @@ impl App {
             Msg::RemoteDir { path, result } => welcome::on_remote_dir(self, path, result),
             Msg::Control(request) => self.handle_control(request),
             Msg::Run(job) => job(self),
-            Msg::Agent { id, event } => agent::on_event(self, id, event),
+            Msg::Agent { id, generation, event } => agent::on_event(self, id, generation, event),
             Msg::Notice(text, error) => {
                 if !text.is_empty() {
                     self.notify(text, error);
@@ -1829,6 +1872,8 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.process_messages();
+        crate::inline_completion::tick_next_edit(self, &ctx);
+        crate::inline_completion::tick(self, &ctx);
         self.handle_close_request(&ctx);
         keymap::begin_frame(&ctx);
         let recording = keybindings::capture_keys(self, &ctx);
@@ -1890,7 +1935,7 @@ impl eframe::App for App {
                         SideView::Run => run::show(ui, self),
                     });
             }
-            if self.agent_dock.is_some() && self.agent_dock_open {
+            if self.agent_dock.is_some() && self.agent_dock_open && !self.agent_manager.open {
                 let width = (ctx.content_rect().width() * 0.38).clamp(340.0, 620.0);
                 egui::Panel::right("agent_dock")
                     .resizable(true)
@@ -1910,7 +1955,7 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::EDITOR_BACKGROUND)).show(ui, |ui| {
-            if self.workspace.is_none() {
+            if self.workspace.is_none() && !self.tabs.iter().any(|tab| matches!(tab, Tab::Settings)) {
                 welcome::show(ui, self);
             } else {
                 panel::editor_area(ui, self);
@@ -1923,9 +1968,7 @@ impl eframe::App for App {
         if self.palette.is_some() {
             palette::show(&ctx, self);
         }
-        if self.settings_open {
-            status::settings_window(&ctx, self);
-        }
+        agent::manager::tick(&ctx, self);
         keybindings::window(&ctx, self);
         if self.about_open {
             about::window(&ctx, self);

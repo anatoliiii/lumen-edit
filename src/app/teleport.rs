@@ -190,12 +190,12 @@ pub fn start_transfer(app: &mut App, tab_id: u64, job: Job) {
             &mut src.shell(&src_dir, &format!("du -skL -- {list} 2>/dev/null | awk '{{s+=$1}} END {{print s*1024}}'")),
             None,
         ) {
-            *total_slot.lock().unwrap() = String::from_utf8_lossy(&out).trim().parse().ok();
+            *total_slot.lock().unwrap_or_else(|e| e.into_inner()) = String::from_utf8_lossy(&out).trim().parse().ok();
         }
         let result = pipe(&src, &src_dir, &list, &dst, &dst_dir, &done, &cancel).and_then(|_| {
             if move_after { host::run_with_input(&mut src.shell(&src_dir, &format!("rm -rf -- {list}")), None).map(|_| ()) } else { Ok(()) }
         });
-        shared.lock().unwrap().push((transfer_id, result));
+        shared.lock().unwrap_or_else(|e| e.into_inner()).push((transfer_id, result));
         bus.send(Msg::Run(Box::new(move |app: &mut App| finish(app, tab_id, index, total_for_ui))));
     });
 }
@@ -215,8 +215,8 @@ fn pipe(src: &Host, src_dir: &str, list: &str, dst: &Host, dst_dir: &str, done: 
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
-    let mut from = reader.stdout.take().unwrap();
-    let mut to = writer.stdin.take().unwrap();
+    let mut from = reader.stdout.take().ok_or_else(|| "tar stdout unexpectedly missing".to_string())?;
+    let mut to = writer.stdin.take().ok_or_else(|| "tar stdin unexpectedly missing".to_string())?;
     let mut buffer = vec![0u8; 256 * 1024];
     let mut aborted = false;
     loop {
@@ -256,9 +256,9 @@ fn pipe(src: &Host, src_dir: &str, list: &str, dst: &Host, dst_dir: &str, done: 
 
 fn finish(app: &mut App, tab_id: u64, index: usize, total: Arc<Mutex<Option<u64>>>) {
     let Some(Tab::Teleport(tab)) = app.tabs.iter_mut().find(|t| matches!(t, Tab::Teleport(t) if t.id == tab_id)) else { return };
-    let results: Vec<_> = tab.shared.lock().unwrap().drain(..).collect();
+    let results: Vec<_> = tab.shared.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect();
     if let Some(transfer) = tab.transfers.get_mut(index) {
-        transfer.total = transfer.total.or(*total.lock().unwrap());
+        transfer.total = transfer.total.or(*total.lock().unwrap_or_else(|e| e.into_inner()));
         if let Some((_, result)) = results.into_iter().last() {
             transfer.finished = Some(result.clone());
             transfer.finished_at = Some(Instant::now());

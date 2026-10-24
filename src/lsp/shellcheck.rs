@@ -33,7 +33,7 @@ pub fn run(host: &Host, cwd: &str, text: &str) -> Result<Vec<(usize, usize, usiz
     use std::io::Write;
     use std::process::Stdio;
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
-    let mut stdin = child.stdin.take().unwrap();
+    let mut stdin = child.stdin.take().ok_or_else(|| "shellcheck stdin unexpectedly missing".to_string())?;
     let data = text.as_bytes().to_vec();
     std::thread::spawn(move || {
         let _ = stdin.write_all(&data);

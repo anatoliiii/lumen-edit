@@ -132,3 +132,68 @@ pub fn elided(
     job.wrap = TextWrapping { max_width, max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
     painter.layout_job(job)
 }
+
+/// Syntax-highlighted spans for a code fragment, cached per thread by
+/// (language, text). Empty and plain text produce no spans.
+pub fn highlighted_code(lang: crate::syntax::Lang, code: &str) -> Vec<crate::syntax::Span> {
+    if lang == crate::syntax::Lang::Plain || code.is_empty() || code.len() > 200_000 {
+        return Vec::new();
+    }
+    use std::{
+        cell::RefCell,
+        collections::HashMap,
+        hash::{Hash, Hasher},
+    };
+    thread_local! {
+        static HIGHLIGHTER: RefCell<tree_sitter_highlight::Highlighter> = RefCell::new(tree_sitter_highlight::Highlighter::new());
+        static HIGHLIGHT_CACHE: RefCell<HashMap<u64, Vec<crate::syntax::Span>>> = RefCell::new(HashMap::new());
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (lang as u8, code).hash(&mut hasher);
+    let key = hasher.finish();
+    if let Some(spans) = HIGHLIGHT_CACHE.with(|c| c.borrow().get(&key).cloned()) {
+        return spans;
+    }
+    let spans = HIGHLIGHTER.with(|h| crate::syntax::highlight(&mut h.borrow_mut(), lang, code));
+    HIGHLIGHT_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        if cache.len() > 400 {
+            cache.clear();
+        }
+        cache.insert(key, spans.clone());
+    });
+    spans
+}
+
+/// Append `text` to `job` in one run per syntax span; `default` colors the
+/// unhighlighted parts. Spans use byte offsets into `text`.
+pub fn append_colored_code(
+    job: &mut eframe::egui::text::LayoutJob,
+    text: &str,
+    spans: &[crate::syntax::Span],
+    font: eframe::egui::FontId,
+    default: Color32,
+) {
+    use eframe::egui::TextFormat;
+    let format = |color: Color32| TextFormat { font_id: font.clone(), color, ..Default::default() };
+    let mut position = 0usize;
+    for span in spans {
+        if span.start > position {
+            let end = span.start.min(text.len());
+            if position < end {
+                job.append(&text[position..end], 0.0, format(default));
+            }
+        }
+        if span.end > span.start && span.start >= position {
+            let start = span.start.min(text.len());
+            let end = span.end.min(text.len());
+            if start < end {
+                job.append(&text[start..end], 0.0, format(crate::theme::syntax_color(span.highlight)));
+                position = end;
+            }
+        }
+    }
+    if position < text.len() {
+        job.append(&text[position..], 0.0, format(default));
+    }
+}

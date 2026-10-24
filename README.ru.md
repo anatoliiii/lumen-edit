@@ -1,5 +1,7 @@
 # Lumen Edit
 
+[Управление сессиями агентов](docs/pi-sessions.ru.md) · [Ревизия интеграции Pi](docs/pi-integration-audit.md)
+
 [English](README.md) · [Лицензия MIT](LICENSE) · [Как участвовать](CONTRIBUTING.md)
 
 ![Редактор](docs/screenshots/ru/editor.png)
@@ -16,6 +18,7 @@
   подсветка парных скобок и вхождений слова, направляющие отступов.
 - **Подсветка синтаксиса** (tree-sitter): Rust, Bash, Python, C, C++, C#, Go, HTML,
   CSS, JavaScript, TypeScript/TSX, JSON, TOML.
+- **[AI-дополнение кода](docs/inline-completion.md)**: включите галочку для проекта, печатайте и принимайте предложения клавишей Tab. OpenRouter Codestral, ключ из Pi, контекст LSP/tree-sitter, отмена устаревших запросов и один Undo на вставку.
 - **LSP**: автодополнение, hover, сигнатуры, переход к определению (F12, Ctrl+клик),
   ссылки (Shift+F12), переименование (F2), быстрые исправления (Ctrl+.), форматирование,
   диагностика с подчёркиванием и сообщением в конце строки.

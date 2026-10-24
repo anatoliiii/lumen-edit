@@ -38,11 +38,15 @@ impl AgentClient {
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = bounded(1);
-        self.pending.lock().unwrap().insert(id, tx);
+        // Poison recovery is safe here: if a worker panicked, `pending` may carry a
+        // stale entry at worst, and the `recv_timeout` below turns that into a
+        // recoverable "agent did not answer" error; writing to `writer` returns an
+        // error which marks the agent dead instead of corrupting state.
+        self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
         {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
             if let Err(error) = proto::write_frame(&mut *writer, &Request { id, op }, payload) {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
                 self.alive.store(false, Ordering::Relaxed);
                 return Err(error.to_string());
             }
@@ -50,7 +54,7 @@ impl AgentClient {
         match rx.recv_timeout(Duration::from_secs(180)) {
             Ok((result, data)) => result.map(|reply| (reply, data)),
             Err(_) => {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
                 Err("agent did not answer".into())
             }
         }
@@ -58,7 +62,7 @@ impl AgentClient {
 
     pub fn shutdown(&self) {
         self.alive.store(false, Ordering::Relaxed);
-        let _ = self.child.lock().unwrap().kill();
+        let _ = self.child.lock().unwrap_or_else(|e| e.into_inner()).kill();
     }
 }
 
@@ -132,8 +136,8 @@ fn spawn(remote: &Arc<Remote>, path: &str) -> Result<AgentClient, String> {
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| e.to_string())?;
-    let stdin = child.stdin.take().unwrap();
-    let stdout = child.stdout.take().unwrap();
+    let stdin = child.stdin.take().ok_or_else(|| "agent stdin unexpectedly missing".to_string())?;
+    let stdout = child.stdout.take().ok_or_else(|| "agent stdout unexpectedly missing".to_string())?;
     let pending: Pending = Arc::default();
     let alive = Arc::new(AtomicBool::new(true));
 
@@ -146,19 +150,19 @@ fn spawn(remote: &Arc<Remote>, path: &str) -> Result<AgentClient, String> {
             while let Ok((message, payload)) = proto::read_frame::<_, Message>(&mut reader) {
                 match message {
                     Message::Response { id, result } => {
-                        if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                        if let Some(tx) = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
                             let _ = tx.send((result, payload));
                         }
                     }
                     Message::FsChanged { paths } => {
-                        if let Some(sink) = events.lock().unwrap().as_ref() {
+                        if let Some(sink) = events.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
                             let _ = sink.send(paths);
                         }
                     }
                 }
             }
             alive.store(false, Ordering::Relaxed);
-            for (_, tx) in pending.lock().unwrap().drain() {
+            for (_, tx) in pending.lock().unwrap_or_else(|e| e.into_inner()).drain() {
                 let _ = tx.send((Err("agent exited".into()), Vec::new()));
             }
         });

@@ -21,6 +21,8 @@ pub struct RecentProject {
 pub struct Config {
     /// Interface language: `auto` (system locale), `en` or `ru`.
     pub language: String,
+    pub inline_completion: crate::inline_completion::Settings,
+    pub next_edit_region_lines: usize,
     pub ui_font_size: f32,
     pub editor_font_size: f32,
     pub terminal_font_size: f32,
@@ -54,6 +56,8 @@ pub struct Config {
     pub ssh_hosts: Vec<String>,
     /// Open files per project (`host|root`), restored on reopen.
     pub sessions: HashMap<String, Vec<String>>,
+    /// Open Pi conversations per project; prompts are never replayed on restore.
+    pub agent_sessions: HashMap<String, Vec<crate::app::agent::team::SavedAgent>>,
     /// Shortcuts that differ from the defaults: command id -> chords like
     /// `Ctrl+Shift+P` (Ctrl is Cmd on macOS, `MacCtrl` its Control key);
     /// `[]` unbinds the command.
@@ -64,6 +68,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             language: "auto".into(),
+            inline_completion: Default::default(),
+            next_edit_region_lines: 15,
             ui_font_size: 13.5,
             editor_font_size: 14.0,
             terminal_font_size: 13.5,
@@ -88,6 +94,7 @@ impl Default for Config {
             recent: Vec::new(),
             ssh_hosts: Vec::new(),
             sessions: HashMap::new(),
+            agent_sessions: HashMap::new(),
             keybindings: BTreeMap::new(),
         }
     }
@@ -107,13 +114,15 @@ impl Config {
             }
             let _ = std::fs::copy(&legacy, config_path());
         }
-        match std::fs::read_to_string(config_path()) {
+        let mut config: Self = match std::fs::read_to_string(config_path()) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|error| {
                 eprintln!("lumen-edit: {}: {error}", config_path().display());
                 Config::default()
             }),
             Err(_) => Config::default(),
-        }
+        };
+        config.inline_completion.migrate_limits();
+        config
     }
 
     pub fn save(&self) {

@@ -20,6 +20,7 @@ mod config;
 mod control;
 mod git;
 mod host;
+mod inline_completion;
 mod lsp;
 mod platform;
 mod syntax;

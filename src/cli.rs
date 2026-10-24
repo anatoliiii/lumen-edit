@@ -86,13 +86,10 @@ pub fn run(args: &[String]) -> Option<ExitCode> {
                 Err(error) => fail(error),
             })
         }
-        name if methods::find(name).is_some() => {
-            let method = methods::find(name).unwrap();
-            Some(match parse_args(method, rest) {
-                Ok(params) => call_and_print(name, params, rest),
-                Err(error) => fail(error),
-            })
-        }
+        name if let Some(method) = methods::find(name) => Some(match parse_args(method, rest) {
+            Ok(params) => call_and_print(name, params, rest),
+            Err(error) => fail(error),
+        }),
         // A path: hand it to a running editor if there is one.
         path => {
             if path.starts_with('-') {
@@ -184,13 +181,13 @@ fn parse_args(method: &methods::Method, args: &[String]) -> Result<Value, String
                 .find(|p| p.name == name)
                 .ok_or_else(|| t!("{n1} has no parameter --{name}", n1 = method.name, name = name))?;
             let is_bool = matches!(param.kind, methods::Kind::Bool);
-            match iter.peek() {
-                Some(next) if !is_bool && !next.starts_with("--") => normalized.push(format!("{name}={}", iter.next().unwrap())),
-                Some(next) if is_bool && matches!(next.as_str(), "true" | "false") => {
-                    normalized.push(format!("{name}={}", iter.next().unwrap()))
-                }
-                _ if is_bool => normalized.push(format!("{name}=true")),
-                _ => return Err(t!("--{name}: value required", name = name)),
+            let takes = |next: &&String| {
+                if is_bool { matches!(next.as_str(), "true" | "false") } else { !next.starts_with("--") }
+            };
+            match iter.next_if(takes) {
+                Some(value) => normalized.push(format!("{name}={value}")),
+                None if is_bool => normalized.push(format!("{name}=true")),
+                None => return Err(t!("--{name}: value required", name = name)),
             }
             continue;
         }
@@ -199,7 +196,13 @@ fn parse_args(method: &methods::Method, args: &[String]) -> Result<Value, String
     methods::parse_cli_params(method, &normalized)
 }
 
-fn call_and_print(method: &str, params: Value, args: &[String]) -> ExitCode {
+fn call_and_print(method: &str, mut params: Value, args: &[String]) -> ExitCode {
+    if method == "agent"
+        && let Ok(caller) = std::env::var("LUMEN_AGENT_ID")
+        && let Ok(caller) = caller.parse::<u64>()
+    {
+        params["_caller_agent"] = json!(caller);
+    }
     let launch = matches!(method, "open_file" | "open_folder" | "connect_ssh");
     match control::connect_or_launch(launch) {
         Ok(mut client) => print_result(method, client.call(method, params), args),

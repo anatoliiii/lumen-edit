@@ -154,8 +154,10 @@ pub fn tools() -> Vec<Value> {
             let mut properties = serde_json::Map::new();
             let mut required: Vec<&str> = Vec::new();
             let mut lines = Vec::new();
+            let mut single_description = "";
             for (action, method_name) in actions.iter() {
-                let method = methods::find(method_name).expect("grouped method exists");
+                // `grouped_methods_exist` keeps GROUPS in sync with METHODS.
+                let Some(method) = methods::find(method_name) else { continue };
                 let schema = methods::input_schema(method);
                 if let Some(props) = schema["properties"].as_object() {
                     for (key, value) in props {
@@ -163,6 +165,7 @@ pub fn tools() -> Vec<Value> {
                     }
                 }
                 if single {
+                    single_description = method.description;
                     required.extend(method.params.iter().filter(|p| p.required).map(|p| p.name));
                 } else {
                     let args: Vec<String> =
@@ -171,8 +174,7 @@ pub fn tools() -> Vec<Value> {
                 }
             }
             let description = if single {
-                let method = methods::find(actions[0].1).unwrap();
-                format!("{description} {}", method.description)
+                format!("{description} {single_description}")
             } else {
                 let names: Vec<&str> = actions.iter().map(|(a, _)| *a).collect();
                 properties.insert("action".into(), json!({ "type": "string", "enum": names }));
@@ -212,6 +214,15 @@ pub fn granular_tools() -> Vec<Value> {
         .collect()
 }
 
+/// Strip the grouped routing selector only when the native method does not use it.
+fn forwarded_arguments(method: &str, mut arguments: Value) -> Value {
+    let needs_action = methods::find(method).is_some_and(|method| method.params.iter().any(|p| p.name == "action"));
+    if !needs_action && let Value::Object(map) = &mut arguments {
+        map.remove("action");
+    }
+    arguments
+}
+
 fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let mut arguments = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -224,9 +235,14 @@ fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Val
         Ok(method) => method,
         Err(error) => return tool_error(error),
     };
-    if let Value::Object(map) = &mut arguments {
-        map.remove("action");
+    if method == "agent"
+        && let Ok(caller) = std::env::var("LUMEN_AGENT_ID")
+        && let Ok(caller) = caller.parse::<u64>()
+    {
+        arguments["_caller_agent"] = json!(caller);
     }
+
+    let arguments = forwarded_arguments(method, arguments);
     let mut result = None;
     // Reconnect once if the editor was restarted.
     for _ in 0..2 {
@@ -236,7 +252,8 @@ fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Val
                 Err(error) => return tool_error(error),
             }
         }
-        match client.as_mut().unwrap().call(method, arguments.clone()) {
+        let Some(client_ref) = client.as_mut() else { continue };
+        match client_ref.call(method, arguments.clone()) {
             Err(error) if error.contains(t!("closed")) || error.contains("Broken pipe") => *client = None,
             other => {
                 result = Some(other);
@@ -289,10 +306,29 @@ pub fn base64(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn preserves_native_agent_actions_for_grouped_and_granular_tools() {
+        let input = serde_json::json!({ "action": "create", "coordinator": 7, "name": "worker" });
+        assert_eq!(super::forwarded_arguments("agent", input.clone()), input);
+        assert_eq!(
+            super::forwarded_arguments("read_file", serde_json::json!({ "action": "read", "path": "a.rs" })),
+            serde_json::json!({ "path": "a.rs" })
+        );
+    }
+
+    #[test]
     fn base64_matches_rfc() {
         assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
         assert_eq!(super::base64(b"fooba"), "Zm9vYmE=");
         assert_eq!(super::base64(b"foob"), "Zm9vYg==");
+    }
+
+    #[test]
+    fn grouped_methods_exist() {
+        for (_, _, actions) in super::GROUPS {
+            for (_, name) in actions.iter() {
+                assert!(crate::control::methods::find(name).is_some(), "grouped method {name} missing");
+            }
+        }
     }
 
     #[test]

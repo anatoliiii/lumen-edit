@@ -46,6 +46,7 @@ pub struct Document {
     pub media_zoom: Option<f32>,
     /// Parsed CSV rows for the table view, by buffer version.
     pub csv: Option<(u64, std::sync::Arc<Vec<Vec<String>>>)>,
+    pub next_edit_history: crate::inline_completion::next_edit::EditHistory,
 }
 
 impl Document {
@@ -91,6 +92,7 @@ impl Document {
             media_uri: None,
             media_zoom: None,
             csv: None,
+            next_edit_history: Default::default(),
         }
     }
 
@@ -105,6 +107,9 @@ impl Document {
     /// Moves highlight spans and diagnostics along with edits made since the
     /// last frame so they stay in place until fresh results arrive.
     pub fn absorb_edits(&mut self) {
+        for event in self.buffer.take_user_edit_events() {
+            self.next_edit_history.push(event);
+        }
         let byte_edits = self.buffer.take_byte_edits();
         let char_edits = self.buffer.take_char_edits();
         if byte_edits.is_empty() && char_edits.is_empty() {

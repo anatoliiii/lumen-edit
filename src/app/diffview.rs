@@ -131,26 +131,48 @@ pub fn show_diff(ui: &mut egui::Ui, app: &mut App, index: usize) {
                         action = Some(HunkAction::Open(file.path.clone(), hunk.new_start.saturating_sub(1)));
                     }
                 });
+                let lang = crate::syntax::Lang::from_path(&file.path);
                 let mut old_line = hunk.header.split(['-', ',', ' ']).nth(2).and_then(|n| n.parse::<usize>().ok()).unwrap_or(1);
                 let mut new_line = hunk.new_start;
                 for line in &hunk.lines {
-                    let (bg, fg, old, new) = match line.chars().next() {
-                        Some('+') => {
+                    let marker = line.chars().next().unwrap_or(' ');
+                    let (bg, marker_color, old, new) = match marker {
+                        '+' => {
                             new_line += 1;
-                            (theme::DIFF_ADDED_BG, Color32::from_rgb(170, 220, 170), String::new(), (new_line - 1).to_string())
+                            (theme::DIFF_ADDED_BG, theme::SUCCESS, String::new(), (new_line - 1).to_string())
                         }
-                        Some('-') => {
+                        '-' => {
                             old_line += 1;
-                            (theme::DIFF_REMOVED_BG, Color32::from_rgb(235, 170, 170), (old_line - 1).to_string(), String::new())
+                            (theme::DIFF_REMOVED_BG, theme::ERROR, (old_line - 1).to_string(), String::new())
                         }
-                        Some('\\') => (Color32::TRANSPARENT, theme::MUTED_TEXT, String::new(), String::new()),
+                        '\\' => (Color32::TRANSPARENT, theme::MUTED_TEXT, String::new(), String::new()),
                         _ => {
                             old_line += 1;
                             new_line += 1;
-                            (Color32::TRANSPARENT, theme::TEXT, (old_line - 1).to_string(), (new_line - 1).to_string())
+                            (Color32::TRANSPARENT, theme::MUTED_TEXT, (old_line - 1).to_string(), (new_line - 1).to_string())
                         }
                     };
-                    let galley = ui.painter().layout_no_wrap(line.replace('\t', "    "), mono.clone(), fg);
+                    let mut job = egui::text::LayoutJob::default();
+                    job.wrap.max_width = f32::INFINITY;
+                    job.append(
+                        &line[..marker.len_utf8()],
+                        0.0,
+                        egui::TextFormat { font_id: mono.clone(), color: marker_color, ..Default::default() },
+                    );
+                    if marker == '\\' {
+                        if line.len() > marker.len_utf8() {
+                            job.append(
+                                &line[marker.len_utf8()..],
+                                0.0,
+                                egui::TextFormat { font_id: mono.clone(), color: theme::MUTED_TEXT, ..Default::default() },
+                            );
+                        }
+                    } else {
+                        let body = line[marker.len_utf8()..].replace('\t', "    ");
+                        let spans = super::util::highlighted_code(lang, &body);
+                        super::util::append_colored_code(&mut job, &body, &spans, mono.clone(), theme::TEXT);
+                    }
+                    let galley = ui.fonts_mut(|f| f.layout_job(job));
                     let width = (galley.size().x + 120.0).max(ui.available_width());
                     let (rect, _) = ui.allocate_exact_size(vec2(width, row_h), Sense::hover());
                     if bg != Color32::TRANSPARENT {
@@ -158,7 +180,7 @@ pub fn show_diff(ui: &mut egui::Ui, app: &mut App, index: usize) {
                     }
                     ui.painter().text(rect.left_center() + vec2(36.0, 0.0), Align2::RIGHT_CENTER, old, mono.clone(), theme::LINE_NUMBER);
                     ui.painter().text(rect.left_center() + vec2(76.0, 0.0), Align2::RIGHT_CENTER, new, mono.clone(), theme::LINE_NUMBER);
-                    ui.painter().galley(pos2(rect.left() + 90.0, rect.top() + 1.0), galley, fg);
+                    ui.painter().galley(pos2(rect.left() + 90.0, rect.top() + 1.0), galley, theme::TEXT);
                 }
             }
         }

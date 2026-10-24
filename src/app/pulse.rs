@@ -345,9 +345,10 @@ fn sparkline(ui: &mut egui::Ui, values: &VecDeque<f32>, color: Color32, height: 
         .enumerate()
         .map(|(i, v)| pos2(rect.left() + (offset + i) as f32 * step, rect.bottom() - rect.height() * v / 100.0))
         .collect();
+    let (Some(first), Some(last)) = (points.first().copied(), points.last().copied()) else { return };
     let mut fill = points.clone();
-    fill.push(pos2(points.last().unwrap().x, rect.bottom()));
-    fill.push(pos2(points[0].x, rect.bottom()));
+    fill.push(pos2(last.x, rect.bottom()));
+    fill.push(pos2(first.x, rect.bottom()));
     painter.add(Shape::convex_polygon(fill, color.gamma_multiply(0.15), Stroke::NONE));
     painter.add(Shape::line(points, Stroke::new(1.5, color)));
 }

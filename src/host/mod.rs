@@ -171,7 +171,7 @@ impl Host {
     pub fn which(&self, program: &str) -> bool {
         static CACHE: Mutex<Option<HashMap<(String, String), bool>>> = Mutex::new(None);
         let key = (self.key(), program.to_string());
-        if let Some(found) = CACHE.lock().unwrap().get_or_insert_with(HashMap::new).get(&key) {
+        if let Some(found) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get(&key) {
             return *found;
         }
         let found = match self {
@@ -185,7 +185,7 @@ impl Host {
                 .map(|status| status.success())
                 .unwrap_or(false),
         };
-        CACHE.lock().unwrap().get_or_insert_with(HashMap::new).insert(key, found);
+        CACHE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, found);
         found
     }
 
@@ -223,7 +223,7 @@ pub fn run_with_input(command: &mut Command, stdin: Option<&[u8]>) -> Result<Vec
     command.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     if let Some(data) = stdin {
-        let mut pipe = child.stdin.take().unwrap();
+        let mut pipe = child.stdin.take().ok_or_else(|| "stdin unexpectedly missing".to_string())?;
         let data = data.to_vec();
         std::thread::spawn(move || {
             let _ = pipe.write_all(&data);
@@ -334,11 +334,9 @@ mod tests {
     #[cfg(unix)]
     fn use_fake_ssh() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/fake-ssh-dir");
-        let path = std::env::var("PATH").unwrap_or_default();
-        if !path.starts_with(dir) {
-            // SAFETY: tests touching PATH only add the fake ssh directory.
-            unsafe { std::env::set_var("PATH", format!("{dir}:{path}")) };
-        }
+        // No process-global PATH mutation: the fake ssh is selected per command
+        // through the SSH_BIN override, keeping env writes out of the tests.
+        super::ssh::set_ssh_bin(std::path::PathBuf::from(dir).join("ssh"));
     }
 
     fn exercise(host: &Host, dir: &str) {
@@ -379,9 +377,10 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             let target = format!("fake-{name}-{}", std::process::id());
             // Master "connection" in the background, as the UI does in a PTY.
-            let mut master = std::process::Command::new("ssh").args(ssh::master_args(&target)).stdout(Stdio::null()).spawn().unwrap();
+            let mut master =
+                std::process::Command::new(super::ssh::ssh_bin()).args(ssh::master_args(&target)).stdout(Stdio::null()).spawn().unwrap();
             let remote = ssh::wait_and_establish(target, ssh::alive_flag(), use_agent).unwrap();
-            assert_eq!(remote.has_agent(), use_agent, "{}", remote.agent_status.lock().unwrap());
+            assert_eq!(remote.has_agent(), use_agent, "{}", remote.agent_status.lock().unwrap_or_else(|e| e.into_inner()));
             assert_eq!((remote.os.as_str(), remote.arch.as_str()), (std::env::consts::OS, std::env::consts::ARCH));
             exercise(&Host::Remote(remote.clone()), &dir.to_string_lossy());
             remote.disconnect();

@@ -6,6 +6,24 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Semantic inline completion: automatic 180 ms debounce, OpenRouter Codestral using Pi credentials, LSP/tree-sitter context, multiline ghost text, Tab acceptance and atomic Undo; explicit per-project cloud consent, bounded requests/cache and diagnostics.
+- Agent sessions now live inside the project workspace: session list and groups beside the selected chat, inline creation, searchable model selection and session actions.
+- Pi session manager: independent agents and coordinator/worker groups, task dispatch and result delivery, per-agent models, live status, queues, session totals and context usage.
+- Saved agent sessions and drafts restore per project without replaying tasks; history can be opened separately, cloned or reversibly archived.
+- Addressable CLI/MCP agent IDs, group controls and delegation through the editor tools.
+
+
+### Fixed
+- Automatic inline completion no longer burns quota by repeatedly cancelling requests while typing; minute limits retry automatically, request accounting excludes pre-HTTP cancellation/cache, and the original overly small defaults are migrated.
+- Inline completion now anchors the current insertion scope and rejects syntax regressions or misplaced Rust match-arm fragments, including inside macro token trees.
+- Creating a background worker preserves the user's selected session and document.
+- MCP forwarding preserves the native agent action parameter, enabling agent management and delegation through Pi tools.
+- Pi restarts resume the exact session, ignore stale process events and cancel unsent startup prompts when stopped; expired background extension dialogs no longer block the UI.
+- Pi extension confirmation and input dialogs fit the viewport, with scrollable content and visible response buttons.
+- New Pi sessions open independent agent tabs; moving an agent into an occupied dock preserves the previous agent in a tab.
+- Agent actions and file attachments target the active agent tab when several sessions are open.
+
 ## [0.3.0] - 2026-10-23
 
 ### Added

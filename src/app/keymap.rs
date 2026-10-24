@@ -246,6 +246,8 @@ pub fn defaults(command: Command) -> &'static [&'static str] {
         Command::Rename => &["F2"],
         Command::CodeActions => &["Ctrl+."],
         Command::Format => &["Ctrl+Shift+I"],
+        Command::TriggerInlineCompletion => &["Ctrl+Alt+Space"],
+        Command::TriggerNextEdit => &["Ctrl+Alt+E"],
         Command::TriggerSuggest if MAC => &["MacCtrl+Space"],
         Command::TriggerSuggest => &["Ctrl+Space"],
         Command::ShowHover => &["Ctrl+K"],
@@ -565,7 +567,7 @@ mod tests {
     fn every_default_parses_and_round_trips() {
         for &command in ALL {
             for text in defaults(command) {
-                let chord = Chord::parse(text).unwrap_or_else(|| panic!("{command:?}: {text}"));
+                let chord = Chord::parse(text).unwrap();
                 assert_eq!(Chord::parse(&chord.to_config()), Some(chord), "{text}");
             }
         }

@@ -532,7 +532,7 @@ impl App {
                 self.terminals
                     .iter()
                     .enumerate()
-                    .map(|(i, t)| json!({ "terminal": i, "title": t.title, "alive": t.is_alive(), "exit_code": *t.exit_code.lock().unwrap(), "active": i == self.active_terminal }))
+                    .map(|(i, t)| json!({ "terminal": i, "title": t.title, "alive": t.is_alive(), "exit_code": *t.exit_code.lock().unwrap_or_else(|e| e.into_inner()), "active": i == self.active_terminal }))
                     .collect::<Vec<_>>()
             )),
             "terminal_new" => {
@@ -705,39 +705,9 @@ impl App {
                 self.ctx.request_repaint();
                 None
             }
-            "agent" => {
-                let action = str_param(params, "action").unwrap_or("transcript");
-                if action == "open" || action == "prompt" {
-                    super::agent::open(self);
-                }
-                let Some(agent) = super::agent::agent_mut(self) else {
-                    return fail(t!("the agent is not open (action=open)").into());
-                };
-                match action {
-                    "open" => done(json!({ "running": agent.is_running(), "sandboxed": agent.sandboxed, "cwd": agent.cwd })),
-                    "prompt" => {
-                        agent.prompt(str_param(params, "text").unwrap_or("").to_string());
-                        done(json!(t!("sent; progress — action=transcript")))
-                    }
-                    "abort" => {
-                        agent.abort();
-                        done(json!("ok"))
-                    }
-                    "sessions" => done(agent.sessions_json()),
-                    "switch" => {
-                        agent.switch_session(str_param(params, "text").unwrap_or("").to_string());
-                        done(json!("ok"))
-                    }
-                    "new_session" => {
-                        agent.switch_session(String::new());
-                        done(json!("ok"))
-                    }
-                    _ => {
-                        let last = int_param(params, "last").unwrap_or(30).max(1) as usize;
-                        done(json!({ "streaming": agent.streaming, "exited": agent.exited, "items": agent.transcript(last) }))
-                    }
-                }
-            }
+            "agent" => match super::agent::manager::control(self, params) {
+                Ok(value) => done(value), Err(error) => fail(error),
+            },
             "pulse" => done(self.pulse.json()),
             "transfer" => {
                 let hosts = super::teleport::known_hosts(self);
@@ -816,6 +786,7 @@ impl App {
                     "column": col + 1,
                     "selection": if selected.is_empty() { Value::Null } else { json!(selected.chars().take(2000).collect::<String>()) },
                     "cursors": doc.buffer.selections.len(),
+                    "inline_completion_visible": doc.view.ghost.as_ref().is_some_and(|g| g.valid(doc.id, &doc.buffer)),
                     "lines": doc.buffer.line_count(),
                 }))
             }
@@ -828,9 +799,20 @@ impl App {
             });
             json!({ "host": w.host.key(), "root": w.root, "name": w.name(), "git": git, "tasks": w.tasks.len() })
         });
+        let m = &self.inline_completion.metrics;
+        let (latency_p50_ms, latency_p95_ms) = m.latency_percentiles();
+        let inline_completion = json!({"requests":m.requests,"success":m.success,"errors":m.errors,"accepted":m.accepted,"rejected":m.rejected,
+            "cache_hits":m.cache_hits,"latency_ms":m.latency_ms,"debounce_ms":m.debounce_ms,"context_prepare_ms":m.context_prepare_ms,
+            "queue_ms":m.queue_ms,"http_request_ms":m.http_request_ms,"total_latency_ms":m.total_latency_ms,"display_ms":m.display_ms,"latency_p50_ms":latency_p50_ms,"latency_p95_ms":latency_p95_ms,
+            "input_tokens":m.input_tokens,"output_tokens":m.output_tokens,"cached_tokens":m.cached_tokens,"rejection_reason":m.rejection_reason,
+            "session_requests":self.inline_completion.ledger.requests,"cost_usd":self.inline_completion.ledger.cost_usd,
+            "reserved_usd":self.inline_completion.ledger.reserved_usd,"busy":self.inline_completion.busy(),"status":self.inline_completion.status,
+            "enabled":!self.config.inline_completion.paused && self.workspace.as_ref().is_some_and(|w|!w.host.is_remote() && self.config.inline_completion.projects.contains(&w.session_key()))});
         let connecting = self.connect.as_ref().map(|c| json!({ "target": c.target, "error": c.error }));
         json!({
             "workspace": workspace,
+            "agent_workspace": self.agent_manager.open,
+            "inline_completion": inline_completion,
             "connecting": connecting,
             "tabs": tabs,
             "active": active,
@@ -1072,8 +1054,8 @@ fn apply_replace(doc: &mut super::document::Document, params: &Value) -> Result<
 fn exec(host: &Host, cwd: &str, command: &str, timeout: Duration) -> Result<Value, String> {
     let mut child =
         host.shell(cwd, command).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
-    let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
+    let mut stdout = child.stdout.take().ok_or_else(|| "stdout unexpectedly missing".to_string())?;
+    let mut stderr = child.stderr.take().ok_or_else(|| "stderr unexpectedly missing".to_string())?;
     let out_thread = std::thread::spawn(move || {
         let mut buffer = Vec::new();
         let _ = stdout.read_to_end(&mut buffer);

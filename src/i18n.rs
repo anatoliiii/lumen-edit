@@ -42,6 +42,7 @@ pub fn from_setting(setting: &str) -> Lang {
     }
 }
 
+#[allow(clippy::expect_used, reason = "the table is embedded at build time and parsed by the i18n tests")]
 fn russian() -> &'static HashMap<&'static str, &'static str> {
     RU.get_or_init(|| {
         let table: toml::Table = toml::from_str(include_str!("../locales/ru.toml")).expect("locales/ru.toml is valid TOML");

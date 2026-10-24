@@ -111,12 +111,16 @@ impl Terminal {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
                             let responses = {
-                                let mut parser = parser.lock().unwrap();
+                                // Poison recovery is safe: a panic while processing a
+                                // byte chunk leaves the vt100 screen one frame stale at
+                                // worst; later input, resize and scroll operations
+                                // self-heal it, so panicking every frame is worse.
+                                let mut parser = parser.lock().unwrap_or_else(|e| e.into_inner());
                                 parser.process(&buffer[..n]);
                                 std::mem::take(&mut parser.callbacks_mut().responses)
                             };
                             if !responses.is_empty() {
-                                let _ = writer.lock().unwrap().write_all(&responses);
+                                let _ = writer.lock().unwrap_or_else(|e| e.into_inner()).write_all(&responses);
                             }
                             ctx.request_repaint();
                         }
@@ -129,7 +133,7 @@ impl Terminal {
             let exit_code = exit_code.clone();
             std::thread::spawn(move || {
                 let status = child.wait();
-                *exit_code.lock().unwrap() = status.ok().map(|s| s.exit_code());
+                *exit_code.lock().unwrap_or_else(|e| e.into_inner()) = status.ok().map(|s| s.exit_code());
                 alive.store(false, Ordering::Relaxed);
                 ctx.request_repaint();
             });
@@ -158,7 +162,7 @@ impl Terminal {
     }
 
     pub fn write(&self, data: &[u8]) {
-        let _ = self.writer.lock().unwrap().write_all(data);
+        let _ = self.writer.lock().unwrap_or_else(|e| e.into_inner()).write_all(data);
     }
 
     pub fn kill(&mut self) {
@@ -167,12 +171,12 @@ impl Terminal {
 
     /// Visible screen as text, trailing blank lines removed.
     pub fn screen_text(&self) -> String {
-        let text = self.parser.lock().unwrap().screen().contents();
+        let text = self.parser.lock().unwrap_or_else(|e| e.into_inner()).screen().contents();
         text.trim_end().to_string()
     }
 
     pub fn window_title(&self) -> Option<String> {
-        self.parser.lock().unwrap().callbacks().title.clone()
+        self.parser.lock().unwrap_or_else(|e| e.into_inner()).callbacks().title.clone()
     }
 
     fn resize(&mut self, rows: u16, cols: u16) {
@@ -181,12 +185,12 @@ impl Terminal {
         }
         self.size = (rows, cols);
         let _ = self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
-        self.parser.lock().unwrap().screen_mut().set_size(rows, cols);
+        self.parser.lock().unwrap_or_else(|e| e.into_inner()).screen_mut().set_size(rows, cols);
         self.selection = None;
     }
 
     fn paste(&mut self, text: &str) {
-        let bracketed = self.parser.lock().unwrap().screen().bracketed_paste();
+        let bracketed = self.parser.lock().unwrap_or_else(|e| e.into_inner()).screen().bracketed_paste();
         let text = text.replace("\r\n", "\r").replace('\n', "\r");
         if bracketed {
             self.write(format!("\x1b[200~{text}\x1b[201~").as_bytes());
@@ -199,14 +203,14 @@ impl Terminal {
     fn scroll_to_bottom(&mut self) {
         if self.scrollback != 0 {
             self.scrollback = 0;
-            self.parser.lock().unwrap().screen_mut().set_scrollback(0);
+            self.parser.lock().unwrap_or_else(|e| e.into_inner()).screen_mut().set_scrollback(0);
         }
     }
 
     fn selected_text(&self) -> Option<String> {
         let (a, b) = self.selection?;
         let (start, end) = if a <= b { (a, b) } else { (b, a) };
-        let parser = self.parser.lock().unwrap();
+        let parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
         let text = parser.screen().contents_between(start.row, start.col, end.row, end.col + 1);
         (!text.is_empty()).then_some(text)
     }
@@ -235,7 +239,7 @@ impl Terminal {
         }
 
         let (mouse_mode, mouse_encoding, alternate) = {
-            let parser = self.parser.lock().unwrap();
+            let parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
             let screen = parser.screen();
             (screen.mouse_protocol_mode(), screen.mouse_protocol_encoding(), screen.alternate_screen())
         };
@@ -309,7 +313,7 @@ impl Terminal {
                     }
                 } else {
                     let target = (self.scrollback as i64 + lines as i64).max(0) as usize;
-                    let mut parser = self.parser.lock().unwrap();
+                    let mut parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
                     parser.screen_mut().set_scrollback(target);
                     self.scrollback = parser.screen().scrollback();
                 }
@@ -328,7 +332,7 @@ impl Terminal {
         // ---- paint
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, theme::TERMINAL_BACKGROUND);
-        let parser = self.parser.lock().unwrap();
+        let parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
         let screen = parser.screen();
         let selection = self.selection.map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
         for row in 0..rows.min(screen.size().0) {
@@ -481,7 +485,7 @@ impl Terminal {
             egui::Event::Cut => self.write(b"\x18"),
             egui::Event::Paste(text) => self.paste(text),
             egui::Event::Key { key, pressed: true, modifiers, .. } => {
-                let app_cursor = self.parser.lock().unwrap().screen().application_cursor();
+                let app_cursor = self.parser.lock().unwrap_or_else(|e| e.into_inner()).screen().application_cursor();
                 if let Some(bytes) = key_bytes(*key, *modifiers, app_cursor) {
                     self.skip_text = modifiers.alt && !modifiers.ctrl;
                     self.write(&bytes);
@@ -509,15 +513,16 @@ impl Terminal {
         }
     }
 
+    #[allow(clippy::expect_used, reason = "a literal pattern compiles either always or never")]
     fn location_at(&self, cell: Cell) -> Option<(String, usize, usize)> {
-        let parser = self.parser.lock().unwrap();
+        let parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
         let row_text = parser.screen().contents_between(cell.row, 0, cell.row, self.size.1);
         drop(parser);
         static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-        let re = RE.get_or_init(|| regex::Regex::new(r"([A-Za-z0-9_./~+-]+\.[A-Za-z0-9]+):(\d+)(?::(\d+))?").unwrap());
+        let re = RE.get_or_init(|| regex::Regex::new(r"([A-Za-z0-9_./~+-]+\.[A-Za-z0-9]+):(\d+)(?::(\d+))?").expect("valid link regex"));
         let col = cell.col as usize;
         for found in re.captures_iter(&row_text) {
-            let whole = found.get(0).unwrap();
+            let Some(whole) = found.get(0) else { continue };
             let start = row_text[..whole.start()].chars().count();
             let end = start + whole.as_str().chars().count();
             if (start..=end).contains(&col) {

@@ -18,7 +18,7 @@ fn git_raw(host: &Host, cwd: &str, args: &[&str], stdin: Option<&[u8]>, ok_codes
         .stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|e| format!("git: {e}"))?;
     if let Some(data) = stdin {
-        let mut pipe = child.stdin.take().unwrap();
+        let mut pipe = child.stdin.take().ok_or_else(|| "git stdin unexpectedly missing".to_string())?;
         let data = data.to_vec();
         std::thread::spawn(move || {
             let _ = pipe.write_all(&data);
@@ -693,7 +693,7 @@ mod tests {
         let side = branches.iter().find(|b| b.name == "side").unwrap();
         assert!(!side.current);
         assert_eq!(std::path::Path::new(&side.worktree).canonicalize().unwrap(), std::path::Path::new(&other).canonicalize().unwrap());
-        assert!(checkout(&host, &root, side).unwrap_err().contains("already used by worktree"));
+        assert!(matches!(checkout(&host, &root, side), Err(e) if e.contains("already used by worktree")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
