@@ -21,6 +21,7 @@ pub struct RecentProject {
 pub struct Config {
     /// Interface language: `auto` (system locale), `en` or `ru`.
     pub language: String,
+    pub inline_completion: crate::inline_completion::Settings,
     pub ui_font_size: f32,
     pub editor_font_size: f32,
     pub terminal_font_size: f32,
@@ -66,6 +67,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             language: "auto".into(),
+            inline_completion: Default::default(),
             ui_font_size: 13.5,
             editor_font_size: 14.0,
             terminal_font_size: 13.5,

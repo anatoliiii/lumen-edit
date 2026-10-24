@@ -44,6 +44,7 @@ pub fn editor_area(ui: &mut egui::Ui, app: &mut App) {
             if let Tab::Doc(doc) = &mut app.tabs[index] {
                 editor::show(ui, doc, &settings, &mut actions);
             }
+            crate::inline_completion::tick(app, ui.ctx());
             if !actions.is_empty() {
                 lsp_manager::run_actions(app, index, actions);
             }

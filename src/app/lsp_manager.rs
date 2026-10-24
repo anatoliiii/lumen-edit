@@ -167,6 +167,10 @@ impl LspManager {
         Err(starting)
     }
 
+    pub fn inline_clients(&self, doc: &Document) -> Vec<Arc<LspClient>> {
+        self.clients_for(doc)
+    }
+
     pub fn has_clients(&self, doc: &Document) -> bool {
         !self.clients_for(doc).is_empty()
     }

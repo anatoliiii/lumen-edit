@@ -277,6 +277,7 @@ pub struct OpenFile {
 pub struct App {
     ctx: egui::Context,
     pub config: Config,
+    pub inline_completion: crate::inline_completion::Controller,
     bus: Bus,
     rx: Receiver<Msg>,
     highlight_tx: Sender<syntax::Job>,
@@ -378,6 +379,7 @@ impl App {
             last_task: None,
             terminal_focus: false,
             doc_waiters: Vec::new(),
+            inline_completion: Default::default(),
             settings_open: false,
             keybindings: None,
             about_open: false,
@@ -1130,6 +1132,7 @@ impl App {
                 }
             }
             Msg::FsChanged(paths) => {
+                self.inline_completion.invalidate();
                 self.fs_pending.extend(paths);
                 self.fs_pending_since.get_or_insert_with(Instant::now);
             }
@@ -1849,6 +1852,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.process_messages();
+        crate::inline_completion::tick(self, &ctx);
         self.handle_close_request(&ctx);
         keymap::begin_frame(&ctx);
         let recording = keybindings::capture_keys(self, &ctx);

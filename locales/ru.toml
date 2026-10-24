@@ -721,3 +721,13 @@
 "Choose a session on the left, or start a new conversation." = "Выберите сессию слева или начните новый диалог."
 
 "Search models" = "Поиск модели"
+"Request AI Inline Completion" = "Запросить AI-дополнение кода"
+"AI Inline Completion" = "AI-дополнение кода"
+"Code context is sent to OpenRouter only for allowed projects." = "Контекст кода отправляется в OpenRouter только для разрешённых проектов."
+"Allow cloud completion for this project" = "Разрешить облачное дополнение для этого проекта"
+"Open a local project to allow cloud completion." = "Откройте локальный проект, чтобы разрешить облачное дополнение."
+"Tab accepts; Esc dismisses; Ctrl+Alt+Space requests AI completion." = "Tab — принять; Esc — отклонить; Ctrl+Alt+Space — запросить AI-дополнение."
+
+"OpenRouter key: Pi credentials, then OPENROUTER_API_KEY. No key is copied." = "Ключ OpenRouter: учётные данные Pi, затем OPENROUTER_API_KEY. Ключ не копируется."
+
+"Pause AI completion in all projects" = "Отключить AI-дополнение во всех проектах"

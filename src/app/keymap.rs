@@ -246,6 +246,7 @@ pub fn defaults(command: Command) -> &'static [&'static str] {
         Command::Rename => &["F2"],
         Command::CodeActions => &["Ctrl+."],
         Command::Format => &["Ctrl+Shift+I"],
+        Command::TriggerInlineCompletion => &["Ctrl+Alt+Space"],
         Command::TriggerSuggest if MAC => &["MacCtrl+Space"],
         Command::TriggerSuggest => &["Ctrl+Space"],
         Command::ShowHover => &["Ctrl+K"],

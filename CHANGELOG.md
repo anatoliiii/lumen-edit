@@ -7,6 +7,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Semantic inline completion: automatic 180 ms debounce, OpenRouter Codestral using Pi credentials, LSP/tree-sitter context, multiline ghost text, Tab acceptance and atomic Undo; explicit per-project cloud consent, bounded requests/cache and diagnostics.
 - Agent sessions now live inside the project workspace: session list and groups beside the selected chat, inline creation, searchable model selection and session actions.
 - Pi session manager: independent agents and coordinator/worker groups, task dispatch and result delivery, per-agent models, live status, queues, session totals and context usage.
 - Saved agent sessions and drafts restore per project without replaying tasks; history can be opened separately, cloned or reversibly archived.

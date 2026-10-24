@@ -399,6 +399,26 @@ pub fn status_bar(ui: &mut egui::Ui, app: &mut App) {
                     app.run_command(command);
                 }
 
+                let ai_enabled = !app.config.inline_completion.paused
+                    && app
+                        .workspace
+                        .as_ref()
+                        .is_some_and(|w| !w.host.is_remote() && app.config.inline_completion.projects.contains(&w.session_key()));
+                if ai_enabled {
+                    let busy = app.inline_completion.busy();
+                    let status = &app.inline_completion.status;
+                    let label = if busy {
+                        "AI …"
+                    } else if status.is_empty() {
+                        "AI"
+                    } else {
+                        "AI !"
+                    };
+                    if status_button(ui, label).on_hover_text(if status.is_empty() { t!("AI Inline Completion") } else { status }).clicked()
+                    {
+                        app.settings_open = true;
+                    }
+                }
                 let (errors, warnings) = panel::status_counts(app);
                 ui.add_space(4.0);
                 if status_button(ui, &format!("⊗ {errors}  ▲ {warnings}")).on_hover_text(t!("Problems (Ctrl+Shift+M)")).clicked() {
@@ -504,7 +524,8 @@ fn status_label(ui: &mut egui::Ui, text: &str) {
 pub fn settings_window(ctx: &egui::Context, app: &mut App) {
     let mut open = app.settings_open;
     let mut changed = false;
-    egui::Window::new(t!("Settings")).open(&mut open).resizable(true).default_width(460.0).collapsible(false).show(ctx, |ui| {
+    let completion_project = app.workspace.as_ref().filter(|w| !w.host.is_remote()).map(|w| w.session_key());
+    egui::Window::new(t!("Settings")).open(&mut open).resizable(true).default_width(460.0).vscroll(true).collapsible(false).show(ctx, |ui| {
         let config = &mut app.config;
         egui::Grid::new("settings_grid").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
             ui.label(t!("Language"));
@@ -581,6 +602,31 @@ pub fn settings_window(ctx: &egui::Context, app: &mut App) {
             ui.label("git pull --rebase");
             changed |= ui.checkbox(&mut config.pull_rebase, "").changed();
             ui.end_row();
+        });
+        ui.separator();
+        ui.collapsing(t!("AI Inline Completion"), |ui| {
+            changed |= ui.checkbox(&mut config.inline_completion.paused, t!("Pause AI completion in all projects")).changed();
+            ui.label(t!("Code context is sent to OpenRouter only for allowed projects."));
+            if let Some(key) = &completion_project {
+                let mut enabled = config.inline_completion.projects.contains(key);
+                if ui.checkbox(&mut enabled, t!("Allow cloud completion for this project")).changed() {
+                    config.inline_completion.projects.retain(|k| k != key);
+                    if enabled {config.inline_completion.projects.push(key.clone());}
+                    changed = true;
+                }
+            } else {ui.label(t!("Open a local project to allow cloud completion."));}
+            ui.label(t!("OpenRouter key: Pi credentials, then OPENROUTER_API_KEY. No key is copied."));
+            egui::Grid::new("inline_completion_settings").num_columns(2).show(ui, |ui| {
+                ui.label(t!("Model"));changed |= ui.text_edit_singleline(&mut config.inline_completion.model).changed();ui.end_row();
+                ui.label("Temperature");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.temperature,0.0..=1.0)).changed();ui.end_row();
+                ui.label("Max tokens");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.max_tokens,16..=512)).changed();ui.end_row();
+                ui.label("Requests / minute");changed |= ui.add(egui::Slider::new(&mut config.inline_completion.requests_per_minute,1..=60)).changed();ui.end_row();
+                ui.label("Session budget, USD");changed |= ui.add(egui::DragValue::new(&mut config.inline_completion.session_budget_usd).range(0.0..=100.0).speed(0.1)).changed();ui.end_row();
+            });
+            ui.label(t!("Tab accepts; Esc dismisses; Ctrl+Alt+Space requests AI completion."));
+            let m=&app.inline_completion.metrics;
+            ui.label(format!("Requests {} · success {} · errors {} · cache {} · latency {} ms\nAccepted {} · rejected {} · tokens {} / {}\nCost ${:.4} · reserved ${:.4}",m.requests,m.success,m.errors,m.cache_hits,m.latency_ms,m.accepted,m.rejected,m.input_tokens,m.output_tokens,m.cost_usd,m.reserved_usd));
+            if !app.inline_completion.status.is_empty() {ui.label(&app.inline_completion.status);}
         });
         ui.separator();
         ui.label(RichText::new(t!("Language servers")).strong());

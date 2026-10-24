@@ -1,0 +1,402 @@
+use crate::{
+    inline_completion::{
+        Context, Settings,
+        provider::{CompletionProvider, OpenRouterProvider, Output},
+        semantic::{self, Snapshot},
+    },
+    text::{Buffer, Selection},
+};
+use crossbeam_channel::{Receiver, Sender, unbounded};
+use eframe::egui;
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Identity {
+    pub project: String,
+    pub doc: u64,
+    pub version: u64,
+    pub cursor: usize,
+    pub epoch: u64,
+}
+#[derive(Clone)]
+pub struct Ghost {
+    pub identity: Identity,
+    pub text: String,
+}
+impl Ghost {
+    pub fn valid(&self, doc: u64, buffer: &Buffer) -> bool {
+        self.identity.doc == doc
+            && self.identity.version == buffer.version
+            && self.identity.cursor == buffer.primary().head
+            && buffer.selections.len() == 1
+            && buffer.primary().is_empty()
+    }
+    pub fn accept(self, doc: u64, buffer: &mut Buffer) -> bool {
+        if !self.valid(doc, buffer) {
+            return false;
+        }
+        let at = self.identity.cursor;
+        let end = at + self.text.chars().count();
+        buffer.apply_edits_with_selection(vec![(at..at, self.text)], vec![Selection::cursor(end)]);
+        true
+    }
+}
+#[derive(Default)]
+pub struct Metrics {
+    pub requests: u64,
+    pub success: u64,
+    pub errors: u64,
+    pub accepted: u64,
+    pub rejected: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
+    pub reserved_usd: f64,
+    pub latency_ms: u128,
+    pub cache_hits: u64,
+}
+struct Done {
+    identity: Identity,
+    serial: u64,
+    context: Option<Context>,
+    result: Result<Output, String>,
+    latency: Duration,
+    charged: bool,
+}
+struct Active {
+    cancel: Arc<AtomicBool>,
+    busy: Arc<AtomicBool>,
+}
+impl Drop for Active {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+struct Cached {
+    key: u64,
+    text: String,
+    created: Instant,
+}
+struct CompletionCache {
+    entries: VecDeque<Cached>,
+}
+impl CompletionCache {
+    fn key(context: &Context, settings: &Settings) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        context.language.hash(&mut hash);
+        context.semantic.hash(&mut hash);
+        context.prefix.hash(&mut hash);
+        context.suffix.hash(&mut hash);
+        settings.model.hash(&mut hash);
+        settings.temperature.to_bits().hash(&mut hash);
+        settings.max_tokens.hash(&mut hash);
+        hash.finish()
+    }
+    #[cfg(test)]
+    fn get(&self, key: u64) -> Option<String> {
+        self.entries.iter().find(|e| e.key == key && e.created.elapsed() < Duration::from_secs(30)).map(|e| e.text.clone())
+    }
+    fn put(&mut self, key: u64, text: String) {
+        self.entries.retain(|e| e.key != key);
+        self.entries.push_front(Cached { key, text, created: Instant::now() });
+        self.entries.truncate(16);
+    }
+}
+pub struct Controller {
+    observed: Option<Identity>,
+    retry: Option<(String, u64)>,
+    since: Instant,
+    serial: u64,
+    issued: bool,
+    cooldown: Option<Instant>,
+    active: Option<Active>,
+    tx: Sender<Done>,
+    rx: Receiver<Done>,
+    cache: CompletionCache,
+    recent: VecDeque<Instant>,
+    pub metrics: Metrics,
+    pub status: String,
+    pub revision: u64,
+    /// UI drains these counters without storing code or responses in metrics.
+    pub settings_fingerprint: String,
+}
+impl Default for Controller {
+    fn default() -> Self {
+        let (tx, rx) = unbounded();
+        Self {
+            observed: None,
+            retry: None,
+            since: Instant::now(),
+            serial: 0,
+            issued: false,
+            cooldown: None,
+            active: None,
+            tx,
+            rx,
+            cache: CompletionCache { entries: VecDeque::new() },
+            recent: VecDeque::new(),
+            metrics: Metrics::default(),
+            status: String::new(),
+            revision: 0,
+            settings_fingerprint: String::new(),
+        }
+    }
+}
+impl Controller {
+    pub fn changed_version(&self, next: Option<&Identity>) -> bool {
+        match (&self.observed, next) {
+            (Some(old), Some(new)) => old.doc == new.doc && old.version != new.version,
+            _ => false,
+        }
+    }
+    pub fn observe(&mut self, identity: Option<Identity>, edited: bool) {
+        let retry = identity.as_ref().is_some_and(|id| self.retry.as_ref() == Some(&(id.project.clone(), id.doc)));
+        if identity.is_some() {
+            self.retry = None;
+        }
+        let edited = edited || retry;
+        if self.observed != identity {
+            if self.observed.as_ref().map(|i| &i.project) != identity.as_ref().map(|i| &i.project) {
+                self.cache.entries.clear();
+            }
+            if let Some(active) = &self.active {
+                active.cancel.store(true, Ordering::Relaxed);
+            }
+            self.serial += 1;
+            self.issued = !edited;
+            self.since = Instant::now();
+            self.observed = identity;
+        }
+    }
+    pub fn reject(&mut self) {
+        self.serial += 1;
+        self.issued = true;
+        if let Some(active) = &self.active {
+            active.cancel.store(true, Ordering::Relaxed);
+        }
+        self.metrics.rejected += 1;
+    }
+    pub fn invalidate(&mut self) {
+        let retry = if self.busy() || !self.issued { self.observed.as_ref().map(|id| (id.project.clone(), id.doc)) } else { None };
+        self.revision = self.revision.wrapping_add(1);
+        self.observe(None, false);
+        self.retry = retry;
+        self.cache.entries.clear();
+    }
+    pub fn busy(&self) -> bool {
+        self.active.as_ref().is_some_and(|a| a.busy.load(Ordering::Acquire))
+    }
+    pub fn wake_after(&self, settings: &Settings) -> Option<Duration> {
+        if self.issued || self.busy() {
+            return None;
+        }
+        let debounce = Duration::from_millis(settings.debounce_ms.clamp(50, 2000));
+        let wait = debounce.saturating_sub(self.since.elapsed());
+        (!wait.is_zero()).then_some(wait)
+    }
+    pub fn ready(&self, settings: &Settings, manual: bool) -> bool {
+        self.observed.is_some()
+            && self.cooldown.is_none_or(|at| Instant::now() >= at)
+            && (manual || (!self.issued && self.since.elapsed() >= Duration::from_millis(settings.debounce_ms.clamp(50, 2000))))
+            && self.active.as_ref().is_none_or(|a| !a.busy.load(Ordering::Acquire))
+    }
+    pub fn poll(&mut self, settings: &Settings) -> Option<Ghost> {
+        let mut ghost = None;
+        while let Ok(done) = self.rx.try_recv() {
+            self.metrics.latency_ms = done.latency.as_millis();
+            if done.charged {
+                self.metrics.reserved_usd += settings.reserve_per_request_usd.max(0.001);
+            }
+            match done.result {
+                Ok(output) => {
+                    self.metrics.success += 1;
+                    if !done.charged {
+                        self.metrics.cache_hits += 1;
+                    }
+                    self.metrics.input_tokens += output.input_tokens;
+                    self.metrics.output_tokens += output.output_tokens;
+                    if let Some(cost) = output.cost {
+                        self.metrics.cost_usd += cost;
+                        if done.charged {
+                            self.metrics.reserved_usd = (self.metrics.reserved_usd - settings.reserve_per_request_usd.max(0.001)).max(0.0);
+                        }
+                    }
+                    if done.serial == self.serial && self.observed.as_ref() == Some(&done.identity) {
+                        if let Some(context) = done.context {
+                            self.cache.put(CompletionCache::key(&context, settings), output.text.clone());
+                        }
+                        self.status.clear();
+                        if !output.text.is_empty() {
+                            ghost = Some(Ghost { identity: done.identity, text: output.text });
+                        }
+                    }
+                }
+                Err(error) => {
+                    if error.contains("HTTP 429") {
+                        self.cooldown = Some(Instant::now() + Duration::from_secs(30));
+                    }
+                    if error != "Cancelled" {
+                        self.metrics.errors += 1;
+                    }
+                    if done.serial == self.serial {
+                        self.status = error;
+                    }
+                }
+            }
+        }
+        ghost
+    }
+    pub fn launch(&mut self, snapshot: Snapshot, settings: Settings, ctx: egui::Context) {
+        self.issued = true;
+        self.recent.retain(|at| at.elapsed() < Duration::from_secs(60));
+        if self.recent.len() >= settings.requests_per_minute.min(60)
+            || self.metrics.requests >= settings.requests_per_session
+            || self.metrics.cost_usd + self.metrics.reserved_usd + settings.reserve_per_request_usd.max(0.001) > settings.session_budget_usd
+        {
+            self.status = "AI completion request or session budget reached".into();
+            return;
+        }
+        let Some(identity) = self.observed.clone() else { return };
+        // Exact semantic cache lookup is performed on the worker; this UI only
+        // clones a small bounded cache, never parses syntax or waits for LSP.
+        let cached: Vec<_> =
+            self.cache.entries.iter().filter(|e| e.created.elapsed() < Duration::from_secs(30)).map(|e| (e.key, e.text.clone())).collect();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let busy = Arc::new(AtomicBool::new(true));
+        self.active = Some(Active { cancel: cancel.clone(), busy: busy.clone() });
+        let tx = self.tx.clone();
+        self.serial += 1;
+        let serial = self.serial;
+        self.metrics.requests += 1;
+        self.recent.push_back(Instant::now());
+        self.status = "AI completion…".into();
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            let mut context = None;
+            let mut charged = false;
+            let result = semantic::collect(&snapshot, &cancel).and_then(|collected| {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err("Cancelled".into());
+                }
+                let key = CompletionCache::key(&collected, &settings);
+                if let Some((_, text)) = cached.iter().find(|(k, _)| *k == key) {
+                    context = Some(collected);
+                    return Ok(Output { text: text.clone(), ..Default::default() });
+                }
+                let provider = OpenRouterProvider::from_env()?;
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|_| "Completion runtime failed".to_string())?;
+                charged = true;
+                let output = rt.block_on(provider.complete(&collected, &settings, cancel.clone()));
+                context = Some(collected);
+                output
+            });
+            let _ = tx.send(Done { identity, serial, context, result, latency: started.elapsed(), charged });
+            busy.store(false, Ordering::Release);
+            ctx.request_repaint();
+        });
+    }
+}
+impl Drop for Controller {
+    fn drop(&mut self) {
+        if let Some(active) = &self.active {
+            active.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn identity(b: &Buffer) -> Identity {
+        Identity { project: "local|test".into(), doc: 1, version: b.version, cursor: b.primary().head, epoch: 0 }
+    }
+    #[test]
+    fn atomic_unicode_multiline_and_undo() {
+        let mut b = Buffer::new("fn main() {\n    \n}");
+        b.set_cursor(16, false);
+        let old = b.text();
+        let ghost = Ghost { identity: identity(&b), text: "println!(\"\u{43c}\u{438}\u{440}😀\");\n    next();".into() };
+        assert!(ghost.accept(1, &mut b));
+        assert!(b.text().contains("\u{43c}\u{438}\u{440}😀"));
+        b.undo();
+        assert_eq!(b.text(), old);
+        b.redo();
+        assert!(b.text().contains("next();"));
+    }
+    #[test]
+    fn background_agent_edit_invalidates() {
+        let mut b = Buffer::new("client.");
+        b.set_cursor(7, false);
+        let g = Ghost { identity: identity(&b), text: "send()".into() };
+        b.apply_edits(vec![(0..0, "// agent\n".into())]);
+        assert!(!g.accept(1, &mut b));
+    }
+    #[test]
+    fn stale_cursor_and_closed_document() {
+        let mut b = Buffer::new("abc");
+        let id = identity(&b);
+        let g = Ghost { identity: id.clone(), text: "x".into() };
+        b.set_cursor(1, false);
+        assert!(!g.valid(1, &b));
+        assert!(!g.valid(2, &b));
+        let mut c = Controller::default();
+        c.observe(Some(id.clone()), true);
+        let serial = c.serial;
+        c.observe(None, false);
+        c.tx.send(Done {
+            identity: id,
+            serial,
+            context: None,
+            result: Ok(Output { text: "late".into(), ..Default::default() }),
+            latency: Duration::ZERO,
+            charged: false,
+        })
+        .unwrap();
+        assert!(c.poll(&Settings::default()).is_none());
+    }
+    #[test]
+    fn bounded_cache_and_context_keys() {
+        let mut cache = CompletionCache { entries: VecDeque::new() };
+        for n in 0..30 {
+            cache.put(n, "test".into());
+        }
+        assert_eq!(cache.entries.len(), 16);
+        assert!(cache.get(0).is_none());
+        assert_eq!(cache.get(29), Some("test".into()));
+    }
+    #[test]
+    fn debounce_single_flight_and_filesystem_retry() {
+        let b = Buffer::new("client.");
+        let mut id = identity(&b);
+        let mut c = Controller::default();
+        let settings = Settings::default();
+        c.observe(Some(id.clone()), true);
+        assert!(!c.ready(&settings, false));
+        c.since = Instant::now() - Duration::from_millis(200);
+        assert!(c.ready(&settings, false));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let busy = Arc::new(AtomicBool::new(true));
+        c.active = Some(Active { cancel: cancel.clone(), busy: busy.clone() });
+        assert!(!c.ready(&settings, true));
+        c.invalidate();
+        assert!(cancel.load(Ordering::Relaxed));
+        id.epoch += 1;
+        c.observe(Some(id), false);
+        busy.store(false, Ordering::Release);
+        c.since = Instant::now() - Duration::from_millis(200);
+        assert!(c.ready(&settings, false));
+        c.observe(None, false);
+        assert!(!c.ready(&settings, true));
+    }
+}

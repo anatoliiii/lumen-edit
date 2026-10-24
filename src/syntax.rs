@@ -408,6 +408,11 @@ pub fn spawn_worker(done: impl Fn(Done) + Send + 'static) -> Sender<Job> {
     tx
 }
 
+/// The same grammar used for highlighting; parsing happens on the completion worker.
+pub fn grammar(lang: Lang) -> Option<tree_sitter::Language> {
+    configs().get(&lang).map(|config| config.language.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

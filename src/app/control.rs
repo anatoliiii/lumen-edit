@@ -786,6 +786,7 @@ impl App {
                     "column": col + 1,
                     "selection": if selected.is_empty() { Value::Null } else { json!(selected.chars().take(2000).collect::<String>()) },
                     "cursors": doc.buffer.selections.len(),
+                    "inline_completion_visible": doc.view.ghost.as_ref().is_some_and(|g| g.valid(doc.id, &doc.buffer)),
                     "lines": doc.buffer.line_count(),
                 }))
             }
@@ -798,10 +799,16 @@ impl App {
             });
             json!({ "host": w.host.key(), "root": w.root, "name": w.name(), "git": git, "tasks": w.tasks.len() })
         });
+        let m = &self.inline_completion.metrics;
+        let inline_completion = json!({"requests":m.requests,"success":m.success,"errors":m.errors,"accepted":m.accepted,"rejected":m.rejected,
+            "cache_hits":m.cache_hits,"latency_ms":m.latency_ms,"input_tokens":m.input_tokens,"output_tokens":m.output_tokens,"cost_usd":m.cost_usd,
+            "reserved_usd":m.reserved_usd,"busy":self.inline_completion.busy(),"status":self.inline_completion.status,
+            "enabled":!self.config.inline_completion.paused && self.workspace.as_ref().is_some_and(|w|!w.host.is_remote() && self.config.inline_completion.projects.contains(&w.session_key()))});
         let connecting = self.connect.as_ref().map(|c| json!({ "target": c.target, "error": c.error }));
         json!({
             "workspace": workspace,
             "agent_workspace": self.agent_manager.open,
+            "inline_completion": inline_completion,
             "connecting": connecting,
             "tabs": tabs,
             "active": active,

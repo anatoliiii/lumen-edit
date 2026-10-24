@@ -51,6 +51,7 @@ pub enum Command {
     CodeActions,
     Format,
     TriggerSuggest,
+    TriggerInlineCompletion,
     ShowHover,
     Undo,
     Redo,
@@ -151,6 +152,7 @@ pub const ALL: &[Command] = &[
     Command::CodeActions,
     Command::Format,
     Command::TriggerSuggest,
+    Command::TriggerInlineCompletion,
     Command::ShowHover,
     Command::Undo,
     Command::Redo,
@@ -275,6 +277,7 @@ impl Command {
             Command::Rename => t_key!("Rename Symbol"),
             Command::CodeActions => t_key!("Quick Fixes…"),
             Command::Format => t_key!("Format Document"),
+            Command::TriggerInlineCompletion => t_key!("Request AI Inline Completion"),
             Command::TriggerSuggest => t_key!("Trigger Suggestions"),
             Command::ShowHover => t_key!("Show Hover"),
             Command::Undo => t_key!("Undo"),
@@ -342,6 +345,7 @@ impl Command {
             | Command::Rename
             | Command::CodeActions
             | Command::Format
+            | Command::TriggerInlineCompletion
             | Command::TriggerSuggest
             | Command::ShowHover
             | Command::Undo

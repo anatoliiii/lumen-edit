@@ -22,6 +22,7 @@ Open a project locally or on a remote machine over SSH, edit with full language-
 
 - **Editor** — custom widget that paints only visible lines over a rope buffer; multiple cursors (Alt+click, Ctrl+D), auto-closing brackets, smart indent, line move/duplicate, comment toggle, find & replace with regex, bracket and occurrence highlighting.
 - **Syntax highlighting** with tree-sitter: Rust, Bash, Python, C, C++, C#, Go, HTML, CSS, JavaScript, TypeScript/TSX, JSON, TOML, YAML, Makefile, Groovy (Jenkinsfile), HCL (Terraform), Dockerfile.
+- **[AI inline completion](docs/inline-completion.md)** — opt in per project, then type and accept ghost text with Tab. OpenRouter Codestral with LSP/tree-sitter context, Pi credentials, cancellation and atomic Undo.
 - **Language servers (LSP)** — completion, hover, signature help, go to definition, references, rename, code actions, formatting, inline diagnostics. Only native servers by default (no Node.js).
 - **Remote development over SSH** — uses your system OpenSSH (`~/.ssh/config`, keys, agent, ProxyJump, password and 2FA prompts) with one multiplexed connection for files, terminals, git and language servers. An optional tiny static agent (`lumen-agent`) is uploaded automatically for fast search and file watching; without it everything works over plain shell commands.
 - **Integrated terminal** — real PTY (vim, htop, mc work), multiple tabs, Ctrl+click on `file:line:col` opens it in the editor.
