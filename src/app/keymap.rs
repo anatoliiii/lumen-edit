@@ -584,15 +584,15 @@ mod tests {
         assert_eq!(Chord::parse("Ctrl+Shift"), None);
         assert_eq!(Chord::parse("Ctrl+ShiftLeft"), None);
         assert_eq!(Chord::parse("Hyper+P"), None);
-        assert_eq!(Chord::parse("Ctrl+`").unwrap().to_config(), "Ctrl+`");
-        assert_eq!(Chord::parse("ctrl+minus").unwrap().to_config(), "Ctrl+-");
+        assert_eq!(Chord::parse("Ctrl+`").unwrap_or_else(|| panic!("invalid chord")).to_config(), "Ctrl+`");
+        assert_eq!(Chord::parse("ctrl+minus").unwrap_or_else(|| panic!("invalid chord")).to_config(), "Ctrl+-");
         // The Control key of a Mac: its own modifier there, Ctrl elsewhere.
-        let mac_ctrl = Chord::parse("MacCtrl+`").unwrap();
+        let mac_ctrl = Chord::parse("MacCtrl+`").unwrap_or_else(|| panic!("invalid chord"));
         assert_eq!((mac_ctrl.ctrl, mac_ctrl.mac_ctrl), (!MAC, MAC));
         assert_eq!(Chord::parse(&mac_ctrl.to_config()), Some(mac_ctrl));
         assert_eq!(Chord::parse_label(&mac_ctrl.label()), Some(mac_ctrl));
         assert_eq!(mac_ctrl.label(), "Ctrl+`");
-        let primary = Chord::parse("Ctrl+F").unwrap();
+        let primary = Chord::parse("Ctrl+F").unwrap_or_else(|| panic!("invalid chord"));
         assert_eq!(primary.label(), if MAC { "Cmd+F" } else { "Ctrl+F" });
         assert_eq!(Chord::parse_label(&primary.label()), Some(primary));
     }
@@ -633,7 +633,7 @@ mod tests {
     #[test]
     fn lookup_prefers_exact_modifiers() {
         let keymap = Keymap::new(&BTreeMap::new());
-        let m = |text: &str| press(Chord::parse(&format!("{text}+A")).unwrap());
+        let m = |text: &str| press(Chord::parse(&format!("{text}+A")).unwrap_or_else(|| panic!("invalid chord")));
         assert_eq!(keymap.lookup(Scope::Global, Key::P, None, m("Ctrl+Shift")), Some(Command::CommandPalette));
         assert_eq!(keymap.lookup(Scope::Global, Key::P, None, m("Ctrl")), Some(Command::QuickOpen));
         // `+` needs Shift on a US keyboard.
@@ -707,16 +707,16 @@ mod tests {
             ("new_terminal".to_string(), vec!["ControlLeft".to_string()]),
         ]);
         let keymap = Keymap::new(&overrides);
-        assert_eq!(keymap.chords(Command::QuickOpen), [Chord::parse("Ctrl+E").unwrap()]);
+        assert_eq!(keymap.chords(Command::QuickOpen), [Chord::parse("Ctrl+E").unwrap_or_else(|| panic!("invalid chord"))]);
         assert!(keymap.chords(Command::Quit).is_empty());
         // Nothing readable: the defaults stay.
-        assert_eq!(keymap.chords(Command::Save), [Chord::parse("Ctrl+S").unwrap()]);
+        assert_eq!(keymap.chords(Command::Save), [Chord::parse("Ctrl+S").unwrap_or_else(|| panic!("invalid chord"))]);
         assert_eq!(
             keymap.chords(Command::NewTerminal),
             defaults(Command::NewTerminal).iter().filter_map(|t| Chord::parse(t)).collect::<Vec<_>>()
         );
         assert_eq!(keymap.problems.len(), 3, "{:?}", keymap.problems);
-        assert_eq!(keymap.chords(Command::CommandPalette), [Chord::parse("Ctrl+Shift+P").unwrap()]);
+        assert_eq!(keymap.chords(Command::CommandPalette), [Chord::parse("Ctrl+Shift+P").unwrap_or_else(|| panic!("invalid chord"))]);
     }
 
     #[test]
@@ -728,14 +728,14 @@ mod tests {
         assert_ne!(russian, "Command Palette");
         assert!(find(russian).contains(&Command::CommandPalette));
         assert!(find(&russian.to_uppercase()).contains(&Command::CommandPalette));
-        assert!(find(russian.split(' ').next().unwrap()).contains(&Command::CommandPalette));
+        assert!(find(russian.split(' ').next().unwrap_or_else(|| panic!("expected a word"))).contains(&Command::CommandPalette));
         assert!(find("command_palette").contains(&Command::CommandPalette));
         let primary = if MAC { "cmd" } else { "ctrl" };
         assert_eq!(find(&format!("{primary}+shift+p")), vec![Command::CommandPalette]);
         assert_eq!(find("Cmd + Shift + P"), vec![Command::CommandPalette]);
         assert_eq!(find(&format!("{primary}+=")), vec![Command::ZoomIn]);
         assert_eq!(find(&format!("{primary}++")), vec![Command::ZoomIn]);
-        assert_eq!(find(&Chord::parse("MacCtrl+`").unwrap().label()), vec![Command::ToggleTerminal]);
+        assert_eq!(find(&Chord::parse("MacCtrl+`").unwrap_or_else(|| panic!("invalid chord")).label()), vec![Command::ToggleTerminal]);
         assert!(find("backtick").contains(&Command::ToggleTerminal));
         let f5 = find("f5");
         for command in [Command::RunDefault, Command::RerunLast, Command::KillTerminal] {

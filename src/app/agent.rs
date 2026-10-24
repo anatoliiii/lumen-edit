@@ -144,7 +144,7 @@ mod tests {
                 }
             }
         }
-        let pos = yes.expect("confirmation button must be painted");
+        let pos = yes.unwrap_or_else(|| panic!("confirmation button must be painted"));
         let mut answer = None;
         for pressed in [true, false] {
             let mut output = ctx.run_ui(
@@ -238,7 +238,7 @@ mod tests {
         agent.items.push(Item::Assistant { blocks: Default::default(), error: Some("transient error".into()) });
         agent.items.push(Item::Assistant { blocks: [(0, Block::Text("new result".into()))].into(), error: None });
         agent.handle(serde_json::json!({ "type": "agent_settled" }));
-        let task = agent.task.as_ref().unwrap();
+        let task = agent.task.as_ref().unwrap_or_else(|| panic!("expected a task"));
         assert_eq!(task.status, TaskStatus::Completed);
         assert_eq!(task.result.as_deref(), Some("new result"));
     }
@@ -248,19 +248,23 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "lumen-history-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_else(|e| panic!("clock skew: {e}")).as_nanos()
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
         let path = dir.join("session.jsonl");
         let entries = [
             serde_json::json!({ "type": "session_info", "name": "old name" }),
             serde_json::json!({ "type": "message", "message": { "role": "user", "content": "first task" } }),
             serde_json::json!({ "type": "session_info", "name": "" }),
         ];
-        let text = entries.iter().map(|e| serde_json::to_string(e).unwrap().replace(":", ": ")).collect::<Vec<_>>().join("\n");
-        std::fs::write(&path, text).unwrap();
+        let text = entries
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap_or_else(|err| panic!("serialize failed: {err}")).replace(":", ": "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, text).unwrap_or_else(|e| panic!("write failed: {e}"));
         let sessions = super::read_sessions(&dir);
-        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
         assert_eq!(sessions.len(), 1);
         assert!(sessions[0].name.is_none());
         assert_eq!(sessions[0].messages, 1);
@@ -421,8 +425,8 @@ pub fn ensure_pi_mcp_entry() -> Result<bool, String> {
     if path.exists() {
         let _ = std::fs::copy(&path, path.with_extension("json.lumen-backup"));
     }
-    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-    std::fs::write(&path, serde_json::to_string_pretty(&config).unwrap()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(path.parent().ok_or_else(|| "session path has no parent".to_string())?).map_err(|e| e.to_string())?;
+    std::fs::write(&path, serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -505,7 +509,7 @@ fn model_key(model: &Value) -> String {
 
 /// Sessions of this folder: search, switch, new, rename.
 fn session_picker(ui: &egui::Ui, agent: &mut AgentTab, anchor: egui::Rect, actions: &mut Vec<Action>) {
-    let sessions = agent.sessions.lock().unwrap().clone();
+    let sessions = agent.sessions.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let mut close = ui.ctx().input(|i| i.key_pressed(Key::Escape));
     let area = egui::Area::new(egui::Id::unique(("session_picker", agent.id)))
         .order(egui::Order::Foreground)
@@ -970,9 +974,18 @@ impl AgentTab {
 
         match command.spawn() {
             Ok(mut child) => {
-                let stdout = child.stdout.take().unwrap();
-                let stderr = child.stderr.take().unwrap();
-                tab.stdin = Some(Arc::new(Mutex::new(child.stdin.take().unwrap())));
+                let stdout = match child.stdout.take() {
+                    Some(stdout) => stdout,
+                    None => unreachable!("stdout was piped at spawn"),
+                };
+                let stderr = match child.stderr.take() {
+                    Some(stderr) => stderr,
+                    None => unreachable!("stderr was piped at spawn"),
+                };
+                tab.stdin = Some(Arc::new(Mutex::new(match child.stdin.take() {
+                    Some(stdin) => stdin,
+                    None => unreachable!("stdin was piped at spawn"),
+                })));
                 tab.child = Some(child);
                 let reader_bus = bus.clone();
                 let generation = options.generation;
@@ -991,7 +1004,7 @@ impl AgentTab {
                 let tail = tab.stderr_tail.clone();
                 std::thread::spawn(move || {
                     for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                        let mut tail = tail.lock().unwrap();
+                        let mut tail = tail.lock().unwrap_or_else(|e| e.into_inner());
                         tail.push(line);
                         if tail.len() > 30 {
                             tail.remove(0);
@@ -1033,7 +1046,7 @@ impl AgentTab {
             self.next_request += 1;
         }
         let result = if let Some(stdin) = &self.stdin {
-            let mut stdin = stdin.lock().unwrap();
+            let mut stdin = stdin.lock().unwrap_or_else(|e| e.into_inner());
             writeln!(stdin, "{command}").and_then(|_| stdin.flush())
         } else {
             return;
@@ -1511,7 +1524,7 @@ impl AgentTab {
             "extension_ui_request" => self.ui_request(&event),
             "__exit" => {
                 self.clear_runtime_state();
-                let tail = self.stderr_tail.lock().unwrap().join("\n");
+                let tail = self.stderr_tail.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
                 let reason = if tail.trim().is_empty() { t!("pi exited").to_string() } else { t!("pi exited:\n{tail}", tail = tail) };
                 self.items.push(Item::Notice { text: reason.clone(), error: true });
                 self.finish_task(TaskStatus::Failed);
@@ -1615,7 +1628,7 @@ impl AgentTab {
         message["type"] = json!("extension_ui_response");
         message["id"] = json!(request.id);
         if let Some(stdin) = &self.stdin {
-            let mut stdin = stdin.lock().unwrap();
+            let mut stdin = stdin.lock().unwrap_or_else(|e| e.into_inner());
             let _ = writeln!(stdin, "{message}");
             let _ = stdin.flush();
         }
@@ -1941,12 +1954,12 @@ pub fn show(ui: &mut egui::Ui, app: &mut App, loc: Loc) {
                     if agent.sessions_open {
                         agent.session_filter.clear();
                         let slot = agent.sessions.clone();
-                        *slot.lock().unwrap() = None;
+                        *slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
                         let cwd = agent.cwd.clone();
                         let ctx = ui.ctx().clone();
                         std::thread::spawn(move || {
                             let list = list_sessions(&cwd);
-                            *slot.lock().unwrap() = Some(list);
+                            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(list);
                             ctx.request_repaint();
                         });
                     }

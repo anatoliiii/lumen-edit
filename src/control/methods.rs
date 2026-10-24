@@ -377,7 +377,10 @@ pub fn parse_cli_params(method: &Method, args: &[String]) -> Result<Value, Strin
                 (param.name.to_string(), arg.clone())
             }
         };
-        let param = method.params.iter().find(|p| p.name == name).unwrap();
+        let param = match method.params.iter().find(|p| p.name == name) {
+            Some(param) => param,
+            None => unreachable!("the argument was positioned from this parameter list"),
+        };
         let value = match param.kind {
             Str => json!(raw),
             Int => json!(raw.parse::<i64>().map_err(|_| t!("{name}: expected a number", name = name))?),

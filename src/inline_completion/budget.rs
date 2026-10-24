@@ -114,7 +114,7 @@ mod tests {
     fn exhausted_budget_refuses_before_any_request() {
         let settings = Settings { session_budget_usd: 0.015, reserve_per_request_usd: 0.01, ..Default::default() };
         let mut ledger = Ledger::default();
-        let first = ledger.reserve(&settings).unwrap();
+        let first = ledger.reserve(&settings).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         assert_eq!(ledger.reserve(&settings), Err(Refusal::SessionBudget));
         ledger.settle(first, None);
         assert_eq!(ledger.reserve(&settings), Err(Refusal::SessionBudget));
@@ -124,7 +124,7 @@ mod tests {
     fn cancel_before_send_returns_reservation_and_quota() {
         let settings = Settings { requests_per_minute: 1, ..Default::default() };
         let mut ledger = Ledger::default();
-        let ticket = ledger.reserve(&settings).unwrap();
+        let ticket = ledger.reserve(&settings).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         assert!(matches!(ledger.reserve(&settings), Err(Refusal::Cooldown(_))));
         ledger.release(ticket);
         assert_eq!(ledger.reserved_usd, 0.0);
@@ -136,11 +136,11 @@ mod tests {
     fn sent_cancellation_is_counted_conservatively() {
         let settings = Settings::default();
         let mut ledger = Ledger::default();
-        let ticket = ledger.reserve(&settings).unwrap();
+        let ticket = ledger.reserve(&settings).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         ledger.settle(ticket, None);
         assert_eq!(ledger.requests, 1);
         assert!(ledger.reserved_usd >= settings.reserve_per_request_usd);
-        let ticket = ledger.reserve(&settings).unwrap();
+        let ticket = ledger.reserve(&settings).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         ledger.settle(ticket, Some(0.002));
         assert_eq!(ledger.requests, 2);
         assert!((ledger.cost_usd - 0.002).abs() < 1e-9);
@@ -154,7 +154,7 @@ mod tests {
     fn session_request_limit_counts_in_flight_requests() {
         let settings = Settings { requests_per_session: 1, ..Default::default() };
         let mut ledger = Ledger::default();
-        let _ticket = ledger.reserve(&settings).unwrap();
+        let _ticket = ledger.reserve(&settings).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         assert_eq!(ledger.reserve(&settings), Err(Refusal::SessionRequests));
     }
 

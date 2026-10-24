@@ -90,3 +90,9 @@ opt-level = 2
 [dev-dependencies]
 # Reads font charmaps in the glyph test (already used by egui).
 skrifa = "0.48"
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

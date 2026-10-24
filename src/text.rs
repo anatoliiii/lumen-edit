@@ -166,7 +166,10 @@ impl Buffer {
     }
 
     pub fn primary(&self) -> Selection {
-        *self.selections.last().unwrap()
+        match self.selections.last() {
+            Some(selection) => *selection,
+            None => unreachable!("a buffer always has at least one selection"),
+        }
     }
 
     pub fn len_chars(&self) -> usize {
@@ -346,7 +349,11 @@ impl Buffer {
             && self.saved_revision != revision_before;
         self.redo.clear();
         if merge {
-            let last = self.undo.last_mut().unwrap();
+            // `merge` is only true when `self.undo` has a matching last entry.
+            let last = match self.undo.last_mut() {
+                Some(last) => last,
+                None => unreachable!("merge requires an existing undo transaction"),
+            };
             last.changes.extend(changes);
             last.after = after;
             last.revision_after = self.revision;
@@ -777,7 +784,10 @@ impl Buffer {
             i -= 1;
         }
         if i > 0 {
-            let class = char_class(self.char(i - 1).unwrap());
+            let class = char_class(match self.char(i - 1) {
+                Some(c) => c,
+                None => unreachable!("index verified in bounds"),
+            });
             while i > 0 && self.char(i - 1).is_some_and(|c| char_class(c) == class && c != '\n') {
                 i -= 1;
             }
@@ -792,7 +802,10 @@ impl Buffer {
             i += 1;
         }
         if i < len {
-            let class = char_class(self.char(i).unwrap());
+            let class = char_class(match self.char(i) {
+                Some(c) => c,
+                None => unreachable!("index verified in bounds"),
+            });
             while i < len && self.char(i).is_some_and(|c| char_class(c) == class && c != '\n') {
                 i += 1;
             }

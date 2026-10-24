@@ -96,7 +96,7 @@ mod tests {
         task.status = TaskStatus::Running;
         assert!(task.take_delivery().is_none());
         task.finish(TaskStatus::Completed, "No regressions".into());
-        assert!(task.take_delivery().unwrap().contains("No regressions"));
+        assert!(task.take_delivery().unwrap_or_else(|| panic!("expected delivery")).contains("No regressions"));
         assert!(task.take_delivery().is_none());
         task.finish(TaskStatus::Failed, "late exit".into());
         assert_eq!(task.status, TaskStatus::Completed);
@@ -115,8 +115,10 @@ mod tests {
             task: Some(Task::new("Edit code".into(), 2)),
             draft: "Continue here".into(),
         };
-        let roundtrip: SavedAgent = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
-        assert_eq!(roundtrip.task.unwrap().status, TaskStatus::Pending);
+        let roundtrip: SavedAgent =
+            serde_json::from_str(&serde_json::to_string(&saved).unwrap_or_else(|e| panic!("serialize failed: {e}")))
+                .unwrap_or_else(|e| panic!("parse failed: {e}"));
+        assert_eq!(roundtrip.task.unwrap_or_else(|| panic!("expected a task")).status, TaskStatus::Pending);
         assert_eq!(roundtrip.draft, "Continue here");
     }
 }

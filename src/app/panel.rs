@@ -399,7 +399,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                     let mut label = terminal.window_title().filter(|t| !t.is_empty()).unwrap_or_else(|| terminal.title.clone());
                     label = util::truncate_middle(&label, 28);
                     if !alive {
-                        let code = terminal.exit_code.lock().unwrap().unwrap_or(0);
+                        let code = terminal.exit_code.lock().unwrap_or_else(|e| e.into_inner()).unwrap_or(0);
                         label = format!("{label} [{code}]");
                     }
                     let selected = index == app.active_terminal;
@@ -584,7 +584,7 @@ fn output(ui: &mut egui::Ui, app: &mut App) {
         if let Some(Some(remote)) =
             app.workspace.as_ref().map(|w| if let crate::host::Host::Remote(r) = &w.host { Some(r.clone()) } else { None })
         {
-            let status = remote.agent_status.lock().unwrap().clone();
+            let status = remote.agent_status.lock().unwrap_or_else(|e| e.into_inner()).clone();
             ui.label(
                 RichText::new(format!("SSH {} ({}): {status}", remote.target, remote.platform()))
                     .monospace()

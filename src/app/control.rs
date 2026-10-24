@@ -532,7 +532,7 @@ impl App {
                 self.terminals
                     .iter()
                     .enumerate()
-                    .map(|(i, t)| json!({ "terminal": i, "title": t.title, "alive": t.is_alive(), "exit_code": *t.exit_code.lock().unwrap(), "active": i == self.active_terminal }))
+                    .map(|(i, t)| json!({ "terminal": i, "title": t.title, "alive": t.is_alive(), "exit_code": *t.exit_code.lock().unwrap_or_else(|e| e.into_inner()), "active": i == self.active_terminal }))
                     .collect::<Vec<_>>()
             )),
             "terminal_new" => {
@@ -1054,8 +1054,8 @@ fn apply_replace(doc: &mut super::document::Document, params: &Value) -> Result<
 fn exec(host: &Host, cwd: &str, command: &str, timeout: Duration) -> Result<Value, String> {
     let mut child =
         host.shell(cwd, command).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
-    let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
+    let mut stdout = child.stdout.take().ok_or_else(|| "stdout unexpectedly missing".to_string())?;
+    let mut stderr = child.stderr.take().ok_or_else(|| "stderr unexpectedly missing".to_string())?;
     let out_thread = std::thread::spawn(move || {
         let mut buffer = Vec::new();
         let _ = stdout.read_to_end(&mut buffer);

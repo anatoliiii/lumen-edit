@@ -163,7 +163,7 @@ fn history(ui: &mut egui::Ui, app: &App, state: &mut Manager, actions: &mut Vec<
             actions.push(Action::Refresh);
         }
     });
-    let history = state.history.lock().unwrap().clone();
+    let history = state.history.lock().unwrap_or_else(|e| e.into_inner()).clone();
     match history {
         None => {
             ui.spinner();
@@ -224,7 +224,10 @@ fn history(ui: &mut egui::Ui, app: &App, state: &mut Manager, actions: &mut Vec<
 
 fn conversation(ui: &mut egui::Ui, app: &mut App, id: u64) {
     let mut actions = Vec::new();
-    let agent = agents(app).find(|a| a.id == id).unwrap();
+    // An agent can disappear between frames (process exit, async cleanup, a close
+    // action from an earlier frame), so a missing id is a legitimate state, not a
+    // contract violation: render nothing for it instead of panicking.
+    let Some(agent) = agents(app).find(|a| a.id == id) else { return };
     let parent = if agent.role == Role::Coordinator { Some(id) } else { agent.coordinator };
     let mut rename = None;
     let mut add_worker = false;

@@ -217,15 +217,11 @@ pub fn tick(app: &mut crate::app::App, ctx: &eframe::egui::Context) {
                 })
                 .take(24)
                 .collect();
-            let snapshot = semantic::Snapshot {
-                buffer,
-                lang,
-                cursor: identity.cursor,
-                path,
-                root: workspace.unwrap().root.clone().into(),
-                clients,
-                related,
+            let root = match workspace {
+                Some(w) => w.root.clone().into(),
+                None => unreachable!("inline identity only resolves for a local workspace"),
             };
+            let snapshot = semantic::Snapshot { buffer, lang, cursor: identity.cursor, path, root, clients, related };
             app.inline_completion.launch(snapshot, app.config.inline_completion.clone(), ctx.clone(), manual);
         }
     }
@@ -327,11 +323,13 @@ mod settings_tests {
     use super::*;
     #[test]
     fn migrate_only_original_small_limits() {
-        let mut old: Settings = toml::from_str("requests_per_minute=12\nrequests_per_session=300").unwrap();
+        let mut old: Settings =
+            toml::from_str("requests_per_minute=12\nrequests_per_session=300").unwrap_or_else(|e| panic!("parse failed: {e}"));
         old.migrate_limits();
         assert_eq!(old.requests_per_minute, 60);
         assert_eq!(old.requests_per_session, 5000);
-        let mut custom: Settings = toml::from_str("requests_per_minute=8\nrequests_per_session=100").unwrap();
+        let mut custom: Settings =
+            toml::from_str("requests_per_minute=8\nrequests_per_session=100").unwrap_or_else(|e| panic!("parse failed: {e}"));
         custom.migrate_limits();
         assert_eq!(custom.requests_per_minute, 8);
         assert_eq!(custom.requests_per_session, 100);

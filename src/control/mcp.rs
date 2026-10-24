@@ -155,7 +155,7 @@ pub fn tools() -> Vec<Value> {
             let mut required: Vec<&str> = Vec::new();
             let mut lines = Vec::new();
             for (action, method_name) in actions.iter() {
-                let method = methods::find(method_name).expect("grouped method exists");
+                let method = methods::find(method_name).unwrap_or_else(|| panic!("grouped method {method_name} missing"));
                 let schema = methods::input_schema(method);
                 if let Some(props) = schema["properties"].as_object() {
                     for (key, value) in props {
@@ -171,7 +171,10 @@ pub fn tools() -> Vec<Value> {
                 }
             }
             let description = if single {
-                let method = methods::find(actions[0].1).unwrap();
+                let method = match methods::find(actions[0].1) {
+                    Some(method) => method,
+                    None => unreachable!("action method was validated above"),
+                };
                 format!("{description} {}", method.description)
             } else {
                 let names: Vec<&str> = actions.iter().map(|(a, _)| *a).collect();
@@ -250,7 +253,11 @@ fn call_tool(client: &mut Option<Client>, params: &Value, granular: bool) -> Val
                 Err(error) => return tool_error(error),
             }
         }
-        match client.as_mut().unwrap().call(method, arguments.clone()) {
+        let client_ref = match client.as_mut() {
+            Some(client) => client,
+            None => unreachable!("client was connected above or this call would have returned"),
+        };
+        match client_ref.call(method, arguments.clone()) {
             Err(error) if error.contains(t!("closed")) || error.contains("Broken pipe") => *client = None,
             other => {
                 result = Some(other);
@@ -333,7 +340,7 @@ mod tests {
                 method.name
             );
         }
-        let json = serde_json::to_string(&tools).unwrap();
+        let json = serde_json::to_string(&tools).unwrap_or_else(|e| panic!("serialize failed: {e}"));
         // Keep the tool catalog well under ~10k tokens.
         assert!(json.len() < 24_000, "catalog is {} bytes", json.len());
     }
@@ -341,8 +348,8 @@ mod tests {
     #[test]
     fn resolves_actions() {
         use serde_json::json;
-        assert_eq!(super::resolve("file", &json!({ "action": "read" })).unwrap(), "read_file");
-        assert_eq!(super::resolve("exec", &json!({})).unwrap(), "exec");
+        assert_eq!(super::resolve("file", &json!({ "action": "read" })).unwrap_or_else(|e| panic!("{e}")), "read_file");
+        assert_eq!(super::resolve("exec", &json!({})).unwrap_or_else(|e| panic!("{e}")), "exec");
         assert!(super::resolve("git", &json!({ "action": "nope" })).is_err());
     }
 }

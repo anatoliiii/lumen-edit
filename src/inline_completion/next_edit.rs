@@ -92,12 +92,12 @@ impl EditHistory {
         self.bytes
     }
     pub fn push(&mut self, event: UserEditEvent) {
-        if let Some(last) = self.entries.back()
+        if let Some(last) = self.entries.back_mut()
             && let Some(merged) = merge(last, &event)
             && merged.bytes() <= ENTRY_BYTES
         {
             self.bytes = self.bytes - last.bytes() + merged.bytes();
-            *self.entries.back_mut().unwrap() = merged;
+            *last = merged;
         } else {
             let entry = EditHistoryEntry {
                 start: event.start,
@@ -112,8 +112,10 @@ impl EditHistory {
             self.entries.push_back(entry);
         }
         while self.entries.len() > 1 && (self.entries.len() > HISTORY_ENTRIES || self.bytes > HISTORY_BYTES) {
-            let removed = self.entries.pop_front().unwrap();
-            self.bytes -= removed.bytes();
+            match self.entries.pop_front() {
+                Some(removed) => self.bytes -= removed.bytes(),
+                None => unreachable!("entries.len() > 1"),
+            }
         }
     }
 }
@@ -600,7 +602,8 @@ pub fn build_request(
     // terminator lengths, so CRLF and Unicode lines are measured exactly.
     let mut starts = vec![0];
     for piece in file.split_inclusive('\n') {
-        starts.push(starts.last().unwrap() + piece.chars().count());
+        let prev = starts[starts.len() - 1];
+        starts.push(prev + piece.chars().count());
     }
     let line_count = starts.len() - 1;
     let line_start = |line: usize| starts[line.min(line_count)];
@@ -755,7 +758,7 @@ mod tests {
             started: Instant::now(),
             context_ms: 0,
         })
-        .unwrap();
+        .unwrap_or_else(|e| panic!("send failed: {e:?}"));
         controller.invalidate();
         assert!(controller.poll(Some((1, 0, 0)), &mut Ledger::default()).is_none());
         assert!(!controller.busy);
@@ -766,10 +769,10 @@ mod tests {
         let settings = super::super::Settings::default();
         let mut ledger = Ledger::default();
         let mut controller = Controller::default();
-        let unsent = ledger.reserve(&settings).unwrap();
+        let unsent = ledger.reserve(&settings).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         controller.reservation = Some((unsent, Arc::new(AtomicBool::new(false))));
         controller.invalidate();
-        let sent = ledger.reserve(&settings).unwrap();
+        let sent = ledger.reserve(&settings).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         controller.reservation = Some((sent, Arc::new(AtomicBool::new(true))));
         controller.invalidate();
         controller.settle_abandoned(&mut ledger);
@@ -780,26 +783,26 @@ mod tests {
     #[test]
     fn crlf_region_boundaries_are_exact() {
         let src = "a\r\nb\r\nc";
-        let (range, original, _) = build_request("f.rs", src, 6, &[], 1).unwrap();
+        let (range, original, _) = build_request("f.rs", src, 6, &[], 1).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!((range, original.as_str()), (6..7, "c"));
-        let (range, original, _) = build_request("f.rs", src, 3, &[], 1).unwrap();
+        let (range, original, _) = build_request("f.rs", src, 3, &[], 1).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!((range, original.as_str()), (3..6, "b\r\n"));
         let src = "\u{44f}\u{44f}\r\n\u{1f642}\r\nend\r\n";
-        let cursor = src.chars().position(|c| c == 'e').unwrap();
-        let (range, original, _) = build_request("f.rs", src, cursor, &[], 1).unwrap();
+        let cursor = src.chars().position(|c| c == 'e').unwrap_or_else(|| panic!("expected 'e'"));
+        let (range, original, _) = build_request("f.rs", src, cursor, &[], 1).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(original, "end\r\n");
         assert_eq!(range, cursor..cursor + 5);
     }
 
     #[test]
     fn region_edges_empty_file_trailing_newline_and_no_newline() {
-        assert_eq!(build_request("f.rs", "", 0, &[], 15).unwrap().0, 0..0);
+        assert_eq!(build_request("f.rs", "", 0, &[], 15).unwrap_or_else(|e| panic!("{e}")).0, 0..0);
         // Cursor on the empty line after a final newline.
-        let (range, original, _) = build_request("f.rs", "a\nb\n", 4, &[], 15).unwrap();
+        let (range, original, _) = build_request("f.rs", "a\nb\n", 4, &[], 15).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!((range, original.as_str()), (0..4, "a\nb\n"));
-        let (range, _, _) = build_request("f.rs", "a\nb\n", 4, &[], 1).unwrap();
+        let (range, _, _) = build_request("f.rs", "a\nb\n", 4, &[], 1).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(range, 4..4);
-        let (range, original, _) = build_request("f.rs", "a\nb", 3, &[], 1).unwrap();
+        let (range, original, _) = build_request("f.rs", "a\nb", 3, &[], 1).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!((range, original.as_str()), (2..3, "b"));
     }
 
@@ -819,11 +822,14 @@ mod tests {
         let reply =
             |text: &str, finish: Option<&str>| Reply { text: text.into(), finish_reason: finish.map(String::from), ..Default::default() };
         let good = reply("```rust\n    y();\n```", Some("stop"));
-        assert_eq!(evaluate(crate::syntax::Lang::Rust, &rope, range.clone(), original, &good).unwrap(), ("    y();\n".into(), None));
+        assert_eq!(
+            evaluate(crate::syntax::Lang::Rust, &rope, range.clone(), original, &good).unwrap_or_else(|e| panic!("{e}")),
+            ("    y();\n".into(), None)
+        );
         let cut = reply("```rust\n    y();\n```", Some("length"));
-        assert!(evaluate(crate::syntax::Lang::Rust, &rope, range.clone(), original, &cut).unwrap_err().contains("cut off"));
+        assert!(matches!(evaluate(crate::syntax::Lang::Rust, &rope, range.clone(), original, &cut), Err(e) if e.contains("cut off")));
         let broken = reply("```rust\n    y(;\n}\nfn z( {\n```", None);
-        assert!(evaluate(crate::syntax::Lang::Rust, &rope, range, original, &broken).unwrap_err().contains("syntax"));
+        assert!(matches!(evaluate(crate::syntax::Lang::Rust, &rope, range, original, &broken), Err(e) if e.contains("syntax")));
     }
 
     #[test]
@@ -854,7 +860,7 @@ mod tests {
             history.push(event(n, "", &c.to_string(), true, false));
         }
         assert_eq!(history.entries().count(), 1);
-        assert_eq!(history.entries().next().unwrap().after, "hello");
+        assert_eq!(history.entries().next().unwrap_or_else(|| panic!("expected entry")).after, "hello");
         // Backspace and Delete grow one deletion.
         let mut history = EditHistory::default();
         history.push(event(5, "e", "", false, true));
@@ -872,7 +878,7 @@ mod tests {
         // One huge paste is truncated on a char boundary, not dropped.
         let mut history = EditHistory::default();
         history.push(event(0, "", &"\u{1f642}".repeat(100_000), false, false));
-        let entry = history.entries().next().unwrap();
+        let entry = history.entries().next().unwrap_or_else(|| panic!("expected entry"));
         assert!(entry.bytes() <= ENTRY_BYTES);
         assert!(entry.after.ends_with(TRUNCATED));
         // Only as many old entries are dropped as the limits require.
@@ -889,20 +895,26 @@ mod tests {
     #[test]
     fn history_hunk_uses_real_line_numbers_and_context() {
         let mut buffer = crate::text::Buffer::new("l1\nl2\nl3\nl4 old\nl5\nl6\nl7\n");
-        let at = buffer.text().find("old").unwrap();
+        let at = buffer.text().find("old").unwrap_or_else(|| panic!("expected \"old\""));
         buffer.apply_edits_with_selection(vec![(at..at + 3, "new".into())], vec![crate::text::Selection::cursor(at + 3)]);
         let mut history = EditHistory::default();
         for event in buffer.take_user_edit_events() {
             history.push(event);
         }
-        let entry = history.entries().next().unwrap();
+        let entry = history.entries().next().unwrap_or_else(|| panic!("expected entry"));
         let hunk = history_hunk("src/f.rs", entry);
         assert!(hunk.starts_with("--- src/f.rs\n+++ src/f.rs\n@@ -2,5 +2,5 @@\n"), "{hunk}");
         assert!(hunk.contains("\n-l4 old\n+l4 new\n"));
         assert!(hunk.contains(" l2\n") && hunk.contains(" l6\n") && !hunk.contains("l7"));
         let src = (0..200).map(|n| format!("line{n}\n")).collect::<String>();
-        let (_, _, body) = build_request("src/f.rs", &src, 0, std::slice::from_ref(entry), 15).unwrap();
-        assert!(body.pointer("/messages/0/content").unwrap().as_str().unwrap().contains("@@ -2,5 +2,5 @@"));
+        let (_, _, body) = build_request("src/f.rs", &src, 0, std::slice::from_ref(entry), 15).unwrap_or_else(|e| panic!("{e}"));
+        assert!(
+            body.pointer("/messages/0/content")
+                .unwrap_or_else(|| panic!("expected content"))
+                .as_str()
+                .unwrap_or_else(|| panic!("expected string"))
+                .contains("@@ -2,5 +2,5 @@")
+        );
     }
 
     #[test]
@@ -928,9 +940,13 @@ mod tests {
     #[test]
     fn request_uses_official_markers_and_bounded_region() {
         let src = (0..40).map(|n| format!("line{n}\n")).collect::<String>();
-        let (range, original, body) =
-            build_request("src/main.rs", &src, src.chars().take_while(|&c| c != '\n').count() + 1, &[], 15).unwrap();
-        let content = body.pointer("/messages/0/content").unwrap().as_str().unwrap();
+        let (range, original, body) = build_request("src/main.rs", &src, src.chars().take_while(|&c| c != '\n').count() + 1, &[], 15)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let content = body
+            .pointer("/messages/0/content")
+            .unwrap_or_else(|| panic!("expected content"))
+            .as_str()
+            .unwrap_or_else(|| panic!("expected string"));
         assert!(content.contains("<|recently_viewed_code_snippets|>"));
         assert!(content.contains("<|current_file_content|>"));
         assert!(content.contains("<|code_to_edit|>"));
@@ -946,14 +962,20 @@ mod tests {
         let history = (0..7)
             .map(|n| EditHistoryEntry { before: format!("old{n}\n"), after: format!("new{n}\n"), ..Default::default() })
             .collect::<Vec<_>>();
-        let (_, _, body) = build_request("f.rs", "x\n", 0, &history, 15).unwrap();
-        let p = body.pointer("/messages/0/content").unwrap().as_str().unwrap();
+        let (_, _, body) = build_request("f.rs", "x\n", 0, &history, 15).unwrap_or_else(|e| panic!("{e}"));
+        let p = body
+            .pointer("/messages/0/content")
+            .unwrap_or_else(|| panic!("expected content"))
+            .as_str()
+            .unwrap_or_else(|| panic!("expected string"));
         assert!(!p.contains("old1"));
-        assert!(p.find("old2").unwrap() < p.find("old6").unwrap());
+        let old2 = p.find("old2").unwrap_or_else(|| panic!("expected old2"));
+        let old6 = p.find("old6").unwrap_or_else(|| panic!("expected old6"));
+        assert!(old2 < old6);
     }
     #[test]
     fn parses_markdown_or_rejects_bad_fence() {
-        assert_eq!(parse_region("```rust\nfn main() {}\n```").unwrap(), "fn main() {}\n");
+        assert_eq!(parse_region("```rust\nfn main() {}\n```").unwrap_or_else(|e| panic!("{e}")), "fn main() {}\n");
         assert!(parse_region("```rust\nmissing").is_err());
     }
     #[test]
@@ -972,8 +994,12 @@ mod tests {
             ("main.py", "def main():\n    print('ok')\n"),
         ] {
             let cursor = source.chars().take_while(|&c| c != '\n').count();
-            let (_, _, body) = build_request(path, source, cursor, &[], 15).unwrap();
-            let context = body.pointer("/messages/0/content").unwrap().as_str().unwrap();
+            let (_, _, body) = build_request(path, source, cursor, &[], 15).unwrap_or_else(|e| panic!("{e}"));
+            let context = body
+                .pointer("/messages/0/content")
+                .unwrap_or_else(|| panic!("expected content"))
+                .as_str()
+                .unwrap_or_else(|| panic!("expected string"));
             assert!(context.contains(path));
             assert!(context.contains("<|cursor|>"));
             assert!(source.lines().last().is_some_and(|line| context.contains(line)));
@@ -1014,13 +1040,13 @@ mod tests {
     }
 
     fn mock_call(status: &str, body: &str) -> Result<Reply, HttpFailure> {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap_or_else(|e| panic!("bind failed: {e}"));
+        let addr = listener.local_addr().unwrap_or_else(|e| panic!("local_addr failed: {e}"));
         let status = status.to_string();
         let body = body.to_string();
         let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+            let (mut stream, _) = listener.accept().unwrap_or_else(|e| panic!("accept failed: {e}"));
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap_or_else(|e| panic!("set_read_timeout failed: {e}"));
             let mut req = Vec::new();
             let mut chunk = [0u8; 2048];
             let mut expected_len = None;
@@ -1049,7 +1075,7 @@ mod tests {
             let headers = String::from_utf8_lossy(&req);
             assert!(headers.to_ascii_lowercase().contains("authorization: bearer test-secret"));
             assert!(headers.starts_with("POST /v1/edit/completions HTTP/1.1"));
-            let payload = headers.split_once("\r\n\r\n").unwrap().1;
+            let payload = headers.split_once("\r\n\r\n").unwrap_or_else(|| panic!("missing header separator")).1;
             assert!(payload.contains("\"model\":\"mercury-edit-2\""));
             assert!(payload.contains("\"role\":\"user\""));
             assert!(!payload.contains("fim/completions"));
@@ -1057,40 +1083,43 @@ mod tests {
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
-            stream.write_all(response.as_bytes()).unwrap();
+            stream.write_all(response.as_bytes()).unwrap_or_else(|e| panic!("write failed: {e}"));
         });
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap_or_else(|e| panic!("runtime build failed: {e}"));
         let result = rt.block_on(request(
             format!("http://{addr}/v1/edit/completions"),
             "test-secret".into(),
             json!({"model":"mercury-edit-2","messages":[{"role":"user","content":"fixture"}],"max_tokens":256}),
             Arc::new(AtomicBool::new(false)),
         ));
-        server.join().unwrap();
+        server.join().unwrap_or_else(|e| panic!("server join failed: {e:?}"));
         result
     }
 
     #[test]
     fn mock_http_success_and_api_error_classes() {
-        let ok=mock_call("200 OK",r#"{"choices":[{"message":{"content":"```rust\nupdated\n```"},"finish_reason":"length"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"cached_tokens":3}}"#).unwrap();
+        let ok=mock_call("200 OK",r#"{"choices":[{"message":{"content":"```rust\nupdated\n```"},"finish_reason":"length"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"cached_tokens":3}}"#).unwrap_or_else(|e| panic!("mock call failed: {e:?}"));
         assert_eq!(ok.text, "```rust\nupdated\n```");
         assert_eq!((ok.prompt_tokens, ok.completion_tokens, ok.cached_tokens), (8, 2, 3));
         assert_eq!(ok.finish_reason.as_deref(), Some("length"));
         for (code, label) in
             [(401, "invalid API key"), (402, "payment required"), (404, "not found"), (429, "rate limited"), (503, "server error")]
         {
-            let err = mock_call(&format!("{code} Error"), "{}").unwrap_err();
+            let err = match mock_call(&format!("{code} Error"), "{}") {
+                Err(e) => e,
+                Ok(_) => panic!("expected HTTP error"),
+            };
             assert!(err.message.contains(label), "HTTP {code}: {}", err.message);
         }
     }
 
     #[test]
     fn obsolete_http_request_is_cancelled() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap_or_else(|e| panic!("bind failed: {e}"));
+        let addr = listener.local_addr().unwrap_or_else(|e| panic!("local_addr failed: {e}"));
         let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+            let (mut stream, _) = listener.accept().unwrap_or_else(|e| panic!("accept failed: {e}"));
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap_or_else(|e| panic!("set_read_timeout failed: {e}"));
             let mut req = [0u8; 4096];
             let _ = stream.read(&mut req);
             thread::sleep(std::time::Duration::from_millis(250));
@@ -1100,7 +1129,7 @@ mod tests {
         });
         let cancel = Arc::new(AtomicBool::new(false));
         let token = cancel.clone();
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap_or_else(|e| panic!("runtime build failed: {e}"));
         let result = rt.block_on(async move {
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(40)).await;
@@ -1108,8 +1137,8 @@ mod tests {
             });
             request(format!("http://{addr}/v1/edit/completions"), "fixture".into(), json!({"model":"mercury-edit-2"}), cancel).await
         });
-        server.join().unwrap();
-        assert!(result.unwrap_err().message.contains("Cancelled"));
+        server.join().unwrap_or_else(|e| panic!("server join failed: {e:?}"));
+        assert!(matches!(result, Err(e) if e.message.contains("Cancelled")));
     }
 
     #[test]
@@ -1118,16 +1147,17 @@ mod tests {
         let total_started = Instant::now();
         let project = Path::new(env!("CARGO_MANIFEST_DIR"));
         let (endpoint, key) = super::super::credentials::inception_route(project, "/v1/edit/completions")
-            .expect(".env-fim or environment configuration required");
+            .unwrap_or_else(|e| panic!(".env-fim or environment configuration required: {e}"));
         let source = "fn square(x: i32) -> i32 {\n    x *\n}\n";
-        let cursor = source.find('*').unwrap() + 1;
+        let cursor = source.find('*').unwrap_or_else(|| panic!("expected '*'")) + 1;
         let context_started = Instant::now();
-        let (_, _, body) = build_request("src/square.rs", source, cursor, &[], 15).unwrap();
+        let (_, _, body) = build_request("src/square.rs", source, cursor, &[], 15).unwrap_or_else(|e| panic!("{e}"));
         let context_ms = context_started.elapsed().as_millis();
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let result =
-            rt.block_on(request(endpoint, key, body, Arc::new(AtomicBool::new(false)))).expect("live Inception Edit API request failed");
-        let _region = parse_region(&result.text).expect("API response was not a fenced updated region");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap_or_else(|e| panic!("runtime build failed: {e}"));
+        let result = rt
+            .block_on(request(endpoint, key, body, Arc::new(AtomicBool::new(false))))
+            .unwrap_or_else(|e| panic!("live Inception Edit API request failed: {e:?}"));
+        let _region = parse_region(&result.text).unwrap_or_else(|e| panic!("API response was not a fenced updated region: {e}"));
         eprintln!(
             "Next Edit smoke: context {} ms; HTTP {} ms; total {} ms; prompt {} tokens; completion {} tokens; cached {} tokens; response {} chars",
             context_ms,

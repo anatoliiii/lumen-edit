@@ -340,7 +340,7 @@ pub fn status_bar(ui: &mut egui::Ui, app: &mut App) {
                             theme::ERROR
                         }));
                         ui.label(
-                            RichText::new(t!("Agent: {n1}", n1 = remote.agent_status.lock().unwrap()))
+                            RichText::new(t!("Agent: {n1}", n1 = remote.agent_status.lock().unwrap_or_else(|e| e.into_inner())))
                                 .small()
                                 .color(theme::MUTED_TEXT),
                         );

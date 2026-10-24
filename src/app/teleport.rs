@@ -190,12 +190,12 @@ pub fn start_transfer(app: &mut App, tab_id: u64, job: Job) {
             &mut src.shell(&src_dir, &format!("du -skL -- {list} 2>/dev/null | awk '{{s+=$1}} END {{print s*1024}}'")),
             None,
         ) {
-            *total_slot.lock().unwrap() = String::from_utf8_lossy(&out).trim().parse().ok();
+            *total_slot.lock().unwrap_or_else(|e| e.into_inner()) = String::from_utf8_lossy(&out).trim().parse().ok();
         }
         let result = pipe(&src, &src_dir, &list, &dst, &dst_dir, &done, &cancel).and_then(|_| {
             if move_after { host::run_with_input(&mut src.shell(&src_dir, &format!("rm -rf -- {list}")), None).map(|_| ()) } else { Ok(()) }
         });
-        shared.lock().unwrap().push((transfer_id, result));
+        shared.lock().unwrap_or_else(|e| e.into_inner()).push((transfer_id, result));
         bus.send(Msg::Run(Box::new(move |app: &mut App| finish(app, tab_id, index, total_for_ui))));
     });
 }
@@ -215,8 +215,8 @@ fn pipe(src: &Host, src_dir: &str, list: &str, dst: &Host, dst_dir: &str, done: 
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
-    let mut from = reader.stdout.take().unwrap();
-    let mut to = writer.stdin.take().unwrap();
+    let mut from = reader.stdout.take().ok_or_else(|| "tar stdout unexpectedly missing".to_string())?;
+    let mut to = writer.stdin.take().ok_or_else(|| "tar stdin unexpectedly missing".to_string())?;
     let mut buffer = vec![0u8; 256 * 1024];
     let mut aborted = false;
     loop {
@@ -256,9 +256,9 @@ fn pipe(src: &Host, src_dir: &str, list: &str, dst: &Host, dst_dir: &str, done: 
 
 fn finish(app: &mut App, tab_id: u64, index: usize, total: Arc<Mutex<Option<u64>>>) {
     let Some(Tab::Teleport(tab)) = app.tabs.iter_mut().find(|t| matches!(t, Tab::Teleport(t) if t.id == tab_id)) else { return };
-    let results: Vec<_> = tab.shared.lock().unwrap().drain(..).collect();
+    let results: Vec<_> = tab.shared.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect();
     if let Some(transfer) = tab.transfers.get_mut(index) {
-        transfer.total = transfer.total.or(*total.lock().unwrap());
+        transfer.total = transfer.total.or(*total.lock().unwrap_or_else(|e| e.into_inner()));
         if let Some((_, result)) = results.into_iter().last() {
             transfer.finished = Some(result.clone());
             transfer.finished_at = Some(Instant::now());
@@ -692,19 +692,24 @@ mod tests {
         let base = std::env::temp_dir().join(format!("lumen-teleport-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let src = base.join("src");
-        std::fs::create_dir_all(src.join("tree/deep")).unwrap();
-        std::fs::write(src.join("tree/deep/data.bin"), vec![7u8; 300_000]).unwrap();
-        std::fs::write(src.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap();
-        std::fs::set_permissions(src.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::os::unix::fs::symlink("run.sh", src.join("link")).unwrap();
+        std::fs::create_dir_all(src.join("tree/deep")).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
+        std::fs::write(src.join("tree/deep/data.bin"), vec![7u8; 300_000]).unwrap_or_else(|e| panic!("write failed: {e}"));
+        std::fs::write(src.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap_or_else(|e| panic!("write failed: {e}"));
+        std::fs::set_permissions(src.join("run.sh"), std::fs::Permissions::from_mode(0o755))
+            .unwrap_or_else(|e| panic!("chmod failed: {e}"));
+        std::os::unix::fs::symlink("run.sh", src.join("link")).unwrap_or_else(|e| panic!("symlink failed: {e}"));
         let dst = base.join("dst");
         let done = AtomicU64::new(0);
         let cancel = AtomicBool::new(false);
         let list = ["tree", "run.sh", "link"].iter().map(|n| shell_quote(n)).collect::<Vec<_>>().join(" ");
-        pipe(&Host::Local, &src.to_string_lossy(), &list, &Host::Local, &dst.to_string_lossy(), &done, &cancel).unwrap();
-        assert_eq!(std::fs::read(dst.join("tree/deep/data.bin")).unwrap().len(), 300_000);
-        assert_eq!(std::fs::metadata(dst.join("run.sh")).unwrap().permissions().mode() & 0o777, 0o755);
-        assert_eq!(std::fs::read_link(dst.join("link")).unwrap().to_string_lossy(), "run.sh");
+        pipe(&Host::Local, &src.to_string_lossy(), &list, &Host::Local, &dst.to_string_lossy(), &done, &cancel)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(std::fs::read(dst.join("tree/deep/data.bin")).unwrap_or_else(|e| panic!("read failed: {e}")).len(), 300_000);
+        assert_eq!(
+            std::fs::metadata(dst.join("run.sh")).unwrap_or_else(|e| panic!("metadata failed: {e}")).permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(std::fs::read_link(dst.join("link")).unwrap_or_else(|e| panic!("read_link failed: {e}")).to_string_lossy(), "run.sh");
         assert!(done.load(Ordering::Relaxed) >= 300_000);
         // Cancelled transfers report an error.
         cancel.store(true, Ordering::Relaxed);

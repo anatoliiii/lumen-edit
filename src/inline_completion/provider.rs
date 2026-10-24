@@ -40,9 +40,7 @@ pub(super) fn shared_client() -> Result<reqwest::Client, String> {
                 .build()
                 .map_err(|_| "HTTP client initialization failed".to_string())
         })
-        .as_ref()
-        .map(Clone::clone)
-        .map_err(Clone::clone)
+        .clone()
 }
 
 /// Direct Inception FIM endpoint. The service owns model-specific FIM
@@ -305,7 +303,7 @@ mod tests {
     fn fim_response_reads_only_text_insertion_and_usage() {
         let context = Context { prefix: "x * ".into(), suffix: "x\n}".into(), ..Default::default() };
         let value = json!({"choices":[{"text":"x","message":{"content":"must ignore"}}],"usage":{"prompt_tokens":33,"completion_tokens":5,"cached_input_tokens":7}});
-        let result = fim_output(&value, &context).unwrap();
+        let result = fim_output(&value, &context).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(result.text, "x");
         assert_eq!(result.input_tokens, 33);
         assert_eq!(result.output_tokens, 5);
@@ -331,15 +329,15 @@ mod tests {
             io::{Read, Write},
             net::TcpListener,
         };
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let endpoint = format!("http://{}/v1/fim/completions", listener.local_addr().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap_or_else(|e| panic!("bind failed: {e}"));
+        let endpoint = format!("http://{}/v1/fim/completions", listener.local_addr().unwrap_or_else(|e| panic!("local_addr failed: {e}")));
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
+            let (mut stream, _) = listener.accept().unwrap_or_else(|e| panic!("accept failed: {e}"));
             let mut bytes = Vec::new();
             let mut chunk = [0; 4096];
             let (header_end, length) = loop {
-                let count = stream.read(&mut chunk).unwrap();
+                let count = stream.read(&mut chunk).unwrap_or_else(|e| panic!("read failed: {e}"));
                 bytes.extend_from_slice(&chunk[..count]);
                 if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
                     let headers = String::from_utf8_lossy(&bytes[..end]);
@@ -353,32 +351,32 @@ mod tests {
                 }
             };
             while bytes.len() < header_end + length {
-                let count = stream.read(&mut chunk).unwrap();
+                let count = stream.read(&mut chunk).unwrap_or_else(|e| panic!("read failed: {e}"));
                 if count == 0 {
                     break;
                 }
                 bytes.extend_from_slice(&chunk[..count]);
             }
             let headers = String::from_utf8_lossy(&bytes[..header_end]);
-            let body: Value = serde_json::from_slice(&bytes[header_end..]).unwrap();
+            let body: Value = serde_json::from_slice(&bytes[header_end..]).unwrap_or_else(|e| panic!("invalid JSON body: {e}"));
             let _ = tx.send((headers.to_string(), body));
             let reason = if status < 400 { "OK" } else { "Provider Error" };
             let _ =
                 write!(stream, "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len());
         });
-        let provider = InceptionFimProvider::new(endpoint, "test-key-never-logged".into()).unwrap();
+        let provider = InceptionFimProvider::new(endpoint, "test-key-never-logged".into()).unwrap_or_else(|e| panic!("{e}"));
         let context = Context { prefix: "fn f() {\n    ".into(), suffix: "\n}".into(), ..Default::default() };
         let settings = Settings::default();
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap_or_else(|e| panic!("runtime build failed: {e}"));
         let result = rt.block_on(provider.complete(&context, &settings, Arc::new(AtomicBool::new(false))));
-        let (headers, body) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (headers, body) = rx.recv_timeout(Duration::from_secs(2)).unwrap_or_else(|e| panic!("server did not report: {e}"));
         (result, body, headers)
     }
     #[test]
     fn fim_http_request_uses_specialized_endpoint_and_raw_code_gaps() {
         let (result, body, headers) =
             mock_fim(200, r#"{"choices":[{"text":"    return 1;"}],"usage":{"prompt_tokens":12,"completion_tokens":4}}"#);
-        let result = result.unwrap();
+        let result = result.unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(result.text, "return 1;");
         assert_eq!(body["model"], "mercury-edit-2");
         assert_eq!(body["prompt"], "fn f() {\n    ");
@@ -397,7 +395,10 @@ mod tests {
             (503, "server error"),
         ] {
             let (result, _, _) = mock_fim(status, "private-body-must-not-be-reported");
-            let error = result.unwrap_err();
+            let error = match result {
+                Err(e) => e,
+                Ok(_) => panic!("expected HTTP {status} error"),
+            };
             assert!(error.contains(expected), "{status}: {error}");
             assert!(!error.contains("private-body"));
         }
@@ -408,46 +409,49 @@ mod tests {
             io::{Read, Write},
             net::TcpListener,
         };
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let endpoint = format!("http://{}/v1/fim/completions", listener.local_addr().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap_or_else(|e| panic!("bind failed: {e}"));
+        let endpoint = format!("http://{}/v1/fim/completions", listener.local_addr().unwrap_or_else(|e| panic!("local_addr failed: {e}")));
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
+            let (mut stream, _) = listener.accept().unwrap_or_else(|e| panic!("accept failed: {e}"));
             let mut bytes = [0; 4096];
             let _ = stream.read(&mut bytes);
             let _ = started_tx.send(());
             std::thread::sleep(Duration::from_millis(1500));
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
         });
-        let provider = InceptionFimProvider::new(endpoint, "fixture-key".into()).unwrap();
+        let provider = InceptionFimProvider::new(endpoint, "fixture-key".into()).unwrap_or_else(|e| panic!("{e}"));
         let cancel = Arc::new(AtomicBool::new(false));
         let signal = cancel.clone();
         std::thread::spawn(move || {
-            started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            started_rx.recv_timeout(Duration::from_secs(2)).unwrap_or_else(|e| panic!("server never started: {e}"));
             signal.store(true, Ordering::Relaxed);
         });
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap_or_else(|e| panic!("runtime build failed: {e}"));
         let started = std::time::Instant::now();
         let context = Context { prefix: "fn f() {".into(), suffix: "}".into(), ..Default::default() };
         let result = rt.block_on(provider.complete(&context, &Settings::default(), cancel));
-        assert_eq!(result.unwrap_err(), "Cancelled");
+        assert!(matches!(result, Err(e) if e == "Cancelled"));
         assert!(started.elapsed() < Duration::from_secs(1));
     }
     #[test]
     #[ignore = "Explicit cloud smoke test; sends three synthetic code gaps through .env-fim"]
     fn real_inception_fim_rust_go_python_smoke() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let provider = InceptionFimProvider::from_project(root).expect("FIM_PROVIDER and INCEPTION_API_KEY in environment or .env-fim");
+        let provider = InceptionFimProvider::from_project(root)
+            .unwrap_or_else(|e| panic!("FIM_PROVIDER and INCEPTION_API_KEY in environment or .env-fim: {e}"));
         let examples = [
             ("rust", crate::syntax::Lang::Rust, "fn square(x: i32) -> i32 {\n    x * ", "\n}"),
             ("go", crate::syntax::Lang::Go, "func square(x int) int {\n    return x * ", "\n}"),
             ("python", crate::syntax::Lang::Python, "def square(x: int) -> int:\n    return ", "\n"),
         ];
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap_or_else(|e| panic!("runtime build failed: {e}"));
         for (language, syntax, prefix, suffix) in examples {
             let context = Context { language: language.into(), prefix: prefix.into(), suffix: suffix.into(), ..Default::default() };
             let started = std::time::Instant::now();
-            let output = rt.block_on(provider.complete(&context, &Settings::default(), Arc::new(AtomicBool::new(false)))).unwrap();
+            let output = rt
+                .block_on(provider.complete(&context, &Settings::default(), Arc::new(AtomicBool::new(false))))
+                .unwrap_or_else(|e| panic!("{e}"));
             assert!(!output.text.trim().is_empty(), "{language} returned an empty insertion");
             let source = format!("{prefix}{suffix}");
             assert!(
@@ -471,30 +475,30 @@ mod tests {
     #[test]
     fn empty_generation_is_not_a_provider_error() {
         let response = json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":null}}]});
-        assert_eq!(completion_text(&response).unwrap(), "");
+        assert_eq!(completion_text(&response).unwrap_or_else(|e| panic!("{e}")), "");
         assert!(completion_text(&json!({"choices":[{"message":{}}]})).is_err());
         assert!(completion_text(&json!({"choices":[{"finish_reason":"stop","message":{"content":null,"tool_calls":[{}]}}]})).is_err());
     }
     #[test]
     fn untrusted_output() {
-        assert_eq!(sanitize("    return x * x", "def square(x):\n     ", "\n").unwrap(), "return x * x");
-        assert_eq!(sanitize("    return x * x", "def square(x):\n    ", "\n").unwrap(), "return x * x");
+        assert_eq!(sanitize("    return x * x", "def square(x):\n     ", "\n").unwrap_or_else(|e| panic!("{e}")), "return x * x");
+        assert_eq!(sanitize("    return x * x", "def square(x):\n    ", "\n").unwrap_or_else(|e| panic!("{e}")), "return x * x");
         assert!(sanitize("```rust\nx\n```", "", "").is_err());
         assert!(sanitize("let client = client.send()", "let client = ", "").is_err());
-        assert_eq!(sanitize("send());", "client.", ");").unwrap(), "send()");
-        assert_eq!(sanitize("😀\n    \u{43c}\u{438}\u{440}", "", "").unwrap(), "😀\n    \u{43c}\u{438}\u{440}");
+        assert_eq!(sanitize("send());", "client.", ");").unwrap_or_else(|e| panic!("{e}")), "send()");
+        assert_eq!(sanitize("😀\n    \u{43c}\u{438}\u{440}", "", "").unwrap_or_else(|e| panic!("{e}")), "😀\n    \u{43c}\u{438}\u{440}");
     }
     async fn mock(status: &str, body: &str, delay: u64, timeout: u64) -> Result<Output, String> {
         use std::{
             io::{Read, Write},
             net::TcpListener,
         };
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let endpoint = format!("http://{}/", listener.local_addr().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap_or_else(|e| panic!("bind failed: {e}"));
+        let endpoint = format!("http://{}/", listener.local_addr().unwrap_or_else(|e| panic!("local_addr failed: {e}")));
         let status = status.to_string();
         let body = body.to_string();
         std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
+            let (mut stream, _) = listener.accept().unwrap_or_else(|e| panic!("accept failed: {e}"));
             let mut buf = [0; 16384];
             let _ = stream.read(&mut buf);
             std::thread::sleep(Duration::from_millis(delay));
@@ -502,13 +506,13 @@ mod tests {
         });
         let settings = Settings { timeout_ms: timeout, ..Default::default() };
         OpenRouterProvider::new(&endpoint, "test-not-secret".into())
-            .unwrap()
+            .unwrap_or_else(|e| panic!("{e}"))
             .complete(&Context::default(), &settings, Arc::new(AtomicBool::new(false)))
             .await
     }
     #[test]
     fn network_contract() {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap_or_else(|e| panic!("runtime build failed: {e}"));
         rt.block_on(async {
             let out = mock(
                 "200 OK",
@@ -517,13 +521,13 @@ mod tests {
                 1000,
             )
             .await
-            .unwrap();
+            .unwrap_or_else(|e| panic!("{e}"));
             assert_eq!(out.text, "hello");
             assert_eq!(out.input_tokens, 12);
             assert_eq!(out.cost, Some(0.0001));
-            assert!(mock("429 Too Many Requests", "sensitive body", 0, 1000).await.unwrap_err().contains("429"));
+            assert!(matches!(mock("429 Too Many Requests", "sensitive body", 0, 1000).await, Err(e) if e.contains("429")));
             assert!(mock("200 OK", "bad json", 0, 1000).await.is_err());
-            assert!(mock("200 OK", "{}", 250, 100).await.unwrap_err().contains("timeout"));
+            assert!(matches!(mock("200 OK", "{}", 250, 100).await, Err(e) if e.contains("timeout")));
         });
     }
     #[test]
@@ -532,11 +536,11 @@ mod tests {
             io::{Read, Write},
             net::TcpListener,
         };
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let endpoint = format!("http://{}/", listener.local_addr().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap_or_else(|e| panic!("bind failed: {e}"));
+        let endpoint = format!("http://{}/", listener.local_addr().unwrap_or_else(|e| panic!("local_addr failed: {e}")));
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
+            let (mut stream, _) = listener.accept().unwrap_or_else(|e| panic!("accept failed: {e}"));
             let mut bytes = [0; 8192];
             let _ = stream.read(&mut bytes);
             let _ = started_tx.send(());
@@ -548,20 +552,20 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let signal = cancel.clone();
         std::thread::spawn(move || {
-            started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            started_rx.recv_timeout(Duration::from_secs(2)).unwrap_or_else(|e| panic!("server never started: {e}"));
             signal.store(true, Ordering::Relaxed);
         });
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap_or_else(|e| panic!("runtime build failed: {e}"));
         let at = std::time::Instant::now();
-        let provider = OpenRouterProvider::new(&endpoint, "test-fixture".into()).unwrap();
-        assert_eq!(rt.block_on(provider.complete(&Context::default(), &Settings::default(), cancel)).unwrap_err(), "Cancelled");
+        let provider = OpenRouterProvider::new(&endpoint, "test-fixture".into()).unwrap_or_else(|e| panic!("{e}"));
+        assert!(matches!(rt.block_on(provider.complete(&Context::default(), &Settings::default(), cancel)), Err(e) if e == "Cancelled"));
         assert!(at.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
     #[ignore = "Explicit real cloud test; sends only this public synthetic example"]
     fn real_openrouter() {
-        let provider = OpenRouterProvider::from_env().expect("Set OPENROUTER_API_KEY");
+        let provider = OpenRouterProvider::from_env().unwrap_or_else(|e| panic!("Set OPENROUTER_API_KEY: {e}"));
         let context = Context {
             language: "rust".into(),
             prefix: "fn square(x: i32) -> i32 {\n    ".into(),
@@ -569,8 +573,10 @@ mod tests {
             ..Default::default()
         };
         let now = std::time::Instant::now();
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let output = rt.block_on(provider.complete(&context, &Settings::default(), Arc::new(AtomicBool::new(false)))).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap_or_else(|e| panic!("runtime build failed: {e}"));
+        let output = rt
+            .block_on(provider.complete(&context, &Settings::default(), Arc::new(AtomicBool::new(false))))
+            .unwrap_or_else(|e| panic!("{e}"));
         assert!(!output.text.trim().is_empty());
         eprintln!(
             "Inline completion latency: {:?}; input={} output={} cost={:?}",

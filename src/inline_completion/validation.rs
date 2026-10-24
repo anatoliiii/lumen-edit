@@ -85,7 +85,11 @@ pub fn acceptable(lang: Lang, source: &str, at: usize, insertion: &str) -> bool 
     // arms in string macros. A successful parse alone cannot reject these.
     if lang == Lang::Rust && insertion.contains("=>") && !insertion.contains("match ") {
         static ARM: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-        let arm = ARM.get_or_init(|| regex::Regex::new(r#"(?m)^\s*(?:"[^"\n]*"|[A-Za-z_][A-Za-z_0-9:]*(?:\([^)]*\))?)\s*=>"#).unwrap());
+        let arm = ARM.get_or_init(|| {
+            // The pattern is a literal in this source; a failure is a build-time bug.
+            regex::Regex::new(r#"(?m)^\s*(?:"[^"\n]*"|[A-Za-z_][A-Za-z_0-9:]*(?:\([^)]*\))?)\s*=>"#)
+                .unwrap_or_else(|e| panic!("invalid match-arm regex: {e}"))
+        });
         if arm.is_match(insertion) {
             let mut node = before.root_node().descendant_for_byte_range(at, at);
             let mut in_match = false;
@@ -156,42 +160,42 @@ mod tests {
     #[test]
     fn replacement_check_rejects_new_errors_and_warns_when_ambiguous() {
         let source = "fn a() {\n    old();\n}\n";
-        let at = source.find("old").unwrap();
+        let at = source.find("old").unwrap_or_else(|| panic!("expected \"old\""));
         let range = at..at + "old();".len();
         assert_eq!(check_replacement(Lang::Rust, source, range.clone(), "new();"), Ok(None));
         // Deletion is a replacement too.
         assert_eq!(check_replacement(Lang::Rust, source, range.clone(), ""), Ok(None));
         assert!(check_replacement(Lang::Rust, source, range.clone(), "new(;\n}\nfn b( {").is_err());
         let broken = "fn a() {\n    old(;\n}\n";
-        let at = broken.find("old").unwrap();
-        assert!(check_replacement(Lang::Rust, broken, at..at + 3, "new").unwrap().is_some());
+        let at = broken.find("old").unwrap_or_else(|| panic!("expected \"old\""));
+        assert!(matches!(check_replacement(Lang::Rust, broken, at..at + 3, "new"), Ok(Some(_))));
         assert_eq!(check_replacement(Lang::Plain, "x", 0..1, "(("), Ok(None));
         assert!(check_replacement(Lang::Rust, "😀", 1..2, "x").is_err());
     }
     #[test]
     fn rejects_match_arms_inside_help_expression() {
         let source = "fn help() -> &'static str {\n    t_file!(\"cli-help.txt\")\n}\nfn run() { match command { _ => () } }";
-        let at = source.find("\n}").unwrap();
+        let at = source.find("\n}").unwrap_or_else(|| panic!("expected newline-brace"));
         assert!(!acceptable(Lang::Rust, source, at, "\"command\" => Some(call_and_print()),\n\"open\" => open(),"));
         assert!(acceptable(Lang::Rust, source, at, ""));
     }
     #[test]
     fn rejects_match_arms_inside_macro_arguments() {
         let source = "fn help() -> &'static str { t_file!(\"cli-help.txt\") }";
-        let at = source.find("txt\"").unwrap() + 4;
+        let at = source.find("txt\"").unwrap_or_else(|| panic!("expected text marker")) + 4;
         assert!(!acceptable(Lang::Rust, source, at, "\"command\" => command(),\n\"open\" => open(),"));
         let source = "fn run() { match command {  } }";
-        let at = source.find("{  }").unwrap() + 2;
+        let at = source.find("{  }").unwrap_or_else(|| panic!("expected empty block")) + 2;
         assert!(acceptable(Lang::Rust, source, at, "\"open\" => open(),"));
     }
     #[test]
     fn fixes_incomplete_expression_and_keeps_valid_blocks() {
         let source = "fn main() { client. }";
-        let at = source.find("client.").unwrap() + 7;
+        let at = source.find("client.").unwrap_or_else(|| panic!("expected client.")) + 7;
         assert!(acceptable(Lang::Rust, source, at, "send()"));
         assert!(!acceptable(Lang::Rust, source, at, "send(\nfn unrelated() {}"));
         let source = "fn square(x:i32)->i32 {\n    \n}";
-        let at = source.find("    ").unwrap() + 4;
+        let at = source.find("    ").unwrap_or_else(|| panic!("expected indentation")) + 4;
         assert!(acceptable(Lang::Rust, source, at, "let result=x*x;\n    result"));
         let source = "def square(x):\n    \n";
         assert!(acceptable(Lang::Python, source, source.len() - 1, "return x*x"));
@@ -199,23 +203,25 @@ mod tests {
     #[test]
     fn completes_missing_match_arm_body_before_existing_next_arm() {
         let source = "fn run(command:&str) { match command {\n    \"close\" => \n    \"help\" => help(),\n    _ => (),\n} }";
-        let at = source.find("=> ").unwrap() + 3;
+        let at = source.find("=> ").unwrap_or_else(|| panic!("expected \"=> \"")) + 3;
         assert!(acceptable(Lang::Rust, source, at, "close(),"));
         assert!(acceptable(Lang::Rust, source, at, "{ close(); },"));
     }
     #[test]
     fn inserts_missing_match_separator_without_touching_macro_tokens() {
         let source = "fn run(x:&str) { match x { \"close\" => \n\"help\" => help(), _ => () } }";
-        let at = source.find("=> ").unwrap() + 3;
+        let at = source.find("=> ").unwrap_or_else(|| panic!("expected \"=> \"")) + 3;
         let text = normalize(Lang::Rust, source, at, "close()");
         assert_eq!(text, "close(),");
         let proposed = format!("{}{}{}", &source[..at], text, &source[at..]);
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&syntax::grammar(Lang::Rust).unwrap()).unwrap();
-        assert!(!parser.parse(&proposed, None).unwrap().root_node().has_error());
+        parser
+            .set_language(&syntax::grammar(Lang::Rust).unwrap_or_else(|| panic!("rust grammar missing")))
+            .unwrap_or_else(|e| panic!("set_language failed: {e}"));
+        assert!(!parser.parse(&proposed, None).unwrap_or_else(|| panic!("parse produced no tree")).root_node().has_error());
         assert_eq!(normalize(Lang::Rust, source, at, "close(),"), "close(),");
         let source = "fn f() { macro_call!(a => ); }";
-        let at = source.find("=> ").unwrap() + 3;
+        let at = source.find("=> ").unwrap_or_else(|| panic!("expected \"=> \"")) + 3;
         assert_eq!(normalize(Lang::Rust, source, at, "something()"), "something()");
     }
     #[test]

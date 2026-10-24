@@ -404,7 +404,7 @@ pub fn spawn_worker(done: impl Fn(Done) + Send + 'static) -> Sender<Job> {
                 }
             }
         })
-        .expect("highlighter thread");
+        .unwrap_or_else(|e| panic!("failed to start highlighter thread: {e}"));
     tx
 }
 
@@ -447,7 +447,8 @@ mod tests {
     fn rust_highlights_keyword() {
         let mut highlighter = Highlighter::new();
         let spans = highlight(&mut highlighter, Lang::Rust, "fn main() { let x = 1; }");
-        let keyword = HIGHLIGHT_NAMES.iter().position(|n| *n == "keyword").unwrap() as u8;
+        let keyword =
+            HIGHLIGHT_NAMES.iter().position(|n| *n == "keyword").unwrap_or_else(|| panic!("keyword highlight name missing")) as u8;
         assert!(spans.iter().any(|s| s.start == 0 && s.end == 2 && s.highlight == keyword));
     }
 }

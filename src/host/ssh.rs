@@ -3,10 +3,10 @@
 //! and every later command reuses it without authenticating again.
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -19,6 +19,21 @@ use lumen_shared::{
 };
 
 use super::{agent::AgentClient, shell};
+
+/// Program run to talk to the host. Defaults to the system `ssh` found on
+/// PATH; tests point it at the fake-ssh script, so they never need to mutate
+/// the process-global environment.
+static SSH_BIN: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn ssh_bin() -> &'static Path {
+    SSH_BIN.get().map_or(Path::new("ssh"), |p| p.as_path())
+}
+
+/// Redirects every ssh invocation to `path` (used by tests).
+#[cfg(test)]
+pub fn set_ssh_bin(path: PathBuf) {
+    let _ = SSH_BIN.set(path);
+}
 
 pub struct Remote {
     pub target: String,
@@ -66,7 +81,7 @@ pub fn master_args(target: &str) -> Vec<String> {
 }
 
 pub fn master_ready(target: &str) -> bool {
-    Command::new("ssh")
+    Command::new(ssh_bin())
         .args(["-S", &control_path(target).to_string_lossy(), "-O", "check", target])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -194,29 +209,29 @@ impl Remote {
     }
 
     pub fn ssh_command(&self, script: &str, tty: bool) -> Command {
-        let mut command = Command::new("ssh");
+        let mut command = Command::new(ssh_bin());
         command.args(self.ssh_args(script, tty));
         command
     }
 
     /// (Re)starts the agent on the host and resumes watching.
     pub fn restart_agent(self: &Arc<Self>) -> Result<(), String> {
-        if let Some(old) = self.agent.lock().unwrap().take() {
+        if let Some(old) = self.agent.lock().unwrap_or_else(|e| e.into_inner()).take() {
             old.shutdown();
         }
         match super::agent::install_and_start(self) {
             Ok(client) => {
-                *self.agent.lock().unwrap() = Some(Arc::new(client));
-                *self.agent_status.lock().unwrap() = t!("agent running").into();
+                *self.agent.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(client));
+                *self.agent_status.lock().unwrap_or_else(|e| e.into_inner()) = t!("agent running").into();
                 self.agent_wanted.store(true, Ordering::Relaxed);
-                let root = self.watch_root.lock().unwrap().clone();
+                let root = self.watch_root.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 if let Some(root) = root {
                     let _ = self.call(Op::Watch { root }, &[]);
                 }
                 Ok(())
             }
             Err(error) => {
-                *self.agent_status.lock().unwrap() = t!("no agent: {error}", error = error);
+                *self.agent_status.lock().unwrap_or_else(|e| e.into_inner()) = t!("no agent: {error}", error = error);
                 Err(error)
             }
         }
@@ -228,10 +243,14 @@ impl Remote {
     }
 
     fn agent(&self) -> Option<Arc<AgentClient>> {
-        let mut guard = self.agent.lock().unwrap();
+        // Poison recovery is safe here: agent/agent_status are short-lived, replaceable
+        // runtime state, and a panic inside a worker only leaves a stale-but-harmless
+        // value (the health check and restart_agent self-heal it).
+        let mut guard = self.agent.lock().unwrap_or_else(|e| e.into_inner());
         if guard.as_ref().is_some_and(|agent| !agent.is_alive()) {
             *guard = None;
-            *self.agent_status.lock().unwrap() = t!("agent stopped, using the shell; will restart it when the host answers").into();
+            *self.agent_status.lock().unwrap_or_else(|e| e.into_inner()) =
+                t!("agent stopped, using the shell; will restart it when the host answers").into();
         }
         guard.clone()
     }
@@ -321,16 +340,16 @@ impl Remote {
 
     /// Starts watching `root` for changes; only possible with the agent.
     pub fn watch(&self, root: &str, sink: Sender<Vec<String>>) -> bool {
-        *self.events.lock().unwrap() = Some(sink);
-        *self.watch_root.lock().unwrap() = Some(root.to_string());
+        *self.events.lock().unwrap_or_else(|e| e.into_inner()) = Some(sink);
+        *self.watch_root.lock().unwrap_or_else(|e| e.into_inner()) = Some(root.to_string());
         matches!(self.call(Op::Watch { root: root.into() }, &[]), Some(Ok(_)))
     }
 
     pub fn disconnect(&self) {
-        if let Some(agent) = self.agent.lock().unwrap().take() {
+        if let Some(agent) = self.agent.lock().unwrap_or_else(|e| e.into_inner()).take() {
             agent.shutdown();
         }
-        let _ = Command::new("ssh")
+        let _ = Command::new(ssh_bin())
             .args(["-S", &self.control_path.to_string_lossy(), "-O", "exit", &self.target])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())

@@ -562,7 +562,13 @@ impl App {
         self.refresh_tasks();
         self.lsp.reset(self.config.servers());
 
-        let session = self.config.sessions.get(&self.workspace.as_ref().unwrap().session_key()).cloned().unwrap_or_default();
+        let session = {
+            let workspace = match self.workspace.as_ref() {
+                Some(workspace) => workspace,
+                None => unreachable!("workspace was just initialized"),
+            };
+            self.config.sessions.get(&workspace.session_key()).cloned().unwrap_or_default()
+        };
         for path in session {
             self.open_file(path, None);
         }
@@ -2070,12 +2076,12 @@ mod glyph_tests {
         let mut chars = std::collections::BTreeSet::new();
         let mut stack = vec![std::path::PathBuf::from("src")];
         while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read_dir failed: {e}")).flatten() {
                 let path = entry.path();
                 if path.is_dir() {
                     stack.push(path);
                 } else if path.extension().is_some_and(|e| e == "rs") {
-                    let text = std::fs::read_to_string(&path).unwrap();
+                    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read failed: {e}"));
                     for literal in text.split('"').skip(1).step_by(2) {
                         chars.extend(literal.chars().filter(|c| *c as u32 > 0x2000 && !('\u{400}'..='\u{4ff}').contains(c) && *c != '😀'));
                     }

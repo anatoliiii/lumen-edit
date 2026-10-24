@@ -40,7 +40,10 @@ pub struct LspClient {
 
 fn send(writer: &Mutex<BufWriter<ChildStdin>>, message: &Value) -> std::io::Result<()> {
     let body = serde_json::to_vec(message)?;
-    let mut writer = writer.lock().unwrap();
+    // Poison recovery is safe: a writer that was poisoned mid-write fails the
+    // next write, which `send` returns as an io::Error and the caller reports;
+    // there is no partial-message risk to a later quiescent state.
+    let mut writer = writer.lock().unwrap_or_else(|e| e.into_inner());
     write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
     writer.write_all(&body)?;
     writer.flush()
@@ -64,7 +67,11 @@ fn read_message(reader: &mut impl BufRead) -> std::io::Result<Value> {
             length = value.trim().parse::<usize>().ok();
         }
     }
-    let mut body = vec![0; length.unwrap()];
+    let length = match length {
+        Some(length) => length,
+        None => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "missing Content-Length header")),
+    };
+    let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
     serde_json::from_slice(&body).map_err(std::io::Error::other)
 }
@@ -86,9 +93,9 @@ impl LspClient {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("{command}: {e}"))?;
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdin = child.stdin.take().ok_or_else(|| format!("{command}: missing stdin"))?;
+        let stdout = child.stdout.take().ok_or_else(|| format!("{command}: missing stdout"))?;
+        let stderr = child.stderr.take().ok_or_else(|| format!("{command}: missing stderr"))?;
         let writer = Arc::new(Mutex::new(BufWriter::new(stdin)));
         let pending: Pending = Arc::default();
         let alive = Arc::new(AtomicBool::new(true));
@@ -99,7 +106,7 @@ impl LspClient {
             let tail = stderr_tail.clone();
             std::thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    let mut tail = tail.lock().unwrap();
+                    let mut tail = tail.lock().unwrap_or_else(|e| e.into_inner());
                     tail.push(line);
                     if tail.len() > 20 {
                         tail.remove(0);
@@ -119,7 +126,7 @@ impl LspClient {
                     handle_incoming(message, &pending, &writer, &events, &name);
                 }
                 alive.store(false, Ordering::Relaxed);
-                for (_, tx) in pending.lock().unwrap().drain() {
+                for (_, tx) in pending.lock().unwrap_or_else(|e| e.into_inner()).drain() {
                     let _ = tx.send(Err("language server exited".into()));
                 }
                 let _ = events.send(ServerEvent::Exited { server: name });
@@ -148,7 +155,7 @@ impl LspClient {
             "initializationOptions": initialization_options(name),
         });
         let result = client.request_timeout("initialize", params, Duration::from_secs(60)).map_err(|error| {
-            let tail = stderr_tail.lock().unwrap().join("\n");
+            let tail = stderr_tail.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
             if tail.is_empty() { error } else { format!("{error}\n{tail}") }
         })?;
         client.capabilities = result.get("capabilities").cloned().unwrap_or(Value::Null);
@@ -178,16 +185,16 @@ impl LspClient {
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = bounded(1);
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
         crate::debug_log!("-> {}: id={id} {method}", self.name);
         if let Err(error) = send(&self.writer, &json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })) {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
             return Err(error.to_string());
         }
         match rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(_) => {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
                 self.notify("$/cancelRequest", json!({ "id": id }));
                 Err(t!("{n1}: no answer to {method}", n1 = self.name, method = method))
             }
@@ -215,13 +222,13 @@ impl LspClient {
             self.notify("exit", Value::Null);
         }
         self.alive.store(false, Ordering::Relaxed);
-        let _ = self.child.lock().unwrap().kill();
+        let _ = self.child.lock().unwrap_or_else(|e| e.into_inner()).kill();
     }
 }
 
 impl Drop for LspClient {
     fn drop(&mut self) {
-        let _ = self.child.lock().unwrap().kill();
+        let _ = self.child.lock().unwrap_or_else(|e| e.into_inner()).kill();
     }
 }
 
@@ -233,7 +240,7 @@ fn handle_incoming(message: Value, pending: &Pending, writer: &Mutex<BufWriter<C
         // Response to one of our requests.
         (Some(id), None) => {
             let Some(id) = id.as_i64() else { return };
-            if let Some(tx) = pending.lock().unwrap().remove(&id) {
+            if let Some(tx) = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
                 let result = match message.get("error") {
                     Some(error) => Err(error.get("message").and_then(Value::as_str).unwrap_or("error").to_string()),
                     None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
@@ -360,14 +367,15 @@ mod tests {
     #[ignore]
     fn lsp_completion_with_rust_analyzer() {
         let dir = std::env::temp_dir().join(format!("lumen-lsp-test-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("src")).unwrap();
-        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+            .unwrap_or_else(|e| panic!("write failed: {e}"));
         let text = "fn main() {\n    let v: Vec<i32> = Vec::new();\n    v.\n}\n";
         let file = dir.join("src/main.rs");
-        std::fs::write(&file, text).unwrap();
+        std::fs::write(&file, text).unwrap_or_else(|e| panic!("write failed: {e}"));
         let root = dir.to_string_lossy().into_owned();
         let (tx, rx) = crossbeam_channel::unbounded();
-        let client = LspClient::start(&Host::Local, &root, "rust-analyzer", "rust-analyzer", &[], tx).unwrap();
+        let client = LspClient::start(&Host::Local, &root, "rust-analyzer", "rust-analyzer", &[], tx).unwrap_or_else(|e| panic!("{e}"));
         let uri = crate::lsp::path_to_uri(&file.to_string_lossy());
         client.notify("textDocument/didOpen", json!({ "textDocument": { "uri": uri, "languageId": "rust", "version": 1, "text": text } }));
         let mut labels = Vec::new();

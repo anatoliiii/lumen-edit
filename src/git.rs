@@ -18,7 +18,7 @@ fn git_raw(host: &Host, cwd: &str, args: &[&str], stdin: Option<&[u8]>, ok_codes
         .stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|e| format!("git: {e}"))?;
     if let Some(data) = stdin {
-        let mut pipe = child.stdin.take().unwrap();
+        let mut pipe = child.stdin.take().ok_or_else(|| "git stdin unexpectedly missing".to_string())?;
         let data = data.to_vec();
         std::thread::spawn(move || {
             let _ = pipe.write_all(&data);
@@ -665,15 +665,18 @@ mod tests {
     fn manages_remotes() {
         let host = Host::Local;
         let dir = std::env::temp_dir().join(format!("lumen-git-remote-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
         let root = dir.to_string_lossy().into_owned();
-        init(&host, &root).unwrap();
-        assert!(remotes(&host, &root).unwrap().is_empty());
-        add_remote(&host, &root, "origin", "git@example.com:me/repo.git").unwrap();
-        set_remote_url(&host, &root, "origin", "https://example.com/me/repo.git").unwrap();
-        assert_eq!(remotes(&host, &root).unwrap(), vec![Remote { name: "origin".into(), url: "https://example.com/me/repo.git".into() }]);
-        remove_remote(&host, &root, "origin").unwrap();
-        assert!(remotes(&host, &root).unwrap().is_empty());
+        init(&host, &root).unwrap_or_else(|e| panic!("{e}"));
+        assert!(remotes(&host, &root).unwrap_or_else(|e| panic!("{e}")).is_empty());
+        add_remote(&host, &root, "origin", "git@example.com:me/repo.git").unwrap_or_else(|e| panic!("{e}"));
+        set_remote_url(&host, &root, "origin", "https://example.com/me/repo.git").unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            remotes(&host, &root).unwrap_or_else(|e| panic!("{e}")),
+            vec![Remote { name: "origin".into(), url: "https://example.com/me/repo.git".into() }]
+        );
+        remove_remote(&host, &root, "origin").unwrap_or_else(|e| panic!("{e}"));
+        assert!(remotes(&host, &root).unwrap_or_else(|e| panic!("{e}")).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -682,18 +685,22 @@ mod tests {
         let host = Host::Local;
         let dir = std::env::temp_dir().join(format!("lumen-git-worktree-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
         let root = dir.join("main").to_string_lossy().into_owned();
         let other = dir.join("other").to_string_lossy().into_owned();
-        std::fs::create_dir_all(&root).unwrap();
-        init(&host, &root).unwrap();
-        git(&host, &root, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "init"]).unwrap();
-        git(&host, &root, &["worktree", "add", "-b", "side", &other]).unwrap();
-        let branches = branches(&host, &root).unwrap();
-        let side = branches.iter().find(|b| b.name == "side").unwrap();
+        std::fs::create_dir_all(&root).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
+        init(&host, &root).unwrap_or_else(|e| panic!("{e}"));
+        git(&host, &root, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "init"])
+            .unwrap_or_else(|e| panic!("{e}"));
+        git(&host, &root, &["worktree", "add", "-b", "side", &other]).unwrap_or_else(|e| panic!("{e}"));
+        let branches = branches(&host, &root).unwrap_or_else(|e| panic!("{e}"));
+        let side = branches.iter().find(|b| b.name == "side").unwrap_or_else(|| panic!("side branch missing"));
         assert!(!side.current);
-        assert_eq!(std::path::Path::new(&side.worktree).canonicalize().unwrap(), std::path::Path::new(&other).canonicalize().unwrap());
-        assert!(checkout(&host, &root, side).unwrap_err().contains("already used by worktree"));
+        assert_eq!(
+            std::path::Path::new(&side.worktree).canonicalize().unwrap_or_else(|e| panic!("canonicalize failed: {e}")),
+            std::path::Path::new(&other).canonicalize().unwrap_or_else(|e| panic!("canonicalize failed: {e}"))
+        );
+        assert!(matches!(checkout(&host, &root, side), Err(e) if e.contains("already used by worktree")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

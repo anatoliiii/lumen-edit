@@ -577,7 +577,7 @@ mod tests {
     fn gitlab_overlay() {
         let text = "stages:\n  - build\nbuild-job:\n  stage: build\n  script:\n    - echo $CI_COMMIT_SHA ${HOME}\n";
         let spans = overlay(Ci::GitLab, text);
-        let at = |s: &str| text.find(s).unwrap();
+        let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("expected {s:?}"));
         assert!(spans.iter().any(|s| s.start == at("stages") && s.highlight == index("keyword")));
         assert!(spans.iter().any(|s| s.start == at("build-job") && s.highlight == index("function")));
         assert!(spans.iter().any(|s| s.start == at("$CI_COMMIT_SHA") && s.end == at(" ${HOME}")));
@@ -588,9 +588,9 @@ mod tests {
     fn github_expressions_and_jobs() {
         let text = "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ${{ github.sha }}\n";
         let spans = overlay(Ci::GitHub, text);
-        let at = |s: &str| text.find(s).unwrap();
+        let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("expected {s:?}"));
         assert!(spans.iter().any(|s| s.start == at("test:") && s.highlight == index("function")));
-        assert!(spans.iter().any(|s| s.start == at("${{") && s.end == text.find("}}").unwrap() + 2));
+        assert!(spans.iter().any(|s| s.start == at("${{") && s.end == text.find("}}").unwrap_or_else(|| panic!("expected }}")) + 2));
     }
 
     #[test]
@@ -606,8 +606,12 @@ mod tests {
     fn dockerfile_instructions() {
         let text = "# base\nFROM rust:1.88 AS build\nRUN cargo build --release\n";
         let spans = dockerfile(text);
-        assert!(spans.iter().any(|s| s.start == text.find("FROM").unwrap() && s.highlight == index("keyword")));
-        assert!(spans.iter().any(|s| s.start == text.find("AS").unwrap()));
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.start == text.find("FROM").unwrap_or_else(|| panic!("expected FROM")) && s.highlight == index("keyword"))
+        );
+        assert!(spans.iter().any(|s| s.start == text.find("AS").unwrap_or_else(|| panic!("expected AS"))));
         assert!(spans.iter().any(|s| s.start == 0 && s.highlight == index("comment")));
     }
 }

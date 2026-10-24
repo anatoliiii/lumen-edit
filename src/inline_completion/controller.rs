@@ -456,7 +456,7 @@ mod tests {
         let mut c = Controller::default();
         c.observe(Some(id.clone()), true);
         let serial = c.serial;
-        let ticket = c.ledger.reserve(&Settings::default()).unwrap();
+        let ticket = c.ledger.reserve(&Settings::default()).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         c.observe(None, false);
         c.tx.send(Done {
             identity: id,
@@ -470,7 +470,7 @@ mod tests {
             charged: false,
             ticket,
         })
-        .unwrap();
+        .unwrap_or_else(|e| panic!("send failed: {e:?}"));
         assert!(c.poll(&Settings::default()).is_none());
     }
     #[test]
@@ -517,7 +517,7 @@ mod tests {
         let mut c = Controller::default();
         c.observe(Some(old.clone()), true);
         let serial = c.serial;
-        let ticket = c.ledger.reserve(&Settings::default()).unwrap();
+        let ticket = c.ledger.reserve(&Settings::default()).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         let cancel = Arc::new(AtomicBool::new(false));
         let busy = Arc::new(AtomicBool::new(true));
         c.active = Some(Active { cancel: cancel.clone(), busy: busy.clone() });
@@ -535,7 +535,7 @@ mod tests {
             charged: true,
             ticket,
         })
-        .unwrap();
+        .unwrap_or_else(|e| panic!("send failed: {e:?}"));
         busy.store(false, Ordering::Release);
         assert!(c.poll(&Settings::default()).is_none());
         assert_eq!(c.metrics.requests, 1);
@@ -551,7 +551,7 @@ mod tests {
         let mut c = Controller::default();
         c.observe(Some(identity(&b)), true);
         let settings = Settings { requests_per_minute: 1, ..Default::default() };
-        c.ledger.reserve(&settings).unwrap();
+        c.ledger.reserve(&settings).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         let snapshot = Snapshot {
             buffer: b,
             lang: crate::syntax::Lang::Rust,
@@ -576,7 +576,7 @@ mod tests {
         let id = identity(&b);
         c.observe(Some(id.clone()), true);
         let serial = c.serial;
-        let ticket = c.ledger.reserve(&Settings::default()).unwrap();
+        let ticket = c.ledger.reserve(&Settings::default()).unwrap_or_else(|e| panic!("reserve failed: {e:?}"));
         c.tx.send(Done {
             identity: id,
             serial,
@@ -589,7 +589,7 @@ mod tests {
             charged: false,
             ticket,
         })
-        .unwrap();
+        .unwrap_or_else(|e| panic!("send failed: {e:?}"));
         c.poll(&Settings::default());
         assert_eq!(c.ledger.reserved_usd, 0.0);
         assert_eq!(c.ledger.requests, 0);

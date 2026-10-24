@@ -362,7 +362,7 @@ fn try_restart(app: &mut App, id: u64) -> Result<(), String> {
     options.name = Some(title.trim_start_matches("π ").into());
     // Reuse the same runtime ID: parent/worker routing must survive a process restart.
     // Old readers carry a process generation, filtered by on_event.
-    let generation = by_id(app, id).unwrap().generation + 1;
+    let generation = by_id(app, id).ok_or_else(|| t!("Agent not found").to_string())?.generation + 1;
     options.generation = generation;
     options.context = role_context(id, role, parent);
     let mut replacement = Box::new(AgentTab::spawn(id, &host, &root, app.control_socket.as_deref(), &options, app.bus.clone()));
@@ -517,11 +517,11 @@ fn refresh(app: &mut App) {
     let slot = app.agent_manager.history.clone();
     let ctx = app.ctx.clone();
     let archived = app.agent_manager.archived;
-    *slot.lock().unwrap() = None;
+    *slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
     std::thread::spawn(move || {
         let dir = if archived { Path::new(&dir).join(".lumen-archive") } else { dir.into() };
         let list = super::read_sessions(&dir);
-        *slot.lock().unwrap() = Some(Ok(list));
+        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(list));
         ctx.request_repaint();
     });
 }
@@ -613,7 +613,7 @@ pub fn control(app: &mut App, params: &Value) -> Result<Value, String> {
         }
         "open" if id.is_none() => {
             let id = try_create(app, Create::default())?;
-            let a = by_id(app, id).unwrap();
+            let a = by_id(app, id).ok_or_else(|| t!("Agent not found").to_string())?;
             return Ok(json!({ "id": id, "running": a.is_running(), "sandboxed": a.sandboxed, "cwd": a.cwd }));
         }
         "switch" => {
@@ -632,7 +632,7 @@ pub fn control(app: &mut App, params: &Value) -> Result<Value, String> {
     match action {
         "open" | "focus" => {
             focus(app, id);
-            let a = by_id(app, id).unwrap();
+            let a = by_id(app, id).ok_or_else(|| t!("Agent not found").to_string())?;
             Ok(json!({ "id": id, "running": a.is_running(), "sandboxed": a.sandboxed, "cwd": a.cwd }))
         }
         "close" => {
@@ -671,13 +671,13 @@ pub fn control(app: &mut App, params: &Value) -> Result<Value, String> {
             Ok(json!("ok"))
         }
         "prompt" | "follow_up" => {
-            if !by_id(app, id).unwrap().is_running() {
+            if !by_id(app, id).ok_or_else(|| t!("Agent not found").to_string())?.is_running() {
                 return Err(t!("Restart the agent before assigning work").into());
             }
             if text.trim().is_empty() {
                 return Err(t!("Enter a task first").into());
             }
-            let agent = by_id(app, id).unwrap();
+            let agent = by_id(app, id).ok_or_else(|| t!("Agent not found").to_string())?;
             if action == "prompt" {
                 agent.prompt(text.into());
             } else {
@@ -687,17 +687,17 @@ pub fn control(app: &mut App, params: &Value) -> Result<Value, String> {
         }
         "rename" => {
             let name = params["name"].as_str().unwrap_or(text).trim();
-            by_id(app, id).unwrap().send(json!({ "type": "set_session_name", "name": name }));
+            by_id(app, id).ok_or_else(|| t!("Agent not found").to_string())?.send(json!({ "type": "set_session_name", "name": name }));
             Ok(json!("ok"))
         }
         "clear_queue" => {
-            by_id(app, id).unwrap().send(json!({ "type": "clear_queue" }));
+            by_id(app, id).ok_or_else(|| t!("Agent not found").to_string())?.send(json!({ "type": "clear_queue" }));
             Ok(json!("ok"))
         }
-        "sessions" => Ok(by_id(app, id).unwrap().sessions_json()),
+        "sessions" => Ok(by_id(app, id).ok_or_else(|| t!("Agent not found").to_string())?.sessions_json()),
         "transcript" => {
             let last = number("last").unwrap_or(30).clamp(1, 1000) as usize;
-            let agent = by_id(app, id).unwrap();
+            let agent = by_id(app, id).ok_or_else(|| t!("Agent not found").to_string())?;
             Ok(
                 json!({ "id": id, "streaming": agent.streaming, "exited": agent.exited, "items": agent.transcript(last), "task": agent.task }),
             )
@@ -715,21 +715,21 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "lumen-archive-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_else(|e| panic!("clock skew: {e}")).as_nanos()
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create_dir failed: {e}"));
         let source = dir.join("session.jsonl");
-        std::fs::write(&source, b"original conversation").unwrap();
-        archive_file(&source, false).unwrap();
+        std::fs::write(&source, b"original conversation").unwrap_or_else(|e| panic!("write failed: {e}"));
+        archive_file(&source, false).unwrap_or_else(|e| panic!("{e}"));
         let archived = dir.join(".lumen-archive/session.jsonl");
         assert!(!source.exists());
-        assert_eq!(std::fs::read(&archived).unwrap(), b"original conversation");
-        std::fs::write(&source, b"another conversation").unwrap();
+        assert_eq!(std::fs::read(&archived).unwrap_or_else(|e| panic!("read failed: {e}")), b"original conversation");
+        std::fs::write(&source, b"another conversation").unwrap_or_else(|e| panic!("write failed: {e}"));
         assert!(archive_file(&archived, true).is_err());
-        assert_eq!(std::fs::read(&source).unwrap(), b"another conversation");
-        std::fs::remove_file(&source).unwrap();
-        archive_file(&archived, true).unwrap();
-        assert_eq!(std::fs::read(&source).unwrap(), b"original conversation");
-        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(std::fs::read(&source).unwrap_or_else(|e| panic!("read failed: {e}")), b"another conversation");
+        std::fs::remove_file(&source).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
+        archive_file(&archived, true).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(std::fs::read(&source).unwrap_or_else(|e| panic!("read failed: {e}")), b"original conversation");
+        std::fs::remove_dir_all(&dir).unwrap_or_else(|e| panic!("cleanup failed: {e}"));
     }
 }
