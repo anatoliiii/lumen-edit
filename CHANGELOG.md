@@ -17,6 +17,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 
 ### Fixed
+- Settings use responsive form rows, sidebar navigation on wide windows, readable language-server cards and localized AI status with expandable diagnostics. Pi model limits no longer collapse into letter-by-letter columns.
 - Verify Node.js downloads with native SHA-256 on all platforms, without relying on PowerShell or external checksum commands.
 - Automatic inline completion no longer burns quota by repeatedly cancelling requests while typing; minute limits retry automatically, request accounting excludes pre-HTTP cancellation/cache, and the original overly small defaults are migrated.
 - Inline completion now anchors the current insertion scope and rejects syntax regressions or misplaced Rust match-arm fragments, including inside macro token trees.
