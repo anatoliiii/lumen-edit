@@ -56,7 +56,7 @@ tree-sitter-yaml = "0.7"
 tree-sitter-make = "1.1"
 tree-sitter-groovy = "0.1"
 tree-sitter-hcl = "1.1"
-vt100 = "0.17"
+vt100 = "0.18"
 portable-pty = "0.9"
 lsp-types = "0.97"
 serde = { version = "1", features = ["derive"] }
