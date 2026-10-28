@@ -91,7 +91,7 @@ opt-level = 2
 
 [dev-dependencies]
 # Reads font charmaps in the glyph test (already used by egui).
-skrifa = "0.48"
+skrifa = "0.49"
 [lints.rust]
 unsafe_code = "forbid"
 
